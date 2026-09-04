@@ -24,7 +24,9 @@ toolog-cli = { path = "crates/toolog-cli" }
 # --- storage (ADR-0003) ---
 # `bundled` compiles SQLite from source: no system dependency, no version skew.
 rusqlite = { version = "0.40.2", features = ["bundled"] }
-refinery = { version = "0.9.2", features = ["rusqlite"] }
+# No refinery: refinery-core 0.9.2 caps at rusqlite <=0.39, so it would force a
+# downgrade or a second linked SQLite. Migrations are a hand-rolled
+# `PRAGMA user_version` stepper instead — see toolog-core/src/migrations.rs.
 
 # --- OTLP receiver (ADR-0005) ---
 axum = "0.8.9"
@@ -51,6 +53,9 @@ directories = "6.0.0"
 # --- hashing: raw_event dedup and the Phase 7 integrity chain (ADR-0004) ---
 sha2 = "0.11.0"
 hex = "0.4.3"
+
+# --- test-only ---
+tempfile = "3.27.0"
 
 # --- CLI ---
 clap = { version = "4.6.6", features = ["derive"] }

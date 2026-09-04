@@ -1,16 +1,38 @@
-//! Storage core: schema, migrations, normalization and the typed query layer.
+//! Storage core: schema, migrations, projection and the typed query layer.
 //!
 //! All SQL in the workspace lives in this crate ([ADR-0003]). Other crates reach
 //! data through typed functions, never by writing queries of their own.
 //!
-//! The central invariant is [ADR-0004]: every input record is persisted verbatim
-//! to `raw_event` before it is parsed, and every other table is a re-runnable
-//! projection of it. Claude Code's formats drift, and data lost at ingestion
-//! cannot be recovered.
+//! # The shape of the thing
 //!
-//! Implementation lands in Phase 1; this crate is scaffolding until then.
+//! [`raw`] is the evidence store. Every input record — a transcript line, an
+//! OTLP log record — is written there verbatim before anything parses it. The
+//! remaining tables are a projection of it, rebuildable at any time via
+//! [`project::reproject`]. This is [ADR-0004], and it is the property that makes
+//! the tool survive Claude Code changing its formats: one ordinary user's
+//! history already spans 12 versions, 21 record types, and three different
+//! shapes of `toolUseResult`.
+//!
+//! [`project`] holds the two lane-specific upserts. They are order-independent
+//! and write disjoint column sets ([ADR-0009]), so a call may be created by
+//! either lane and completed by the other with the same final row. Rows carry a
+//! `provenance` bitmask recording which lanes witnessed them — and a row seen
+//! only by OTLP is a **rejected** call, since a denied call leaves no transcript
+//! trace at all.
 //!
 //! [ADR-0003]: ../../../docs/adr/0003-sqlite-as-the-embedded-store.md
 //! [ADR-0004]: ../../../docs/adr/0004-store-raw-project-normalized.md
+//! [ADR-0009]: ../../../docs/adr/0009-correlate-on-tool-use-id.md
 
 pub mod constants;
+pub mod db;
+pub mod error;
+pub mod fts;
+pub mod migrations;
+pub mod model;
+pub mod project;
+pub mod query;
+pub mod raw;
+
+pub use db::Db;
+pub use error::{Error, Result};
