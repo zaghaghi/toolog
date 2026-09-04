@@ -240,7 +240,15 @@ fn a_write_burst_is_debounced_into_one_ingest() {
         std::thread::spawn(move || {
             let db = Db::open(&db_path).expect("open");
             Tail::new(&watch)
-                .with_debounce(Duration::from_millis(250))
+                // Generous relative to the ~120 ms the writer below spends:
+                // the property under test is coalescing, and a debounce that a
+                // loaded machine can outrun turns this into a flaky assertion
+                // about scheduler timing rather than about the tailer.
+                .with_debounce(Duration::from_secs(1))
+                // Short enough to rescue an event the filesystem never
+                // delivered, which would otherwise hang this test rather than
+                // reveal anything about coalescing.
+                .with_sweep(Duration::from_millis(500))
                 .run(
                     db.conn(),
                     |r| reports.lock().expect("lock").push(r.stored),
@@ -263,7 +271,7 @@ fn a_write_burst_is_debounced_into_one_ingest() {
         }
     }
 
-    wait_until(Duration::from_secs(6), || {
+    wait_until(Duration::from_secs(15), || {
         reports.lock().expect("lock").iter().sum::<usize>() >= 8
     });
     stop.store(true, Ordering::SeqCst);
@@ -275,9 +283,75 @@ fn a_write_burst_is_debounced_into_one_ingest() {
         calls.iter().sum::<usize>() >= 8,
         "all records ingested: {calls:?}"
     );
+    // Count only ingests that stored something: a sweep over an up-to-date file
+    // reports zero, and those say nothing about whether the burst coalesced.
+    let effective = calls.iter().filter(|stored| **stored > 0).count();
     assert!(
-        calls.len() < 8,
-        "eight writes coalesced into fewer ingests, got {} for {calls:?}",
-        calls.len()
+        effective < 8,
+        "eight writes coalesced into fewer ingests, got {effective} for {calls:?}"
+    );
+}
+
+/// The last records of a session must not wait for an event that never comes.
+///
+/// A burst can be ingested while its final line is still being flushed. The
+/// fragment is correctly left unstored — and if the session then ends, no
+/// further filesystem event will arrive to collect it. The sweep is what closes
+/// that hole, so this writes a record and then deliberately produces no event
+/// the watcher could act on.
+#[test]
+fn a_file_finished_after_the_last_event_is_still_collected() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let watch = dir.path().join("projects");
+    std::fs::create_dir_all(&watch).expect("mkdir");
+    let transcript = watch.join("late.jsonl");
+    std::fs::write(&transcript, "").expect("create");
+
+    let db_path = dir.path().join("t.db");
+    let stop = Arc::new(AtomicBool::new(false));
+    let seen = Arc::new(Mutex::new(0usize));
+
+    let worker = {
+        let (stop, seen, db_path, watch) =
+            (stop.clone(), seen.clone(), db_path.clone(), watch.clone());
+        std::thread::spawn(move || {
+            let db = Db::open(&db_path).expect("open");
+            Tail::new(&watch)
+                .with_debounce(Duration::from_millis(50))
+                .with_sweep(Duration::from_millis(150))
+                .run(
+                    db.conn(),
+                    |r| *seen.lock().expect("lock") += r.stored,
+                    &|| stop.load(Ordering::SeqCst),
+                )
+                .expect("tail");
+        })
+    };
+
+    // Let the watch settle, then append once. Even if the event for this write
+    // is lost or arrives at an unhelpful moment, the sweep must find it.
+    std::thread::sleep(Duration::from_millis(200));
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .expect("open");
+        writeln!(f, "{}", record(0)).expect("write");
+        f.flush().expect("flush");
+    }
+
+    let collected = wait_until(Duration::from_secs(10), || *seen.lock().expect("lock") >= 1);
+    stop.store(true, Ordering::SeqCst);
+    std::fs::write(watch.join("nudge.jsonl"), "").ok();
+    worker.join().expect("join");
+
+    assert!(collected, "the sweep must collect what no event announced");
+
+    let db = Db::open(&db_path).expect("reopen");
+    assert_eq!(
+        toolog_core::raw::count(db.conn(), None).expect("count"),
+        1,
+        "collected exactly once — dedup keeps the sweep from duplicating"
     );
 }

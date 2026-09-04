@@ -4688,6 +4688,7 @@ dependencies = [
  "clap",
  "directories",
  "jiff",
+ "prost",
  "serde",
  "serde_json",
  "tempfile",

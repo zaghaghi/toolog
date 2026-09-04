@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use toolog_core::project::{self, Projector};
+use toolog_core::project::Projector;
 use toolog_core::{Connection, Result, raw};
 
 use crate::discover;
@@ -79,15 +79,22 @@ impl<'a> Backfill<'a> {
 
     /// Ingest every transcript under `root`.
     ///
-    /// Evidence is stored first for every file, then the whole database is
-    /// projected in one pass. Splitting the phases is what lets subagent
-    /// attribution work: an `Agent` result can name a subagent whose calls were
-    /// recorded in a file read earlier or later.
+    /// One projector spans every file, which is what lets subagent attribution
+    /// resolve across them: an `Agent` result can name a subagent whose calls
+    /// were recorded in a file read earlier or later, and `finish()` settles
+    /// those once the whole run is in hand.
+    ///
+    /// **It does not re-project.** A re-projection clears every projection
+    /// table, and this crate can only rebuild the transcript half — so doing it
+    /// here would delete the OTLP lane's decisions, durations and costs on
+    /// every import. Rebuilding from evidence is a deliberate, all-lanes
+    /// operation ([`project::Chain`]).
     pub fn run(&self, root: &Path) -> Result<BackfillReport> {
         let mut report = BackfillReport::default();
+        let mut projector = TranscriptProjector::new();
 
         for path in discover::transcripts(root) {
-            let file = ingest_file(self.conn, &path, None)?;
+            let file = ingest_and_project(self.conn, &path, &mut projector)?;
             report.files += 1;
             report.lines += file.lines;
             report.stored += file.stored;
@@ -97,8 +104,6 @@ impl<'a> Backfill<'a> {
             }
         }
 
-        let mut projector = TranscriptProjector::new();
-        project::reproject(self.conn, None, &mut projector)?;
         report.stats = projector.stats().clone();
         Ok(report)
     }

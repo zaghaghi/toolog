@@ -352,6 +352,50 @@ pub trait Projector {
     }
 }
 
+/// Replays each record through several projectors in turn.
+///
+/// Re-projection clears **every** projection table and rebuilds it, so it must
+/// be given a projector for each lane the evidence store holds. Running it with
+/// one lane's projector silently deletes the other lane's columns — which is
+/// exactly what a `toolog backfill` did before this existed, taking every
+/// `decision`, `decision_source` and `duration_ms` with it.
+///
+/// Each projector guards on `event.lane`, so ordering does not matter.
+pub struct Chain<'a> {
+    projectors: Vec<&'a mut dyn Projector>,
+}
+
+impl std::fmt::Debug for Chain<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Chain")
+            .field("projectors", &self.projectors.len())
+            .finish()
+    }
+}
+
+impl<'a> Chain<'a> {
+    #[must_use]
+    pub fn new(projectors: Vec<&'a mut dyn Projector>) -> Self {
+        Self { projectors }
+    }
+}
+
+impl Projector for Chain<'_> {
+    fn project(&mut self, conn: &Connection, event: &RawEvent) -> Result<()> {
+        for projector in &mut self.projectors {
+            projector.project(conn, event)?;
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self, conn: &Connection) -> Result<()> {
+        for projector in &mut self.projectors {
+            projector.finish(conn)?;
+        }
+        Ok(())
+    }
+}
+
 /// What a re-projection did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReprojectStats {

@@ -88,17 +88,21 @@ mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr, TcpListener};
 
-    fn unused_port() -> SocketAddr {
-        let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind");
-        let addr = l.local_addr().expect("addr");
-        drop(l);
-        addr
+    /// A port nothing can be listening on.
+    ///
+    /// Deliberately not an ephemeral port released just before the probe: the
+    /// workspace runs its test binaries in parallel and one of them will
+    /// eventually be handed that number in the gap, turning this into a flaky
+    /// assertion about port allocation. Port 1 needs root to bind and is not in
+    /// any ephemeral range.
+    fn nothing_can_listen_here() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1)
     }
 
     #[test]
     fn nothing_listening_is_down_not_an_error() {
         assert_eq!(
-            probe_with_timeout(unused_port(), Duration::from_millis(200)),
+            probe_with_timeout(nothing_can_listen_here(), Duration::from_millis(200)),
             Health::Down
         );
     }

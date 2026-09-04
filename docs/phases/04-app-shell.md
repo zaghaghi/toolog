@@ -99,6 +99,53 @@ One case remains unmeasured: an **interactive** refusal, where a person presses 
 That may well abort before any `tool_result` is written. Driving the interactive TUI was out of
 reach; until it is measured, no code infers a rejection from provenance.
 
+### A destructive bug the real data exposed
+
+Exercising `toolog export --rejected` against the live store returned nothing, minutes after
+`toolog verify` had counted two refusals. **`toolog backfill` had deleted them.**
+
+`Backfill::run` finished by re-projecting the whole database, and re-projection clears every
+projection table before replaying. It replayed with the transcript projector alone, so every
+`decision`, `decision_source`, `duration_ms` and `api_request` row was dropped on the floor — on
+every import, silently, with a cheerful summary printed.
+
+Three changes:
+
+- `Backfill::run` no longer re-projects. It projects incrementally through one projector shared
+  across every file, which is what cross-file subagent attribution needed in the first place, and
+  it clears nothing.
+- `project::Chain` forwards each record to several projectors, and `TranscriptProjector` gained the
+  lane guard the OTLP one already had.
+- A genuine rebuild is `commands::reproject_all` — both lanes — reachable as
+  `toolog backfill --reproject`. Two regression tests pin it: an import must not clear a lane it
+  cannot rebuild, and a full re-projection must reproduce every lane.
+
+**The live store was repaired by re-running the projection**, and lost nothing: `both = 3`,
+`refused = 2`, exactly the figures from before the damage. That is [ADR-0004] working as designed —
+the projections were wrong, the evidence never was. It is also the strongest argument the project
+has yet produced for storing raw records verbatim, and it arrived by accident.
+
+[ADR-0004]: ../adr/0004-store-raw-project-normalized.md
+
+### Two flaky tests, and the bug behind one of them
+
+The suite failed intermittently under load, roughly one run in three, and chasing it found a real
+gap rather than a timing artifact.
+
+**The tailer could leave a file's tail unread.** A burst is ingested while its last record is still
+being flushed; the fragment is correctly not stored, and the offset stops before it — but if nothing
+writes to that file again, no event ever wakes the watcher to collect it. A session that ends
+immediately after its final tool call is exactly that shape. `Tail` now also sweeps every 30 seconds,
+re-reading each transcript from its stored offset, which costs an open and a seek per file and makes
+the watch self-healing instead of dependent on the next event arriving. A test writes one record and
+then deliberately produces nothing further for the watcher to act on.
+
+**The other was the test's own race.** `nothing_listening_is_down_not_an_error` bound an ephemeral
+port, released it, and probed it — while the workspace runs its test binaries in parallel and one of
+them will eventually be handed that number in the gap. It now probes port 1, which needs root to
+bind and is in no ephemeral range. `a_free_port_is_used_as_is` had the same shape and retries
+instead.
+
 ### Deviations from the plan
 
 **`tauri-plugin-autostart` is not used.** It writes its own LaunchAgent plist at

@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use toolog_core::model::{Page, TimelineFilter, provenance};
-use toolog_core::{Connection, Db, Result, query};
+use toolog_core::{Connection, Db, Result, project, query};
 use toolog_ingest::Backfill;
 
 /// Import existing history.
@@ -50,6 +50,25 @@ pub struct Summary {
     pub duplicates: usize,
     pub tool_uses: usize,
     pub sessions: usize,
+}
+
+/// Rebuild every projection table from `raw_event`, across **both** lanes.
+///
+/// The escape hatch [ADR-0004] exists for: when normalization changes or a past
+/// parser missed a field, the projections are derived again from the evidence,
+/// which was stored verbatim precisely so this is possible.
+///
+/// It must be given both projectors. Re-projecting with one lane's projector
+/// clears the other lane's columns — a `toolog backfill` did exactly that
+/// before this function existed, silently deleting every permission decision
+/// and duration in the store.
+///
+/// [ADR-0004]: ../../../docs/adr/0004-store-raw-project-normalized.md
+pub fn reproject_all(conn: &Connection) -> Result<project::ReprojectStats> {
+    let mut transcript = toolog_ingest::TranscriptProjector::new();
+    let mut otlp = toolog_otlp::OtlpProjector::new();
+    let mut both = project::Chain::new(vec![&mut transcript, &mut otlp]);
+    project::reproject(conn, None, &mut both)
 }
 
 /// Cross-check the two ingestion lanes ([ADR-0009]).

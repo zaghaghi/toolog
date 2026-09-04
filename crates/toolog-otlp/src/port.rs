@@ -115,11 +115,20 @@ mod tests {
     #[test]
     fn a_free_port_is_used_as_is() {
         let ip: IpAddr = DEFAULT_OTLP_HOST.parse().expect("ip");
-        let probe = TcpListener::bind(SocketAddr::new(ip, 0)).expect("bind");
-        let free = probe.local_addr().expect("addr").port();
-        drop(probe);
 
-        assert_eq!(choose(DEFAULT_OTLP_HOST, free).expect("free").port(), free);
+        // Releasing a port and asking for it back is a race with every other
+        // test binary the workspace runs in parallel. Retry rather than assert
+        // that nothing else claimed the number in between.
+        for attempt in 0..5 {
+            let probe = TcpListener::bind(SocketAddr::new(ip, 0)).expect("bind");
+            let free = probe.local_addr().expect("addr").port();
+            drop(probe);
+
+            if choose(DEFAULT_OTLP_HOST, free).expect("a port").port() == free {
+                return;
+            }
+            assert!(attempt < 4, "a free port was never used as-is");
+        }
     }
 
     #[test]

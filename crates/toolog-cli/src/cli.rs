@@ -48,6 +48,12 @@ pub enum Command {
         /// Report only the totals.
         #[arg(long, short)]
         quiet: bool,
+        /// Rebuild every projection table from stored evidence afterwards.
+        ///
+        /// The ADR-0004 escape hatch: use it after an upgrade changes how
+        /// records are normalized. Both lanes are replayed, so nothing is lost.
+        #[arg(long)]
+        reproject: bool,
     },
     /// Cross-check the two ingestion lanes.
     Verify,
@@ -105,7 +111,11 @@ pub fn run(cli: &Cli) -> anyhow::Result<i32> {
 
     match cli.command.as_ref().expect("a subcommand was given") {
         Command::Doctor { fix } => run_doctor(*fix),
-        Command::Backfill { path, quiet } => run_backfill(cli, path.as_deref(), *quiet),
+        Command::Backfill {
+            path,
+            quiet,
+            reproject,
+        } => run_backfill(cli, path.as_deref(), *quiet, *reproject),
         Command::Verify => run_verify(cli),
         Command::Export(args) => run_export(cli, args),
         Command::Agent { action } => run_agent(action),
@@ -155,7 +165,12 @@ fn run_doctor(fix: bool) -> anyhow::Result<i32> {
     Ok(i32::from(!report.problems().is_empty()))
 }
 
-fn run_backfill(cli: &Cli, path: Option<&std::path::Path>, quiet: bool) -> anyhow::Result<i32> {
+fn run_backfill(
+    cli: &Cli,
+    path: Option<&std::path::Path>,
+    quiet: bool,
+    reproject: bool,
+) -> anyhow::Result<i32> {
     // ADR-0007 gives the process one writer. A backfill from the command line
     // while the application is resident makes two — safe under WAL, but they
     // contend, so say so rather than let it look like a slow import.
@@ -185,6 +200,14 @@ fn run_backfill(cli: &Cli, path: Option<&std::path::Path>, quiet: bool) -> anyho
         summary.sessions,
         started.elapsed().as_secs_f64()
     );
+
+    if reproject {
+        let stats = commands::reproject_all(db.conn())?;
+        println!(
+            "\nRebuilt {} tool calls from {} stored records.",
+            stats.tool_calls, stats.scanned
+        );
+    }
     Ok(0)
 }
 
@@ -329,6 +352,24 @@ mod tests {
             1_767_225_600_000
         );
         assert!(parse_since("last tuesday").is_err());
+    }
+
+    #[test]
+    fn reprojection_is_opt_in() {
+        assert!(matches!(
+            Cli::parse_from(["toolog", "backfill"]).command,
+            Some(Command::Backfill {
+                reproject: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            Cli::parse_from(["toolog", "backfill", "--reproject"]).command,
+            Some(Command::Backfill {
+                reproject: true,
+                ..
+            })
+        ));
     }
 
     #[test]

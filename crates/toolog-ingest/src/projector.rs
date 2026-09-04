@@ -219,6 +219,12 @@ impl TranscriptProjector {
 
 impl Projector for TranscriptProjector {
     fn project(&mut self, conn: &Connection, event: &RawEvent) -> Result<()> {
+        // Only this lane's records. A re-projection replays the whole evidence
+        // store through both projectors, so without this an OTLP record would
+        // be counted as an unparsable transcript line.
+        if event.lane != toolog_core::model::Lane::Transcript.as_str() {
+            return Ok(());
+        }
         if let Some(e) = Envelope::parse(&event.body) {
             self.project_envelope(conn, &e, &event.source_ref)
         } else {
