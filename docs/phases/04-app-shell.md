@@ -55,7 +55,8 @@ plumbing every view sits on.
 
 ## Outcome
 
-173 tests passing, `just lint` clean, CI extended with Tauri's Linux dependencies.
+177 tests passing, `just lint` clean, CI extended with Tauri's Linux dependencies and a
+check that the generated TypeScript bindings are committed.
 
 ### Verified on this machine, not only in tests
 
