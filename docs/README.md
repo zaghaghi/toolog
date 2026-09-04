@@ -1,6 +1,7 @@
 # Documentation
 
-**Status: planning complete, implementation not started.**
+**Status: Phases 0–4 complete.** Capture works end to end — both lanes, the menu-bar app and the
+CLI. Phases 5–8 remain.
 
 ## Phases
 
@@ -9,11 +10,11 @@ Nine phases. Each ends in something runnable and checkable. **Phase 5 is the fir
 
 | Phase | Goal | Milestone |
 |---|---|---|
-| [00 — Foundation](phases/00-foundation.md) | Repo, workspace, decision record | |
-| [01 — Storage core](phases/01-storage-core.md) | Schema migrates and round-trips | |
-| [02 — Transcript ingestion](phases/02-transcript-ingestion.md) | Backfill and live tail; the content lane | |
-| [03 — OTLP collector](phases/03-otlp-collector.md) | Decisions, durations, cost; the decision lane | |
-| [04 — App shell](phases/04-app-shell.md) | Installs itself, stays resident, frontend can query | |
+| [00 — Foundation](phases/00-foundation.md) | Repo, workspace, decision record | done |
+| [01 — Storage core](phases/01-storage-core.md) | Schema migrates and round-trips | done |
+| [02 — Transcript ingestion](phases/02-transcript-ingestion.md) | Backfill and live tail; the content lane | done |
+| [03 — OTLP collector](phases/03-otlp-collector.md) | Decisions, durations, cost; the decision lane | done |
+| [04 — App shell](phases/04-app-shell.md) | Installs itself, stays resident, frontend can query | done |
 | [05 — Timeline view](phases/05-timeline-view.md) | The forensic view | **v0.1** |
 | [06 — Risk, analytics & live](phases/06-risk-analytics-live.md) | The other three surfaces | |
 | [07 — Privacy, retention, integrity](phases/07-privacy-retention-integrity.md) | Earn the word "audit" | |
@@ -31,7 +32,7 @@ version moves substantially.
 | Fact | Consequence |
 |---|---|
 | OTEL `tool_input` truncates values at 512 chars, ~4 KB total | OTEL alone cannot hold evidence → [ADR-0002](adr/0002-dual-ingestion-transcripts-and-otel.md) |
-| Rejected tool calls leave **no transcript record at all** | Transcripts alone cannot hold the permission story → [ADR-0002](adr/0002-dual-ingestion-transcripts-and-otel.md) |
+| ~~Rejected tool calls leave no transcript record at all~~ — **disproved in Phase 4.** A refused call appears in both lanes; the transcript holds the `tool_use` block and a `tool_result` containing the refusal message | The conclusion stands on firmer ground: only OTEL carries `decision` and `decision_source`, so transcripts alone cannot answer *who* refused a call or *under which rule* → [ADR-0002](adr/0002-dual-ingestion-transcripts-and-otel.md), [ADR-0009](adr/0009-correlate-on-tool-use-id.md) |
 | 12 Claude Code versions, 21 record types, `toolUseResult` as object/string/array | Store raw, project normalized → [ADR-0004](adr/0004-store-raw-project-normalized.md) |
 | `tool_use_id` is present and exact in every lane | No heuristic matching → [ADR-0009](adr/0009-correlate-on-tool-use-id.md) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` is global across signals | Use per-signal variables only → [ADR-0006](adr/0006-configure-via-settings-env-block.md) |
