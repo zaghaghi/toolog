@@ -55,8 +55,6 @@ SQLCipher). Backticking every one reads worse than the lint is worth.
 crates.io, but no member opts into them yet — a declaration there does not pull anything
 into a build. Phase 1 adds the first real dependency.
 
-**Open for the owner:**
-
-- `repository` is absent from `[workspace.package]` — there is no git remote yet. Phase 8
-  needs it for the Homebrew cask and release manifests.
-- Licence is MIT, baked into every crate's metadata. Cheapest to change now.
+**Settled after review:** licence is MIT, confirmed by the owner. The repository is
+public at <https://github.com/zaghaghi/toolog>, and `repository`/`homepage` are set in
+`[workspace.package]` — Phase 8 needs them for the Homebrew cask and release manifests.

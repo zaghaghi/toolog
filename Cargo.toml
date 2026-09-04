@@ -8,6 +8,8 @@ edition = "2024"
 rust-version = "1.95"
 license = "MIT"
 authors = ["Hamed Zaghaghi <hamed.zaghaghi@gmail.com>"]
+repository = "https://github.com/zaghaghi/toolog"
+homepage = "https://github.com/zaghaghi/toolog"
 description = "A local audit trail for Claude Code tool calls"
 
 # Versions pinned from crates.io at planning time. Members opt in individually
