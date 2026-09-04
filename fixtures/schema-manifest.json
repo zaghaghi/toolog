@@ -1,0 +1,1105 @@
+{
+  "claude_code_versions": [
+    "2.1.161",
+    "2.1.170",
+    "2.1.220",
+    "2.1.222",
+    "2.1.226",
+    "2.1.233",
+    "2.1.239",
+    "2.1.240",
+    "2.1.241",
+    "2.1.251",
+    "2.1.252",
+    "2.1.259"
+  ],
+  "note": "Key names and value TYPES only, extracted from a real corpus. No values.",
+  "record_types": {
+    "agent-name": [
+      {
+        "count": 209,
+        "keys": [
+          "agentName",
+          "sessionId",
+          "type"
+        ],
+        "shape": {
+          "agentName": "string",
+          "sessionId": "string",
+          "type": "string"
+        }
+      }
+    ],
+    "ai-title": [
+      {
+        "count": 601,
+        "keys": [
+          "aiTitle",
+          "sessionId",
+          "type"
+        ],
+        "shape": {
+          "aiTitle": "string",
+          "sessionId": "string",
+          "type": "string"
+        }
+      }
+    ],
+    "artifact-autoreact-ledger": [
+      {
+        "count": 66,
+        "keys": [
+          "accountUuid",
+          "artifacts",
+          "sessionId",
+          "type",
+          "v"
+        ],
+        "shape": {
+          "accountUuid": "string",
+          "artifacts": {
+            "1b43dfec-7306-4cb0-a361-a16deafa3578": {
+              "everBaselined": "bool",
+              "everHadThreads": "bool",
+              "savedAt": "number",
+              "stampHighWater": "null",
+              "threads": [],
+              "turnTimestamps": []
+            }
+          },
+          "sessionId": "string",
+          "type": "string",
+          "v": "number"
+        }
+      }
+    ],
+    "artifact-comment-monitor": [
+      {
+        "count": 4,
+        "keys": [
+          "artifacts",
+          "sessionId",
+          "type",
+          "v"
+        ],
+        "shape": {
+          "artifacts": {
+            "1b43dfec-7306-4cb0-a361-a16deafa3578": {
+              "state": "string",
+              "title": "string",
+              "writtenAtMs": "number"
+            }
+          },
+          "sessionId": "string",
+          "type": "string",
+          "v": "number"
+        }
+      }
+    ],
+    "assistant": [
+      {
+        "count": 1646,
+        "keys": [
+          "cwd",
+          "effort",
+          "entrypoint",
+          "gitBranch",
+          "isSidechain",
+          "message",
+          "parentUuid",
+          "requestId",
+          "sessionId",
+          "session_id",
+          "slug",
+          "timestamp",
+          "type",
+          "userType",
+          "uuid",
+          "version"
+        ],
+        "shape": {
+          "cwd": "string",
+          "effort": "string",
+          "entrypoint": "string",
+          "gitBranch": "string",
+          "isSidechain": "bool",
+          "message": {
+            "content": [
+              {
+                "signature": "string",
+                "thinking": "string",
+                "type": "string"
+              }
+            ],
+            "diagnostics": "null",
+            "id": "string",
+            "model": "string",
+            "role": "string",
+            "stop_details": "null",
+            "stop_reason": "string",
+            "stop_sequence": "null",
+            "type": "string",
+            "usage": {
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": "number",
+                "ephemeral_5m_input_tokens": "number"
+              },
+              "cache_creation_input_tokens": "number",
+              "cache_read_input_tokens": "number",
+              "inference_geo": "string",
+              "input_tokens": "number",
+              "iterations": [
+                {
+                  "cache_creation": "...",
+                  "cache_creation_input_tokens": "...",
+                  "cache_read_input_tokens": "...",
+                  "input_tokens": "...",
+                  "output_tokens": "...",
+                  "type": "..."
+                }
+              ],
+              "output_tokens": "number",
+              "server_tool_use": {
+                "web_fetch_requests": "number",
+                "web_search_requests": "number"
+              },
+              "service_tier": "string",
+              "speed": "string"
+            }
+          },
+          "parentUuid": "string",
+          "requestId": "string",
+          "sessionId": "string",
+          "session_id": "string",
+          "slug": "string",
+          "timestamp": "string",
+          "type": "string",
+          "userType": "string",
+          "uuid": "string",
+          "version": "string"
+        }
+      },
+      {
+        "count": 1238,
+        "keys": [
+          "cwd",
+          "effort",
+          "entrypoint",
+          "gitBranch",
+          "isSidechain",
+          "message",
+          "parentUuid",
+          "requestId",
+          "sessionId",
+          "session_id",
+          "timestamp",
+          "type",
+          "userType",
+          "uuid",
+          "version"
+        ],
+        "shape": {
+          "cwd": "string",
+          "effort": "string",
+          "entrypoint": "string",
+          "gitBranch": "string",
+          "isSidechain": "bool",
+          "message": {
+            "content": [
+              {
+                "signature": "string",
+                "thinking": "string",
+                "type": "string"
+              }
+            ],
+            "diagnostics": "null",
+            "id": "string",
+            "model": "string",
+            "role": "string",
+            "stop_details": "null",
+            "stop_reason": "string",
+            "stop_sequence": "null",
+            "type": "string",
+            "usage": {
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": "number",
+                "ephemeral_5m_input_tokens": "number"
+              },
+              "cache_creation_input_tokens": "number",
+              "cache_read_input_tokens": "number",
+              "inference_geo": "string",
+              "input_tokens": "number",
+              "iterations": [
+                {
+                  "cache_creation": "...",
+                  "cache_creation_input_tokens": "...",
+                  "cache_read_input_tokens": "...",
+                  "input_tokens": "...",
+                  "output_tokens": "...",
+                  "type": "..."
+                }
+              ],
+              "output_tokens": "number",
+              "output_tokens_details": {
+                "thinking_tokens": "number"
+              },
+              "server_tool_use": {
+                "web_fetch_requests": "number",
+                "web_search_requests": "number"
+              },
+              "service_tier": "string",
+              "speed": "string"
+            }
+          },
+          "parentUuid": "string",
+          "requestId": "string",
+          "sessionId": "string",
+          "session_id": "string",
+          "timestamp": "string",
+          "type": "string",
+          "userType": "string",
+          "uuid": "string",
+          "version": "string"
+        }
+      },
+      {
+        "count": 378,
+        "keys": [
+          "agentId",
+          "attributionAgent",
+          "cwd",
+          "effort",
+          "entrypoint",
+          "gitBranch",
+          "isSidechain",
+          "message",
+          "parentUuid",
+          "requestId",
+          "sessionId",
+          "slug",
+          "timestamp",
+          "type",
+          "userType",
+          "uuid",
+          "version"
+        ],
+        "shape": {
+          "agentId": "string",
+          "attributionAgent": "string",
+          "cwd": "string",
+          "effort": "string",
+          "entrypoint": "string",
+          "gitBranch": "string",
+          "isSidechain": "bool",
+          "message": {
+            "content": [
+              {
+                "text": "string",
+                "type": "string"
+              }
+            ],
+            "diagnostics": "null",
+            "id": "string",
+            "model": "string",
+            "role": "string",
+            "stop_details": "null",
+            "stop_reason": "null",
+            "stop_sequence": "null",
+            "type": "string",
+            "usage": {
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": "number",
+                "ephemeral_5m_input_tokens": "number"
+              },
+              "cache_creation_input_tokens": "number",
+              "cache_read_input_tokens": "number",
+              "inference_geo": "string",
+              "input_tokens": "number",
+              "output_tokens": "number",
+              "service_tier": "string"
+            }
+          },
+          "parentUuid": "string",
+          "requestId": "string",
+          "sessionId": "string",
+          "slug": "string",
+          "timestamp": "string",
+          "type": "string",
+          "userType": "string",
+          "uuid": "string",
+          "version": "string"
+        }
+      }
+    ],
+    "atis-latch": [
+      {
+        "count": 268,
+        "keys": [
+          "atis",
+          "sessionId",
+          "type"
+        ],
+        "shape": {
+          "atis": "string",
+          "sessionId": "string",
+          "type": "string"
+        }
+      }
+    ],
+    "attachment": [
+      {
+        "count": 1176,
+        "keys": [
+          "attachment",
+          "cwd",
+          "entrypoint",
+          "gitBranch",
+          "isSidechain",
+          "parentUuid",
+          "sessionId",
+          "session_id",
+          "slug",
+          "timestamp",
+          "type",
+          "userType",
+          "uuid",
+          "version"
+        ],
+        "shape": {
+          "attachment": {
+            "isSubAgent": "bool",
+            "planExists": "bool",
+            "planFilePath": "string",
+            "reminderType": "string",
+            "type": "string"
+          },
+          "cwd": "string",
+          "entrypoint": "string",
+          "gitBranch": "string",
+          "isSidechain": "bool",
+          "parentUuid": "string",
+          "sessionId": "string",
+          "session_id": "string",
+          "slug": "string",
+          "timestamp": "string",
+          "type": "string",
+          "userType": "string",
+          "uuid": "string",
+          "version": "string"
+        }
+      },
+      {
+        "count": 971,
+        "keys": [
+          "attachment",
+          "cwd",
+          "entrypoint",
+          "gitBranch",
+          "isSidechain",
+          "parentUuid",
+          "sessionId",
+          "session_id",
+          "timestamp",
+          "type",
+          "userType",
+          "uuid",
+          "version"
+        ],
+        "shape": {
+          "attachment": {
+            "command": "string",
+            "content": "string",
+            "durationMs": "number",
+            "exitCode": "number",
+            "hookEvent": "string",
+            "hookName": "string",
+            "stderr": "string",
+            "stdout": "string",
+            "toolUseID": "string",
+            "type": "string"
+          },
+          "cwd": "string",
+          "entrypoint": "string",
+          "gitBranch": "string",
+          "isSidechain": "bool",
+          "parentUuid": "string",
+          "sessionId": "string",
+          "session_id": "string",
+          "timestamp": "string",
+          "type": "string",
+          "userType": "string",
+          "uuid": "string",
+          "version": "string"
+        }
+      },
+      {
+        "count": 155,
+        "keys": [
+          "attachment",
+          "cwd",
+          "entrypoint",
+          "gitBranch",
+          "isSidechain",
+          "parentUuid",
+          "sessionId",
+          "timestamp",
+          "type",
+          "userType",
+          "uuid",
+          "version"
+        ],
+        "shape": {
+          "attachment": {
+            "addedLines": [
+              "string"
+            ],
+            "addedNames": [
+              "string"
+            ],
+            "pendingMcpServers": [],
+            "readdedNames": [],
+            "removedNames": [],
+            "type": "string"
+          },
+          "cwd": "string",
+          "entrypoint": "string",
+          "gitBranch": "string",
+          "isSidechain": "bool",
+          "parentUuid": "string",
+          "sessionId": "string",
+          "timestamp": "string",
+          "type": "string",
+          "userType": "string",
+          "uuid": "string",
+          "version": "string"
+        }
+      }
+    ],
+    "bridge-session": [
+      {
+        "count": 189,
+        "keys": [
+          "bridgeSessionId",
+          "lastSequenceNum",
+          "ownerAccountUuid",
+          "ownerOrganizationUuid",
+          "sessionId",
+          "type"
+        ],
+        "shape": {
+          "bridgeSessionId": "string",
+          "lastSequenceNum": "number",
+          "ownerAccountUuid": "string",
+          "ownerOrganizationUuid": "string",
+          "sessionId": "string",
+          "type": "string"
+        }
+      }
+    ],
+    "cost-state": [
+      {
+        "count": 14,
+        "keys": [
+          "hasUnknownModelCost",
+          "modelUsage",
+          "sessionId",
+          "startTime",
+          "totalAPIDuration",
+          "totalAPIDurationWithoutRetries",
+          "totalCostUSD",
+          "totalDuration",
+          "totalLinesAdded",
+          "totalLinesRemoved",
+          "totalToolDuration",
+          "type"
+        ],
+        "shape": {
+          "hasUnknownModelCost": "bool",
+          "modelUsage": {
+            "claude-haiku-4-5-20251001": {
+              "cacheCreationInputTokens": "number",
+              "cacheReadInputTokens": "number",
+              "costUSD": "number",
+              "inputTokens": "number",
+              "outputTokens": "number",
+              "webSearchRequests": "number"
+            },
+            "claude-opus-5": {
+              "cacheCreationInputTokens": "number",
+              "cacheReadInputTokens": "number",
+              "costUSD": "number",
+              "inputTokens": "number",
+              "outputTokens": "number",
+              "webSearchRequests": "number"
+            }
+          },
+          "sessionId": "string",
+          "startTime": "number",
+          "totalAPIDuration": "number",
+          "totalAPIDurationWithoutRetries": "number",
+          "totalCostUSD": "number",
+          "totalDuration": "number",
+          "totalLinesAdded": "number",
+          "totalLinesRemoved": "number",
+          "totalToolDuration": "number",
+          "type": "string"
+        }
+      }
+    ],
+    "file-history-delta": [
+      {
+        "count": 105,
+        "keys": [
+          "backup",
+          "messageId",
+          "snapshotMessageId",
+          "timestamp",
+          "trackingPath",
+          "type"
+        ],
+        "shape": {
+          "backup": {
+            "backupFileName": "null",
+            "backupTime": "string",
+            "realParentDir": "string",
+            "version": "number"
+          },
+          "messageId": "string",
+          "snapshotMessageId": "string",
+          "timestamp": "string",
+          "trackingPath": "string",
+          "type": "string"
+        }
+      }
+    ],
+    "file-history-snapshot": [
+      {
+        "count": 88,
+        "keys": [
+          "isSnapshotUpdate",
+          "messageId",
+          "snapshot",
+          "type"
+        ],
+        "shape": {
+          "isSnapshotUpdate": "bool",
+          "messageId": "string",
+          "snapshot": {
+            "messageId": "string",
+            "timestamp": "string",
+            "trackedFileBackups": {}
+          },
+          "type": "string"
+        }
+      }
+    ],
+    "frame-link": [
+      {
+        "count": 39,
+        "keys": [
+          "artifactCount",
+          "sessionId",
+          "timestamp",
+          "type"
+        ],
+        "shape": {
+          "artifactCount": "number",
+          "sessionId": "string",
+          "timestamp": "string",
+          "type": "string"
+        }
+      },
+      {
+        "count": 2,
+        "keys": [
+          "frameUrl",
+          "path",
+          "sessionId",
+          "timestamp",
+          "title",
+          "type"
+        ],
+        "shape": {
+          "frameUrl": "string",
+          "path": "string",
+          "sessionId": "string",
+          "timestamp": "string",
+          "title": "string",
+          "type": "string"
+        }
+      },
+      {
+        "count": 1,
+        "keys": [
+          "artifactCount",
+          "frameUrl",
+          "path",
+          "sessionId",
+          "timestamp",
+          "title",
+          "type"
+        ],
+        "shape": {
+          "artifactCount": "number",
+          "frameUrl": "string",
+          "path": "string",
+          "sessionId": "string",
+          "timestamp": "string",
+          "title": "string",
+          "type": "string"
+        }
+      }
+    ],
+    "last-prompt": [
+      {
+        "count": 578,
+        "keys": [
+          "lastPrompt",
+          "leafUuid",
+          "sessionId",
+          "type"
+        ],
+        "shape": {
+          "lastPrompt": "string",
+          "leafUuid": "string",
+          "sessionId": "string",
+          "type": "string"
+        }
+      },
+      {
+        "count": 25,
+        "keys": [
+          "leafUuid",
+          "sessionId",
+          "type"
+        ],
+        "shape": {
+          "leafUuid": "string",
+          "sessionId": "string",
+          "type": "string"
+        }
+      }
+    ],
+    "mode": [
+      {
+        "count": 543,
+        "keys": [
+          "mode",
+          "sessionId",
+          "type"
+        ],
+        "shape": {
+          "mode": "string",
+          "sessionId": "string",
+          "type": "string"
+        }
+      }
+    ],
+    "permission-mode": [
+      {
+        "count": 520,
+        "keys": [
+          "permissionMode",
+          "sessionId",
+          "type"
+        ],
+        "shape": {
+          "permissionMode": "string",
+          "sessionId": "string",
+          "type": "string"
+        }
+      }
+    ],
+    "pr-link": [
+      {
+        "count": 92,
+        "keys": [
+          "prNumber",
+          "prRepository",
+          "prUrl",
+          "sessionId",
+          "timestamp",
+          "type"
+        ],
+        "shape": {
+          "prNumber": "number",
+          "prRepository": "string",
+          "prUrl": "string",
+          "sessionId": "string",
+          "timestamp": "string",
+          "type": "string"
+        }
+      }
+    ],
+    "queue-operation": [
+      {
+        "count": 74,
+        "keys": [
+          "content",
+          "operation",
+          "sessionId",
+          "timestamp",
+          "type"
+        ],
+        "shape": {
+          "content": "string",
+          "operation": "string",
+          "sessionId": "string",
+          "timestamp": "string",
+          "type": "string"
+        }
+      },
+      {
+        "count": 31,
+        "keys": [
+          "operation",
+          "sessionId",
+          "timestamp",
+          "type"
+        ],
+        "shape": {
+          "operation": "string",
+          "sessionId": "string",
+          "timestamp": "string",
+          "type": "string"
+        }
+      }
+    ],
+    "relocated": [
+      {
+        "count": 14,
+        "keys": [
+          "relocatedCwd",
+          "sessionId",
+          "type"
+        ],
+        "shape": {
+          "relocatedCwd": "string",
+          "sessionId": "string",
+          "type": "string"
+        }
+      }
+    ],
+    "system": [
+      {
+        "count": 50,
+        "keys": [
+          "cwd",
+          "durationMs",
+          "entrypoint",
+          "gitBranch",
+          "isMeta",
+          "isSidechain",
+          "messageCount",
+          "parentUuid",
+          "sessionId",
+          "subtype",
+          "timestamp",
+          "type",
+          "userType",
+          "uuid",
+          "version"
+        ],
+        "shape": {
+          "cwd": "string",
+          "durationMs": "number",
+          "entrypoint": "string",
+          "gitBranch": "string",
+          "isMeta": "bool",
+          "isSidechain": "bool",
+          "messageCount": "number",
+          "parentUuid": "string",
+          "sessionId": "string",
+          "subtype": "string",
+          "timestamp": "string",
+          "type": "string",
+          "userType": "string",
+          "uuid": "string",
+          "version": "string"
+        }
+      },
+      {
+        "count": 30,
+        "keys": [
+          "cwd",
+          "durationMs",
+          "entrypoint",
+          "gitBranch",
+          "isMeta",
+          "isSidechain",
+          "messageCount",
+          "parentUuid",
+          "sessionId",
+          "slug",
+          "subtype",
+          "timestamp",
+          "type",
+          "userType",
+          "uuid",
+          "version"
+        ],
+        "shape": {
+          "cwd": "string",
+          "durationMs": "number",
+          "entrypoint": "string",
+          "gitBranch": "string",
+          "isMeta": "bool",
+          "isSidechain": "bool",
+          "messageCount": "number",
+          "parentUuid": "string",
+          "sessionId": "string",
+          "slug": "string",
+          "subtype": "string",
+          "timestamp": "string",
+          "type": "string",
+          "userType": "string",
+          "uuid": "string",
+          "version": "string"
+        }
+      },
+      {
+        "count": 18,
+        "keys": [
+          "cwd",
+          "entrypoint",
+          "gitBranch",
+          "hasOutput",
+          "hookAdditionalContext",
+          "hookCount",
+          "hookErrors",
+          "hookInfos",
+          "isSidechain",
+          "level",
+          "parentUuid",
+          "preventedContinuation",
+          "sessionId",
+          "stopReason",
+          "subtype",
+          "timestamp",
+          "toolUseID",
+          "type",
+          "userType",
+          "uuid",
+          "version"
+        ],
+        "shape": {
+          "cwd": "string",
+          "entrypoint": "string",
+          "gitBranch": "string",
+          "hasOutput": "bool",
+          "hookAdditionalContext": [],
+          "hookCount": "number",
+          "hookErrors": [],
+          "hookInfos": [
+            {
+              "command": "string"
+            }
+          ],
+          "isSidechain": "bool",
+          "level": "string",
+          "parentUuid": "string",
+          "preventedContinuation": "bool",
+          "sessionId": "string",
+          "stopReason": "string",
+          "subtype": "string",
+          "timestamp": "string",
+          "toolUseID": "string",
+          "type": "string",
+          "userType": "string",
+          "uuid": "string",
+          "version": "string"
+        }
+      }
+    ],
+    "user": [
+      {
+        "count": 1199,
+        "keys": [
+          "cwd",
+          "entrypoint",
+          "gitBranch",
+          "isSidechain",
+          "message",
+          "parentUuid",
+          "promptId",
+          "sessionId",
+          "session_id",
+          "slug",
+          "sourceToolAssistantUUID",
+          "timestamp",
+          "toolUseResult",
+          "type",
+          "userType",
+          "uuid",
+          "version"
+        ],
+        "shape": {
+          "cwd": "string",
+          "entrypoint": "string",
+          "gitBranch": "string",
+          "isSidechain": "bool",
+          "message": {
+            "content": [
+              {
+                "content": "string",
+                "tool_use_id": "string",
+                "type": "string"
+              }
+            ],
+            "role": "string"
+          },
+          "parentUuid": "string",
+          "promptId": "string",
+          "sessionId": "string",
+          "session_id": "string",
+          "slug": "string",
+          "sourceToolAssistantUUID": "string",
+          "timestamp": "string",
+          "toolUseResult": {
+            "message": "string"
+          },
+          "type": "string",
+          "userType": "string",
+          "uuid": "string",
+          "version": "string"
+        }
+      },
+      {
+        "count": 767,
+        "keys": [
+          "cwd",
+          "entrypoint",
+          "gitBranch",
+          "isSidechain",
+          "message",
+          "parentUuid",
+          "promptId",
+          "sessionId",
+          "session_id",
+          "sourceToolAssistantUUID",
+          "timestamp",
+          "toolUseResult",
+          "type",
+          "userType",
+          "uuid",
+          "version"
+        ],
+        "shape": {
+          "cwd": "string",
+          "entrypoint": "string",
+          "gitBranch": "string",
+          "isSidechain": "bool",
+          "message": {
+            "content": [
+              {
+                "content": "string",
+                "is_error": "bool",
+                "tool_use_id": "string",
+                "type": "string"
+              }
+            ],
+            "role": "string"
+          },
+          "parentUuid": "string",
+          "promptId": "string",
+          "sessionId": "string",
+          "session_id": "string",
+          "sourceToolAssistantUUID": "string",
+          "timestamp": "string",
+          "toolUseResult": {
+            "interrupted": "bool",
+            "isImage": "bool",
+            "noOutputExpected": "bool",
+            "stderr": "string",
+            "stdout": "string"
+          },
+          "type": "string",
+          "userType": "string",
+          "uuid": "string",
+          "version": "string"
+        }
+      },
+      {
+        "count": 271,
+        "keys": [
+          "agentId",
+          "cwd",
+          "entrypoint",
+          "gitBranch",
+          "isSidechain",
+          "message",
+          "parentUuid",
+          "promptId",
+          "sessionId",
+          "slug",
+          "sourceToolAssistantUUID",
+          "timestamp",
+          "toolUseResult",
+          "type",
+          "userType",
+          "uuid",
+          "version"
+        ],
+        "shape": {
+          "agentId": "string",
+          "cwd": "string",
+          "entrypoint": "string",
+          "gitBranch": "string",
+          "isSidechain": "bool",
+          "message": {
+            "content": [
+              {
+                "content": "string",
+                "is_error": "bool",
+                "tool_use_id": "string",
+                "type": "string"
+              }
+            ],
+            "role": "string"
+          },
+          "parentUuid": "string",
+          "promptId": "string",
+          "sessionId": "string",
+          "slug": "string",
+          "sourceToolAssistantUUID": "string",
+          "timestamp": "string",
+          "toolUseResult": {
+            "interrupted": "bool",
+            "isImage": "bool",
+            "noOutputExpected": "bool",
+            "stderr": "string",
+            "stdout": "string"
+          },
+          "type": "string",
+          "userType": "string",
+          "uuid": "string",
+          "version": "string"
+        }
+      }
+    ],
+    "worktree-state": [
+      {
+        "count": 194,
+        "keys": [
+          "sessionId",
+          "type",
+          "worktreeSession"
+        ],
+        "shape": {
+          "sessionId": "string",
+          "type": "string",
+          "worktreeSession": {
+            "originalBranch": "string",
+            "originalCwd": "string",
+            "originalHeadCommit": "string",
+            "preEnterOriginalCwd": "string",
+            "sessionId": "string",
+            "worktreeBranch": "string",
+            "worktreeName": "string",
+            "worktreePath": "string"
+          }
+        }
+      }
+    ]
+  }
+}

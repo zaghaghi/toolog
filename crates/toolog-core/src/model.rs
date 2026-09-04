@@ -104,7 +104,10 @@ pub struct Session {
     pub git_branch: Option<String>,
     pub cc_version: Option<String>,
     pub entrypoint: Option<String>,
+    /// A session label such as `host-password-reset-flow`, from `agent-name`
+    /// records. **Not** subagent attribution — see [`ToolCall::agent_id`].
     pub agent_name: Option<String>,
+    pub slug: Option<String>,
     pub first_seen: Option<i64>,
     pub last_seen: Option<i64>,
 }
@@ -119,6 +122,11 @@ pub struct TranscriptFacts {
     pub message_uuid: Option<String>,
     pub parent_uuid: Option<String>,
     pub is_sidechain: Option<bool>,
+    /// Subagent *instance*. Present on every sidechain record and no
+    /// main-thread record, so it is the reliable discriminator.
+    pub agent_id: Option<String>,
+    /// Subagent *type* (`Explore`, `general-purpose`). Best-effort: it appears
+    /// on only some records, and is backfilled per `agent_id`.
     pub agent_name: Option<String>,
     pub tool_name: Option<String>,
     pub tool_kind: Option<String>,
@@ -166,6 +174,11 @@ pub struct ToolCall {
     pub message_uuid: Option<String>,
     pub parent_uuid: Option<String>,
     pub is_sidechain: Option<bool>,
+    /// Subagent *instance*. Present on every sidechain record and no
+    /// main-thread record, so it is the reliable discriminator.
+    pub agent_id: Option<String>,
+    /// Subagent *type* (`Explore`, `general-purpose`). Best-effort: it appears
+    /// on only some records, and is backfilled per `agent_id`.
     pub agent_name: Option<String>,
     pub tool_name: Option<String>,
     pub tool_kind: Option<String>,

@@ -20,11 +20,18 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial",
-    sql: include_str!("migrations/001_initial.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial",
+        sql: include_str!("migrations/001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "agent_attribution",
+        sql: include_str!("migrations/002_agent_attribution.sql"),
+    },
+];
 
 /// The schema version this build knows how to produce.
 #[must_use]
@@ -109,6 +116,44 @@ mod tests {
             .query_row("SELECT count(*) FROM raw_event", [], |r| r.get(0))
             .expect("count");
         assert_eq!(n, 1, "re-migration must not disturb existing rows");
+    }
+
+    /// With more than one migration the stepper can be tested part-way, which
+    /// a single-migration schema could not exercise.
+    #[test]
+    fn steps_forward_from_a_partial_schema() {
+        let db = Db::open_in_memory().expect("open");
+        assert!(
+            latest_version() >= 2,
+            "this test needs at least two migrations"
+        );
+
+        // Pretend only migration 001 had ever run.
+        db.conn()
+            .pragma_update(None, "user_version", 1)
+            .expect("rewind");
+        db.conn()
+            .execute_batch(
+                "DROP INDEX tool_call_agent_id;
+                 ALTER TABLE tool_call DROP COLUMN agent_id;
+                 ALTER TABLE session DROP COLUMN slug;",
+            )
+            .expect("undo 002");
+
+        let ended = migrate(db.conn()).expect("step to latest");
+        assert_eq!(ended, latest_version());
+
+        // The column 002 adds is back.
+        db.conn()
+            .query_row("SELECT agent_id FROM tool_call LIMIT 1", [], |_| Ok(()))
+            .or_else(|e| {
+                if matches!(e, rusqlite::Error::QueryReturnedNoRows) {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            })
+            .expect("agent_id exists after stepping");
     }
 
     #[test]

@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
 description = "Transcript parsing, backfill and live tailing for toolog"
 
 [lints]
@@ -12,3 +13,15 @@ workspace = true
 
 [dependencies]
 toolog-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+jiff.workspace = true
+notify.workspace = true
+directories.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+# Only for the storage measurement example.
+rusqlite.workspace = true

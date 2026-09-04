@@ -4,17 +4,19 @@
 //! `toolUseResult` that OTEL cannot carry — OTEL truncates tool inputs at 512
 //! characters, and a truncated shell command is not evidence.
 //!
-//! Backfill and live tailing share one parser so history and live capture
-//! cannot drift apart.
-//!
-//! Two properties the parser must hold, both forced by real data in the
-//! planning corpus (39 files, 12 Claude Code versions):
-//!
-//! - `toolUseResult` appears as an object, a bare string *and* an array.
-//!   Assuming one shape fails on roughly 7% of records.
-//! - Unknown tools and unknown record types are stored and skipped, never
-//!   rejected. New tools ship constantly.
-//!
-//! Implementation lands in Phase 2.
+//! [`backfill`] and [`tail`] share one parser and one [`projector`], so history
+//! and live capture cannot drift apart, and re-projection from `raw_event`
+//! produces the same rows as the original ingest.
 //!
 //! [ADR-0002]: ../../../docs/adr/0002-dual-ingestion-transcripts-and-otel.md
+
+pub mod backfill;
+pub mod discover;
+pub mod envelope;
+pub mod jsonl;
+pub mod normalize;
+pub mod projector;
+pub mod tail;
+
+pub use backfill::{Backfill, BackfillReport};
+pub use projector::{ProjectStats, TranscriptProjector};

@@ -57,7 +57,9 @@ headlessly; no ingestion or UI yet.
 
 ### Measured against the real corpus
 
-`cargo run --release -p toolog-core --example measure_storage`, over 39 transcript
+`cargo run --release -p toolog-ingest --example measure_storage`
+(the example moved to `toolog-ingest` in Phase 2, once the real normalizer existed to replace
+its stand-in projector), over 39 transcript
 files (41.2 MiB, 30 sessions, **2,415 tool calls**):
 
 | | |

@@ -18,7 +18,7 @@ use crate::model::{
 /// Every `tool_call` column, in the order [`map_tool_call`] expects.
 const TOOL_CALL_COLUMNS: &str = "
     tc.tool_use_id, tc.session_id, tc.prompt_id, tc.message_uuid, tc.parent_uuid,
-    tc.is_sidechain, tc.agent_name, tc.tool_name, tc.tool_kind, tc.mcp_server,
+    tc.is_sidechain, tc.agent_id, tc.agent_name, tc.tool_name, tc.tool_kind, tc.mcp_server,
     tc.mcp_tool, tc.called_at, tc.completed_at, tc.input_json, tc.input_summary,
     tc.target_path, tc.result_json, tc.result_text, tc.result_size, tc.success,
     tc.duration_ms, tc.error_type, tc.decision, tc.decision_source,
@@ -32,26 +32,27 @@ fn map_tool_call(row: &Row<'_>) -> rusqlite::Result<ToolCall> {
         message_uuid: row.get(3)?,
         parent_uuid: row.get(4)?,
         is_sidechain: row.get(5)?,
-        agent_name: row.get(6)?,
-        tool_name: row.get(7)?,
-        tool_kind: row.get(8)?,
-        mcp_server: row.get(9)?,
-        mcp_tool: row.get(10)?,
-        called_at: row.get(11)?,
-        completed_at: row.get(12)?,
-        input_json: row.get(13)?,
-        input_summary: row.get(14)?,
-        target_path: row.get(15)?,
-        result_json: row.get(16)?,
-        result_text: row.get(17)?,
-        result_size: row.get(18)?,
-        success: row.get(19)?,
-        duration_ms: row.get(20)?,
-        error_type: row.get(21)?,
-        decision: row.get(22)?,
-        decision_source: row.get(23)?,
-        permission_mode: row.get(24)?,
-        provenance: row.get(25)?,
+        agent_id: row.get(6)?,
+        agent_name: row.get(7)?,
+        tool_name: row.get(8)?,
+        tool_kind: row.get(9)?,
+        mcp_server: row.get(10)?,
+        mcp_tool: row.get(11)?,
+        called_at: row.get(12)?,
+        completed_at: row.get(13)?,
+        input_json: row.get(14)?,
+        input_summary: row.get(15)?,
+        target_path: row.get(16)?,
+        result_json: row.get(17)?,
+        result_text: row.get(18)?,
+        result_size: row.get(19)?,
+        success: row.get(20)?,
+        duration_ms: row.get(21)?,
+        error_type: row.get(22)?,
+        decision: row.get(23)?,
+        decision_source: row.get(24)?,
+        permission_mode: row.get(25)?,
+        provenance: row.get(26)?,
     })
 }
 
@@ -163,7 +164,7 @@ pub fn file_changes(conn: &Connection, tool_use_id: &str) -> Result<Vec<FileChan
 pub fn list_sessions(conn: &Connection, page: Page) -> Result<Vec<Session>> {
     let mut stmt = conn.prepare(
         "SELECT session_id, project_path, transcript_path, cwd, git_branch, cc_version,
-                entrypoint, agent_name, first_seen, last_seen
+                entrypoint, agent_name, slug, first_seen, last_seen
          FROM session
          ORDER BY last_seen DESC, session_id
          LIMIT ?1 OFFSET ?2",
@@ -178,8 +179,9 @@ pub fn list_sessions(conn: &Connection, page: Page) -> Result<Vec<Session>> {
             cc_version: row.get(5)?,
             entrypoint: row.get(6)?,
             agent_name: row.get(7)?,
-            first_seen: row.get(8)?,
-            last_seen: row.get(9)?,
+            slug: row.get(8)?,
+            first_seen: row.get(9)?,
+            last_seen: row.get(10)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -208,7 +210,7 @@ pub fn search(conn: &Connection, input: &str, page: Page) -> Result<Vec<SearchHi
     let rows = stmt.query_map(params![query, page.limit, page.offset], |row| {
         Ok(SearchHit {
             tool_call: map_tool_call(row)?,
-            snippet: row.get(26)?,
+            snippet: row.get(27)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

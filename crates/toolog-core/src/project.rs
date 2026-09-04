@@ -39,9 +39,9 @@ const PROJECTION_TABLES: &[&str] = &[
 pub fn upsert_session(conn: &Connection, s: &Session) -> Result<()> {
     conn.prepare_cached(
         "INSERT INTO session (session_id, project_path, transcript_path, cwd, git_branch,
-                              cc_version, entrypoint, agent_name, first_seen, last_seen)
+                              cc_version, entrypoint, agent_name, slug, first_seen, last_seen)
          VALUES (:session_id, :project_path, :transcript_path, :cwd, :git_branch,
-                 :cc_version, :entrypoint, :agent_name, :first_seen, :last_seen)
+                 :cc_version, :entrypoint, :agent_name, :slug, :first_seen, :last_seen)
          ON CONFLICT (session_id) DO UPDATE SET
              project_path    = COALESCE(excluded.project_path,    session.project_path),
              transcript_path = COALESCE(excluded.transcript_path, session.transcript_path),
@@ -50,6 +50,7 @@ pub fn upsert_session(conn: &Connection, s: &Session) -> Result<()> {
              cc_version      = COALESCE(excluded.cc_version,      session.cc_version),
              entrypoint      = COALESCE(excluded.entrypoint,      session.entrypoint),
              agent_name      = COALESCE(excluded.agent_name,      session.agent_name),
+             slug            = COALESCE(excluded.slug,            session.slug),
              first_seen      = min(COALESCE(excluded.first_seen, session.first_seen),
                                    COALESCE(session.first_seen, excluded.first_seen)),
              last_seen       = max(COALESCE(excluded.last_seen, session.last_seen),
@@ -64,6 +65,7 @@ pub fn upsert_session(conn: &Connection, s: &Session) -> Result<()> {
         ":cc_version": s.cc_version,
         ":entrypoint": s.entrypoint,
         ":agent_name": s.agent_name,
+        ":slug": s.slug,
         ":first_seen": s.first_seen,
         ":last_seen": s.last_seen,
     })?;
@@ -78,12 +80,12 @@ pub fn upsert_transcript(conn: &Connection, tool_use_id: &str, f: &TranscriptFac
     conn.prepare_cached(
         "INSERT INTO tool_call (
              tool_use_id, session_id, prompt_id, message_uuid, parent_uuid, is_sidechain,
-             agent_name, tool_name, tool_kind, mcp_server, mcp_tool, called_at, completed_at,
+             agent_id, agent_name, tool_name, tool_kind, mcp_server, mcp_tool, called_at, completed_at,
              input_json, input_summary, target_path, result_json, result_text, result_size,
              success, provenance)
          VALUES (
              :tool_use_id, :session_id, :prompt_id, :message_uuid, :parent_uuid, :is_sidechain,
-             :agent_name, :tool_name, :tool_kind, :mcp_server, :mcp_tool, :called_at, :completed_at,
+             :agent_id, :agent_name, :tool_name, :tool_kind, :mcp_server, :mcp_tool, :called_at, :completed_at,
              :input_json, :input_summary, :target_path, :result_json, :result_text, :result_size,
              :success, :bit)
          ON CONFLICT (tool_use_id) DO UPDATE SET
@@ -92,6 +94,7 @@ pub fn upsert_transcript(conn: &Connection, tool_use_id: &str, f: &TranscriptFac
              message_uuid  = COALESCE(excluded.message_uuid,  tool_call.message_uuid),
              parent_uuid   = COALESCE(excluded.parent_uuid,   tool_call.parent_uuid),
              is_sidechain  = COALESCE(excluded.is_sidechain,  tool_call.is_sidechain),
+             agent_id      = COALESCE(excluded.agent_id,      tool_call.agent_id),
              agent_name    = COALESCE(excluded.agent_name,    tool_call.agent_name),
              tool_name     = COALESCE(excluded.tool_name,     tool_call.tool_name),
              tool_kind     = COALESCE(excluded.tool_kind,     tool_call.tool_kind),
@@ -115,6 +118,7 @@ pub fn upsert_transcript(conn: &Connection, tool_use_id: &str, f: &TranscriptFac
         ":message_uuid": f.message_uuid,
         ":parent_uuid": f.parent_uuid,
         ":is_sidechain": f.is_sidechain,
+        ":agent_id": f.agent_id,
         ":agent_name": f.agent_name,
         ":tool_name": f.tool_name,
         ":tool_kind": f.tool_kind,
@@ -277,6 +281,46 @@ pub fn insert_permission_mode_change(conn: &Connection, c: &PermissionModeChange
     Ok(())
 }
 
+/// Move a session's working directory, overriding whatever was recorded before.
+///
+/// A `relocated` record can appear anywhere in a transcript — in practice often
+/// at the top, before the records carrying the pre-move `cwd`. Ordinary session
+/// upserts merge newest-wins, so relocation has to be applied as a terminal fact
+/// once the stream has been read, or the old path simply overwrites it.
+pub fn relocate_session(conn: &Connection, session_id: &str, cwd: &str) -> Result<()> {
+    conn.prepare_cached("UPDATE session SET cwd = ?2, project_path = ?2 WHERE session_id = ?1")?
+        .execute(params![session_id, cwd])?;
+    Ok(())
+}
+
+/// Record a subagent instance's type, filling only calls that lack one.
+///
+/// The type appears on some of a subagent's records and not others, so it has to
+/// be spread across the instance's calls once the stream has been seen.
+pub fn set_agent_type(conn: &Connection, agent_id: &str, agent_name: &str) -> Result<()> {
+    conn.prepare_cached(
+        "UPDATE tool_call SET agent_name = ?2 WHERE agent_id = ?1 AND agent_name IS NULL",
+    )?
+    .execute(params![agent_id, agent_name])?;
+    Ok(())
+}
+
+/// Give every call in a subagent instance the type one of its siblings carried.
+///
+/// The fallback for instances whose spawning `Agent` call was never seen — in a
+/// partial backfill, or when the parent session's transcript is gone.
+pub fn spread_agent_names(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "UPDATE tool_call SET agent_name = (
+             SELECT peer.agent_name FROM tool_call peer
+             WHERE peer.agent_id = tool_call.agent_id AND peer.agent_name IS NOT NULL
+             LIMIT 1)
+         WHERE agent_id IS NOT NULL AND agent_name IS NULL",
+        [],
+    )?;
+    Ok(())
+}
+
 /// Turns stored evidence back into projection rows.
 ///
 /// Implemented by the lane crates, which own the parsing. `toolog-core` owns
@@ -285,6 +329,16 @@ pub trait Projector {
     /// Project one stored record. Unknown records should be skipped, not
     /// rejected — new Claude Code record types appear constantly.
     fn project(&mut self, conn: &Connection, event: &RawEvent) -> Result<()>;
+
+    /// Called once after the last record, inside the same transaction.
+    ///
+    /// For facts that can only be settled with the whole stream in hand — a
+    /// subagent's type, for instance, appears on only some of its records and
+    /// has to be spread across the rest.
+    fn finish(&mut self, conn: &Connection) -> Result<()> {
+        let _ = conn;
+        Ok(())
+    }
 }
 
 /// What a re-projection did.
@@ -340,6 +394,7 @@ pub fn reproject(
     if let Some(e) = failed {
         return Err(e);
     }
+    projector.finish(&tx)?;
     tx.commit()?;
 
     let tool_calls = conn.query_row("SELECT count(*) FROM tool_call", [], |r| r.get(0))?;

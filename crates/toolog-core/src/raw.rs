@@ -129,6 +129,44 @@ pub fn scan(conn: &Connection, lane: Option<Lane>, f: &mut dyn FnMut(&RawEvent))
     Ok(n)
 }
 
+/// The highest `raw_event.id` currently stored.
+///
+/// Paired with [`scan_after`] this lets an incremental ingest project only the
+/// records it just added.
+pub fn max_id(conn: &Connection) -> Result<i64> {
+    Ok(
+        conn.query_row("SELECT COALESCE(max(id), 0) FROM raw_event", [], |r| {
+            r.get(0)
+        })?,
+    )
+}
+
+/// Stream records stored after `after_id`, oldest first.
+pub fn scan_after(conn: &Connection, after_id: i64, f: &mut dyn FnMut(&RawEvent)) -> Result<usize> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, lane, source_ref, source_offset, content_sha256, ingested_at, body
+         FROM raw_event WHERE id > ?1 ORDER BY id",
+    )?;
+    let rows = stmt.query_map(params![after_id], |row| {
+        Ok(RawEvent {
+            id: row.get(0)?,
+            lane: row.get(1)?,
+            source_ref: row.get(2)?,
+            source_offset: row.get(3)?,
+            content_sha256: row.get(4)?,
+            ingested_at: row.get(5)?,
+            body: row.get(6)?,
+        })
+    })?;
+
+    let mut n = 0;
+    for row in rows {
+        f(&row?);
+        n += 1;
+    }
+    Ok(n)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

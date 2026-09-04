@@ -36,3 +36,9 @@ pub mod raw;
 
 pub use db::Db;
 pub use error::{Error, Result};
+
+/// Re-exported so the lane crates can pass a connection without depending on
+/// `rusqlite` themselves — [ADR-0003] keeps SQL inside this crate.
+///
+/// [ADR-0003]: ../../../docs/adr/0003-sqlite-as-the-embedded-store.md
+pub use rusqlite::Connection;
