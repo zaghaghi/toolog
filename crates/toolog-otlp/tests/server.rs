@@ -356,3 +356,47 @@ async fn logs_posted_to_the_root_path_are_accepted() {
             .is_some()
     );
 }
+
+/// Pausing must actually stop storage, and must be honest that it does.
+///
+/// The port stays bound so the exporter is not left posting into a refused
+/// connection, and the discarded batch is counted separately from a shortfall.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_paused_receiver_accepts_and_discards_rather_than_storing() {
+    let harness = Harness::start().await;
+    let url = harness.url("/v1/logs");
+
+    harness.handle.set_paused(true);
+    assert!(harness.handle.is_paused());
+
+    let body =
+        testing::request(vec![testing::tool_result("toolu_paused", true, 1)]).encode_to_vec();
+    assert_eq!(
+        post(&url, "application/x-protobuf", &body).0,
+        200,
+        "the export succeeded; we chose not to keep it"
+    );
+
+    let counters = harness.handle.counters();
+    assert_eq!(counters.paused_drops, 1);
+    assert_eq!(counters.dropped, 0, "a pause is not a shortfall");
+
+    harness.handle.set_paused(false);
+    let body =
+        testing::request(vec![testing::tool_result("toolu_resumed", true, 2)]).encode_to_vec();
+    assert_eq!(post(&url, "application/x-protobuf", &body).0, 200);
+    assert!(harness.wait_for_calls(1), "capture resumes");
+
+    let reader = harness.reader();
+    assert!(
+        query::tool_call_detail(reader.conn(), "toolu_paused")
+            .expect("query")
+            .is_none(),
+        "what arrived while paused is gone — OTEL events are not replayable"
+    );
+    assert!(
+        query::tool_call_detail(reader.conn(), "toolu_resumed")
+            .expect("query")
+            .is_some()
+    );
+}

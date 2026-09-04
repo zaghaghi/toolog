@@ -12,3 +12,11 @@
 //! - `export` — evidence bundles (Phase 5).
 //!
 //! [ADR-0007]: ../../../docs/adr/0007-single-resident-process.md
+
+pub mod capture;
+pub mod cli;
+pub mod commands;
+pub mod doctor;
+pub mod launchagent;
+pub mod logging;
+pub mod settings;

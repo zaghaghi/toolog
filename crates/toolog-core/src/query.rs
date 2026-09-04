@@ -25,34 +25,39 @@ const TOOL_CALL_COLUMNS: &str = "
     tc.permission_mode, tc.provenance";
 
 fn map_tool_call(row: &Row<'_>) -> rusqlite::Result<ToolCall> {
+    map_tool_call_offset(row, 0)
+}
+
+/// [`map_tool_call`] when the columns do not start at index 0.
+fn map_tool_call_offset(row: &Row<'_>, base: usize) -> rusqlite::Result<ToolCall> {
     Ok(ToolCall {
-        tool_use_id: row.get(0)?,
-        session_id: row.get(1)?,
-        prompt_id: row.get(2)?,
-        message_uuid: row.get(3)?,
-        parent_uuid: row.get(4)?,
-        is_sidechain: row.get(5)?,
-        agent_id: row.get(6)?,
-        agent_name: row.get(7)?,
-        tool_name: row.get(8)?,
-        tool_kind: row.get(9)?,
-        mcp_server: row.get(10)?,
-        mcp_tool: row.get(11)?,
-        called_at: row.get(12)?,
-        completed_at: row.get(13)?,
-        input_json: row.get(14)?,
-        input_summary: row.get(15)?,
-        target_path: row.get(16)?,
-        result_json: row.get(17)?,
-        result_text: row.get(18)?,
-        result_size: row.get(19)?,
-        success: row.get(20)?,
-        duration_ms: row.get(21)?,
-        error_type: row.get(22)?,
-        decision: row.get(23)?,
-        decision_source: row.get(24)?,
-        permission_mode: row.get(25)?,
-        provenance: row.get(26)?,
+        tool_use_id: row.get(base)?,
+        session_id: row.get(base + 1)?,
+        prompt_id: row.get(base + 2)?,
+        message_uuid: row.get(base + 3)?,
+        parent_uuid: row.get(base + 4)?,
+        is_sidechain: row.get(base + 5)?,
+        agent_id: row.get(base + 6)?,
+        agent_name: row.get(base + 7)?,
+        tool_name: row.get(base + 8)?,
+        tool_kind: row.get(base + 9)?,
+        mcp_server: row.get(base + 10)?,
+        mcp_tool: row.get(base + 11)?,
+        called_at: row.get(base + 12)?,
+        completed_at: row.get(base + 13)?,
+        input_json: row.get(base + 14)?,
+        input_summary: row.get(base + 15)?,
+        target_path: row.get(base + 16)?,
+        result_json: row.get(base + 17)?,
+        result_text: row.get(base + 18)?,
+        result_size: row.get(base + 19)?,
+        success: row.get(base + 20)?,
+        duration_ms: row.get(base + 21)?,
+        error_type: row.get(base + 22)?,
+        decision: row.get(base + 23)?,
+        decision_source: row.get(base + 24)?,
+        permission_mode: row.get(base + 25)?,
+        provenance: row.get(base + 26)?,
     })
 }
 
@@ -217,7 +222,8 @@ pub fn search(conn: &Connection, input: &str, page: Page) -> Result<Vec<SearchHi
 }
 
 /// Corpus-wide totals.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
 pub struct Totals {
     pub raw_events: i64,
     pub sessions: i64,
@@ -258,7 +264,8 @@ pub fn stats_totals(conn: &Connection) -> Result<Totals> {
 }
 
 /// Per-tool frequency, failure rate and latency.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
 pub struct ToolUsage {
     pub tool_name: String,
     pub calls: i64,
@@ -319,7 +326,14 @@ pub fn stats_tool_usage(conn: &Connection) -> Result<Vec<ToolUsage>> {
 pub fn reconcile(conn: &Connection) -> Result<Reconciliation> {
     let mut stmt =
         conn.prepare("SELECT provenance, count(*) FROM tool_call GROUP BY provenance")?;
-    let mut out = Reconciliation::default();
+    let mut out = Reconciliation {
+        rejected: conn.query_row(
+            "SELECT count(*) FROM tool_call WHERE decision = 'reject'",
+            [],
+            |r| r.get(0),
+        )?,
+        ..Reconciliation::default()
+    };
     let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
 
     for row in rows {
@@ -334,4 +348,92 @@ pub fn reconcile(conn: &Connection) -> Result<Reconciliation> {
         }
     }
     Ok(out)
+}
+
+/// What the store already holds, per lane.
+///
+/// `doctor` reports this so "is it working?" has a numeric answer rather than
+/// a green tick.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
+pub struct IngestSummary {
+    /// Distinct transcript files with at least one stored record.
+    pub transcript_files: i64,
+    pub transcript_records: i64,
+    pub otlp_records: i64,
+    /// When anything was last stored, in milliseconds since the epoch.
+    pub last_ingest_at: Option<i64>,
+}
+
+/// Per-lane ingest counts.
+pub fn ingest_summary(conn: &Connection) -> Result<IngestSummary> {
+    let (transcript_files, transcript_records) = conn.query_row(
+        "SELECT count(DISTINCT source_ref), count(*) FROM raw_event WHERE lane = 'transcript'",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+
+    Ok(IngestSummary {
+        transcript_files,
+        transcript_records,
+        otlp_records: conn.query_row(
+            "SELECT count(*) FROM raw_event WHERE lane = 'otlp'",
+            [],
+            |r| r.get(0),
+        )?,
+        last_ingest_at: conn
+            .query_row("SELECT max(ingested_at) FROM raw_event", [], |r| r.get(0))?,
+    })
+}
+
+/// Records stored at or after `since_ms`.
+///
+/// The tray's "events today" figure. Counted on `raw_event` rather than
+/// `tool_call` deliberately: it answers "is capture alive right now?", and
+/// every lane writes there first ([ADR-0004]).
+///
+/// [ADR-0004]: ../../../docs/adr/0004-store-raw-project-normalized.md
+pub fn events_since(conn: &Connection, since_ms: i64) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT count(*) FROM raw_event WHERE ingested_at >= ?1",
+        params![since_ms],
+        |r| r.get(0),
+    )?)
+}
+
+/// Tool calls whose row was created after `after_rowid`, oldest first.
+///
+/// The live view's cursor. `rowid` is monotonic for *new* rows, which is what a
+/// stream of "something just happened" needs; a row later completed by the
+/// other lane is an update, not an arrival, and is picked up on the next full
+/// query rather than re-emitted here.
+pub fn tool_calls_after_rowid(
+    conn: &Connection,
+    after_rowid: i64,
+    limit: u32,
+) -> Result<Vec<(i64, ToolCall)>> {
+    let sql = format!(
+        "SELECT tc.rowid, {TOOL_CALL_COLUMNS}
+         FROM tool_call tc
+         WHERE tc.rowid > ?1
+         ORDER BY tc.rowid
+         LIMIT ?2"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![after_rowid, limit], |row| {
+        // Column 0 is the rowid; the mapper expects the call to start at 0, so
+        // read it out first and map the rest by shifting the indices.
+        let rowid: i64 = row.get(0)?;
+        Ok((rowid, map_tool_call_offset(row, 1)?))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// The highest `tool_call` rowid, for a live cursor's starting point.
+pub fn max_tool_call_rowid(conn: &Connection) -> Result<i64> {
+    Ok(
+        conn.query_row("SELECT COALESCE(max(rowid), 0) FROM tool_call", [], |r| {
+            r.get(0)
+        })?,
+    )
 }

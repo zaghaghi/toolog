@@ -1,9 +1,9 @@
 //! The OTLP lane: the *decision* half of the audit trail ([ADR-0002]).
 //!
-//! Carries what transcripts never record — who approved each call and how, how
-//! long it took, what it cost, and the calls that were **rejected**. A denied
-//! tool call leaves no transcript trace whatsoever, so this lane is the only
-//! place a refusal is ever observed.
+//! Carries what transcripts never record — who approved or refused each call
+//! and under which rule, how long it took, and what it cost. A transcript does
+//! keep a trace of a refused call, but only as an English sentence in a result
+//! body: `decision` and `decision_source` exist nowhere else.
 //!
 //! The receiver is embedded rather than delegated to `otelcol` ([ADR-0005]): the
 //! brief asks for a one-artifact install, and Claude Code is the only client,
@@ -19,12 +19,14 @@
 pub mod attrs;
 pub mod decode;
 pub mod events;
+pub mod health;
 pub mod ingest;
 pub mod port;
 pub mod projector;
 pub mod server;
 pub mod testing;
 
+pub use health::{Health, probe};
 pub use ingest::{IngestStats, ingest_records};
 pub use projector::{OtlpProjector, OtlpStats};
 pub use server::{Collector, CollectorHandle};

@@ -63,14 +63,18 @@ impl Tail {
         self
     }
 
-    /// Watch until `should_stop` returns true, ingesting as files change.
+    /// Watch until `should_stop` returns true, reporting settled bursts of
+    /// changed transcripts.
     ///
-    /// `on_file` is called after each file is ingested. Blocks; run it on its
-    /// own thread.
-    pub fn run(
+    /// This is the watching half on its own, with no database in sight. The
+    /// application runs it on a thread of its own and submits the ingest to the
+    /// process's single writer ([ADR-0007]); [`Tail::run`] is the same thing
+    /// with a connection in hand.
+    ///
+    /// [ADR-0007]: ../../../docs/adr/0007-single-resident-process.md
+    pub fn watch(
         &self,
-        conn: &Connection,
-        mut on_file: impl FnMut(&FileReport),
+        mut on_batch: impl FnMut(&[PathBuf]),
         should_stop: &dyn Fn() -> bool,
     ) -> Result<()> {
         let (tx, rx) = mpsc::channel();
@@ -87,7 +91,6 @@ impl Tail {
             .watch(&self.root, RecursiveMode::Recursive)
             .map_err(|e| watch_error(&e))?;
 
-        let mut projector = TranscriptProjector::new();
         let mut pending: HashSet<PathBuf> = HashSet::new();
         let mut oldest: Option<Instant> = None;
 
@@ -109,18 +112,35 @@ impl Tail {
                 Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
             }
 
-            // Ingest once the burst has settled.
+            // Report once the burst has settled.
             let settled = oldest.is_some_and(|t| t.elapsed() >= self.debounce);
             if settled && !pending.is_empty() {
                 let mut paths: Vec<_> = pending.drain().collect();
                 paths.sort();
                 oldest = None;
+                paths.retain(|p| p.exists());
+                if !paths.is_empty() {
+                    on_batch(&paths);
+                }
+            }
+        }
+    }
 
+    /// Watch until `should_stop` returns true, ingesting as files change.
+    ///
+    /// `on_file` is called after each file is ingested. Blocks; run it on its
+    /// own thread.
+    pub fn run(
+        &self,
+        conn: &Connection,
+        mut on_file: impl FnMut(&FileReport),
+        should_stop: &dyn Fn() -> bool,
+    ) -> Result<()> {
+        let mut projector = TranscriptProjector::new();
+        self.watch(
+            |paths| {
                 for path in paths {
-                    if !path.exists() {
-                        continue;
-                    }
-                    match ingest_and_project(conn, &path, &mut projector) {
+                    match ingest_and_project(conn, path, &mut projector) {
                         Ok(report) => on_file(&report),
                         // One unreadable file must not stop the watch; a
                         // transcript can be mid-rotation when we reach it.
@@ -129,8 +149,9 @@ impl Tail {
                         }
                     }
                 }
-            }
-        }
+            },
+            should_stop,
+        )
     }
 }
 

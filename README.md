@@ -1,7 +1,8 @@
 # Toolog
 
-> **Status: planning complete, implementation not started.** See [docs/](docs/README.md).
-> Working name — see [Phase 0](docs/phases/00-foundation.md), task 0.7.
+> **Status: Phases 0–4 done.** Capture works end to end — both lanes, the menu-bar app and the
+> CLI. The timeline and the other three views arrive in Phases 5 and 6.
+> See [docs/](docs/README.md).
 
 A local audit trail for Claude Code tool calls.
 
@@ -42,12 +43,15 @@ Two ingestion lanes, because neither is complete alone:
 **Transcripts** carry the untruncated content — the full shell command, the full file diff. OTEL
 truncates tool inputs at 512 characters, which is not evidence.
 
-**OTEL** carries what transcripts never record: who approved each call and how, how long it took,
-what it cost — and **the calls you denied**, which leave no transcript trace at all.
+**OTEL** carries what transcripts never record: **who approved or refused each call, and under
+which rule**, how long it took, and what it cost. A refused call does appear in the transcript — but
+only as a sentence inside a result body, with nothing to query. `decision` and `decision_source`
+exist in one place.
 
 The two are joined exactly on `tool_use_id`, and where they disagree, that is a finding rather than
-an inconsistency to paper over: a call only OTEL saw was rejected; a call only the transcript saw is
-a gap in collection. This is how the tool demonstrates its own completeness instead of asserting it.
+an inconsistency to paper over: a call only the transcript saw is a gap in collection, and a call
+only OTEL saw had no transcript body written. This is how the tool demonstrates its own completeness
+instead of asserting it.
 
 Neither lane puts any code on Claude Code's critical path. One is a read-only file watch; the other
 is a fire-and-forget network export whose failure costs nothing.
@@ -56,13 +60,33 @@ See [ADR-0002](docs/adr/0002-dual-ingestion-transcripts-and-otel.md) for the ful
 
 ## Install
 
-Not yet available — see [Phase 8](docs/phases/08-packaging-distribution.md).
+No packaged build yet — see [Phase 8](docs/phases/08-packaging-distribution.md). From a checkout:
 
 ```
-brew install --cask toolog   # planned
-toolog doctor --fix          # configures Claude Code telemetry, with a backup
+cargo build --release        # one binary: the app and the CLI
+toolog doctor                # what is configured, what is running, what is missing
+toolog doctor --fix          # configures Claude Code telemetry, merged, with a backup
 toolog backfill              # imports your existing history
+toolog                       # starts the menu-bar app and the receiver
 ```
+
+`brew install --cask toolog` is the Phase 8 target.
+
+## Commands
+
+| | |
+|---|---|
+| `toolog` | Menu-bar app: receiver, transcript tailer, window on demand |
+| `toolog doctor [--fix]` | The state of the integration. Read-only unless `--fix` |
+| `toolog backfill` | Import `~/.claude/projects`. Safe to re-run |
+| `toolog verify` | Cross-check the two lanes: gaps, refusals, completeness |
+| `toolog export` | JSON, JSONL or CSV, with filters |
+| `toolog agent install` | A login agent so capture survives a restart |
+
+`doctor --fix` writes only to `~/.claude/settings.json`, merges rather than overwrites, keeps a
+timestamped backup, and refuses outright if a non-loopback OTEL endpoint is already configured —
+your existing telemetry pipeline is not ours to redirect. See
+[ADR-0006](docs/adr/0006-configure-via-settings-env-block.md).
 
 ## Documentation
 

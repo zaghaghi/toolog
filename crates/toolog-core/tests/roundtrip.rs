@@ -250,7 +250,7 @@ fn reconciliation_separates_rejections_from_gaps() {
     );
     assert_eq!(
         r.otel_only, 1,
-        "toolu_4: rejected, so no transcript body exists"
+        "toolu_4: no transcript body was written for it"
     );
     assert_eq!(r.total(), 4);
 
@@ -519,4 +519,55 @@ fn wal_lets_a_reader_work_during_an_open_write() {
         .query_row("SELECT count(*) FROM tool_call", [], |r| r.get(0))
         .expect("read after");
     assert_eq!(after, 5);
+}
+
+/// A refusal is read from the decision, never from a missing transcript.
+///
+/// Phase 4 measured a live denial and found it in **both** lanes: the
+/// transcript keeps the `tool_use` block and a `tool_result` holding the
+/// refusal message. Inferring rejection from provenance — as ADR-0009
+/// originally proposed — would have missed every one of them.
+#[test]
+fn a_refused_call_is_counted_even_when_both_lanes_saw_it() {
+    use toolog_core::model::{OtelFacts, TranscriptFacts};
+
+    let db = Db::open_in_memory().expect("open");
+
+    project::upsert_transcript(
+        db.conn(),
+        "toolu_denied",
+        &TranscriptFacts {
+            tool_name: Some("Bash".to_string()),
+            input_summary: Some("ls /nowhere".to_string()),
+            result_text: Some("Permission to use Bash has been denied".to_string()),
+            ..TranscriptFacts::default()
+        },
+    )
+    .expect("transcript");
+    project::upsert_otel(
+        db.conn(),
+        "toolu_denied",
+        &OtelFacts {
+            tool_name: Some("Bash".to_string()),
+            decision: Some("reject".to_string()),
+            decision_source: Some("config".to_string()),
+            ..OtelFacts::default()
+        },
+    )
+    .expect("otel");
+
+    let r = query::reconcile(db.conn()).expect("reconcile");
+    assert_eq!(r.both, 1, "a denial is witnessed by both lanes");
+    assert_eq!(r.otel_only, 0, "provenance says nothing about refusal");
+    assert_eq!(r.rejected, 1, "the decision column is what identifies it");
+
+    let call = query::tool_call_detail(db.conn(), "toolu_denied")
+        .expect("query")
+        .expect("row");
+    assert!(call.is_rejected());
+    assert_eq!(
+        call.decision_source.as_deref(),
+        Some("config"),
+        "which rule denied it lives only in the OTLP lane"
+    );
 }

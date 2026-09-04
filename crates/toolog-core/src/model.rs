@@ -40,9 +40,13 @@ impl Lane {
 
 /// Bits of `tool_call.provenance`.
 ///
-/// A row carrying only [`OTLP`](provenance::OTLP) was **rejected** — denied
-/// calls leave no transcript trace. A row carrying only
-/// [`TRANSCRIPT`](provenance::TRANSCRIPT) is a **gap in collection**.
+/// A row carrying only [`TRANSCRIPT`](provenance::TRANSCRIPT) is a **gap in
+/// collection**: the OTLP lane never saw it, so its decision, duration and cost
+/// are missing. A row carrying only [`OTLP`](provenance::OTLP) is a call for
+/// which no transcript body was written.
+///
+/// Neither bit means "rejected". Phase 4 measured a live denial and found it in
+/// **both** lanes — see [`ToolCall::is_rejected`], which reads the decision.
 pub mod provenance {
     /// Witnessed by the transcript lane.
     pub const TRANSCRIPT: i64 = 1;
@@ -95,7 +99,8 @@ pub struct RawEvent {
 }
 
 /// Session facts, from transcript envelopes and OTLP attributes.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
 pub struct Session {
     pub session_id: String,
     pub project_path: Option<String>,
@@ -168,16 +173,17 @@ pub struct OtelFacts {
     ///
     /// Written with **existing-wins** semantics, unlike every other field here:
     /// OTEL truncates values at 512 characters, so it must never displace a
-    /// transcript's full copy. It fills in only where nothing else can — which
-    /// is exactly the rejected-call case, where no transcript exists and this is
-    /// the sole record of what was attempted.
+    /// transcript's full copy. It fills in only where nothing else can: a call
+    /// aborted before any transcript record was written, where this is the sole
+    /// account of what was attempted.
     pub attempted_input_json: Option<String>,
     pub attempted_input_summary: Option<String>,
     pub attempted_target_path: Option<String>,
 }
 
 /// A fully assembled tool call.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
 pub struct ToolCall {
     pub tool_use_id: String,
     pub session_id: Option<String>,
@@ -225,7 +231,11 @@ impl ToolCall {
         self.provenance & provenance::OTLP != 0
     }
 
-    /// A call the user denied: OTLP saw a decision, no transcript body exists.
+    /// A call that was refused — by a permission rule or by a person.
+    ///
+    /// Read from `decision`, which only the OTLP lane supplies. Deliberately
+    /// **not** inferred from provenance: a denial does leave a transcript
+    /// record, it just says nothing about who denied it or why.
     #[must_use]
     pub fn is_rejected(&self) -> bool {
         self.decision.as_deref() == Some("reject")
@@ -233,7 +243,8 @@ impl ToolCall {
 }
 
 /// One file touched by an `Edit` or `Write`, from `structuredPatch`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
 pub struct FileChange {
     pub tool_use_id: String,
     pub file_path: String,
@@ -285,7 +296,8 @@ pub struct PermissionModeChange {
 
 /// Filters for a timeline page. All fields are `AND`-ed; `None` means no
 /// constraint.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
 pub struct TimelineFilter {
     pub session_id: Option<String>,
     pub project_path: Option<String>,
@@ -300,7 +312,8 @@ pub struct TimelineFilter {
 }
 
 /// Paging for a timeline query.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
 pub struct Page {
     pub limit: u32,
     pub offset: u32,
@@ -316,7 +329,8 @@ impl Default for Page {
 }
 
 /// A search hit: the call, plus an FTS `snippet()` with matches marked.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
 pub struct SearchHit {
     pub tool_call: ToolCall,
     pub snippet: String,
@@ -328,14 +342,23 @@ pub struct SearchHit {
 /// Promoted to a full report by `toolog verify` in Phase 7.
 ///
 /// [ADR-0009]: ../../../docs/adr/0009-correlate-on-tool-use-id.md
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
 pub struct Reconciliation {
-    /// Seen by both lanes — an ordinary accepted call.
+    /// Seen by both lanes.
     pub both: i64,
     /// Transcript only: the OTLP lane missed it. A gap in collection.
     pub transcript_only: i64,
-    /// OTLP only: no transcript body exists, so the call was rejected.
+    /// OTLP only: no transcript body was ever written for this call.
     pub otel_only: i64,
+    /// Calls the OTLP lane recorded a refusal for.
+    ///
+    /// Counted from `decision`, not from provenance. Phase 4 measured a real
+    /// denial and found it in **both** lanes: the transcript keeps the
+    /// `tool_use` block and a `tool_result` whose body is the refusal message.
+    /// Only OTEL says *who* refused and *why*, as structured data — so a
+    /// rejection is identified by this column, never by a missing transcript.
+    pub rejected: i64,
 }
 
 impl Reconciliation {
@@ -347,8 +370,9 @@ impl Reconciliation {
 
     /// Share of transcript-witnessed calls the OTLP lane also saw.
     ///
-    /// `None` when there is nothing to reconcile. Rejected calls are excluded:
-    /// they are expected to be OTLP-only and are not evidence of a gap.
+    /// `None` when there is nothing to reconcile. The denominator is the calls
+    /// the transcript witnessed, so an OTLP-only row neither helps nor hurts:
+    /// it is a call with no transcript body, not a lane that fell behind.
     #[must_use]
     pub fn completeness(&self) -> Option<f64> {
         let witnessed = self.both + self.transcript_only;

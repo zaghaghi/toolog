@@ -16,9 +16,10 @@
 //! [`project`] holds the two lane-specific upserts. They are order-independent
 //! and write disjoint column sets ([ADR-0009]), so a call may be created by
 //! either lane and completed by the other with the same final row. Rows carry a
-//! `provenance` bitmask recording which lanes witnessed them — and a row seen
-//! only by OTLP is a **rejected** call, since a denied call leaves no transcript
-//! trace at all.
+//! `provenance` bitmask recording which lanes witnessed them, so a row the
+//! transcript never reached is visible as such. A **refusal**, though, is read
+//! from the `decision` column and never from provenance: Phase 4 measured a
+//! real denial and found it in both lanes ([ADR-0009]).
 //!
 //! [ADR-0003]: ../../../docs/adr/0003-sqlite-as-the-embedded-store.md
 //! [ADR-0004]: ../../../docs/adr/0004-store-raw-project-normalized.md
@@ -34,6 +35,7 @@ pub mod normalize;
 pub mod project;
 pub mod query;
 pub mod raw;
+pub mod writer;
 
 pub use db::Db;
 pub use error::{Error, Result};

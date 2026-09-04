@@ -8,6 +8,13 @@
 /// and nothing else.
 pub const APP_NAME: &str = "toolog";
 
+/// Reverse-DNS identifier for the macOS bundle, the LaunchAgent label and the
+/// single-instance lock.
+///
+/// One definition: a LaunchAgent whose label disagreed with the bundle would
+/// leave a job nothing could stop.
+pub const BUNDLE_ID: &str = "com.zaghaghi.toolog";
+
 /// Default bind address for the embedded OTLP receiver.
 ///
 /// Loopback is not a default but a requirement ([ADR-0008]): binding any other

@@ -44,6 +44,14 @@ backfill *ARGS:
 verify *ARGS:
     cargo run --bin toolog -- verify {{ARGS}}
 
+# Regenerate ui/src/bindings.ts from the Rust command surface.
+bindings:
+    cargo test -p toolog-app bindings
+
+# Install or remove the login agent that keeps capture running.
+agent action="status":
+    cargo run --bin toolog -- agent {{action}}
+
 # Build the distributable .app / .dmg. Arrives in Phase 8.
 bundle:
     @echo "Phase 8 — not implemented. See docs/phases/08-packaging-distribution.md"

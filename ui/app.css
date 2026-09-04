@@ -1,0 +1,106 @@
+/*
+ * Phase 4 is the shell: the setup flow and a status page. The four views land
+ * in Phases 5 and 6, on top of these tokens.
+ */
+
+:root {
+  --ink: #1c1f26;
+  --ink-soft: #5b6270;
+  --paper: #f7f6f3;
+  --card: #ffffff;
+  --line: #e2e0da;
+  --clay: #b8542f;
+  --good: #2f7d52;
+  --warn: #8a6100;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8e6e1;
+    --ink-soft: #9aa1ad;
+    --paper: #14161b;
+    --card: #1c1f26;
+    --line: #2b3038;
+    --clay: #d97757;
+    --good: #6cc08b;
+    --warn: #d9a441;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 14px/1.55 ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app { padding: 40px 44px 56px; max-width: 760px; margin: 0 auto; }
+#app.loading { color: var(--ink-soft); }
+
+h1 { font-size: 21px; letter-spacing: -0.01em; margin: 0 0 6px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.07em;
+     color: var(--ink-soft); margin: 32px 0 10px; font-weight: 600; }
+p { margin: 0 0 12px; color: var(--ink-soft); max-width: 60ch; }
+strong { color: var(--ink); font-weight: 600; }
+
+.lede { color: var(--ink); font-size: 15px; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px 20px;
+  margin-bottom: 12px;
+}
+
+.row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.row + .row { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.row .label { color: var(--ink-soft); }
+.row .value { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.01em;
+}
+.pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.pill.on { color: var(--good); }
+.pill.off { color: var(--clay); }
+.pill.idle { color: var(--warn); }
+
+button {
+  font: inherit; font-weight: 600;
+  border: 1px solid var(--line); border-radius: 7px;
+  background: var(--card); color: var(--ink);
+  padding: 8px 15px; cursor: pointer;
+}
+button:hover { border-color: var(--ink-soft); }
+button.primary { background: var(--clay); border-color: var(--clay); color: #fff; }
+button.primary:hover { filter: brightness(1.07); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+.actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+
+ul.plain { margin: 0 0 12px; padding-left: 20px; color: var(--ink-soft); max-width: 60ch; }
+ul.plain li { margin-bottom: 6px; }
+ul.plain li strong { color: var(--ink); }
+
+pre.report {
+  background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
+  padding: 14px 16px; overflow-x: auto; font-size: 12px; line-height: 1.5;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--ink-soft);
+  margin: 0;
+}
+
+.problem {
+  border-left: 3px solid var(--clay); padding: 2px 0 2px 12px;
+  margin-bottom: 10px; color: var(--ink);
+}
+
+.note { font-size: 12px; color: var(--ink-soft); }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+
+footer { margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--line); }

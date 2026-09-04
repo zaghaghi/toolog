@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The window's own commands, and opening a local folder in Finder. No network, no filesystem, no shell.",
+  "windows": ["main", "wizard"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-start-dragging",
+    "opener:allow-reveal-item-in-dir"
+  ]
+}

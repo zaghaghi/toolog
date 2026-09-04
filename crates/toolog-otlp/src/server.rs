@@ -11,28 +11,31 @@
 //! # Why a writer thread
 //!
 //! SQLite writes are blocking and [ADR-0007] gives the process a single write
-//! handle. Handlers therefore decode, hand the batch to a bounded channel, and
-//! answer immediately; one thread owns the connection and drains the channel.
+//! handle. Handlers therefore decode, hand the batch to [`toolog_core::writer`],
+//! and answer immediately; one thread owns the connection and drains the queue.
 //!
-//! The bound is the backpressure. If ingestion falls behind, `try_send` fails
-//! and the handler answers 503 rather than growing a queue without limit — and
-//! the drop is **counted and surfaced**, because an audit tool that quietly
-//! loses records is worse than one that admits it cannot keep up.
+//! That writer is shared with the transcript tailer, which is the point: two
+//! connections would reintroduce exactly the lock contention ADR-0007 removes.
+//!
+//! The queue bound is the backpressure. If ingestion falls behind, the submit
+//! fails and the handler answers 503 rather than growing a queue without limit
+//! — and the drop is **counted and surfaced**, because an audit tool that
+//! quietly loses records is worse than one that admits it cannot keep up.
 //!
 //! [ADR-0007]: ../../../docs/adr/0007-single-resident-process.md
 //! [ADR-0008]: ../../../docs/adr/0008-local-only-zero-egress.md
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use opentelemetry_proto::tonic::logs::v1::LogRecord;
-use toolog_core::{Connection, Db};
+use toolog_core::Db;
+use toolog_core::writer::{self, SubmitError, WriteHandle};
 
 use crate::decode::{self, Encoding};
 use crate::ingest;
@@ -40,9 +43,6 @@ use crate::ingest;
 /// Largest export body accepted. Claude Code batches on a short interval, so
 /// legitimate bodies are far smaller; this only bounds a pathological one.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
-
-/// Batches held between the handlers and the writer thread.
-const QUEUE_DEPTH: usize = 256;
 
 /// Counters the tray and `doctor` report.
 #[derive(Debug, Default)]
@@ -53,6 +53,9 @@ pub struct Counters {
     /// swallowed.
     pub dropped: AtomicU64,
     pub rejected_bodies: AtomicU64,
+    /// Batches discarded because the user paused capture. A separate counter
+    /// from `dropped`: one is the user's choice, the other is a shortfall.
+    pub paused_drops: AtomicU64,
 }
 
 impl Counters {
@@ -64,29 +67,34 @@ impl Counters {
             records: self.records.load(Ordering::Relaxed),
             dropped: self.dropped.load(Ordering::Relaxed),
             rejected_bodies: self.rejected_bodies.load(Ordering::Relaxed),
+            paused_drops: self.paused_drops.load(Ordering::Relaxed),
         }
     }
 }
 
 /// A point-in-time reading of [`Counters`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS,
+)]
+#[ts(export_to = "unused/")]
+// A health probe may be reading a build older or newer than its own, so a
+// missing counter is a zero rather than a parse failure.
+#[serde(default)]
 pub struct CounterSnapshot {
     pub batches: u64,
     pub records: u64,
     pub dropped: u64,
     pub rejected_bodies: u64,
+    pub paused_drops: u64,
 }
 
 /// Shared handler state.
 #[derive(Clone)]
 struct AppState {
-    tx: tokio::sync::mpsc::Sender<Batch>,
+    writer: WriteHandle,
     counters: Arc<Counters>,
-}
-
-struct Batch {
-    source_ref: String,
-    records: Vec<LogRecord>,
+    /// Set while the user has paused capture.
+    paused: Arc<AtomicBool>,
 }
 
 /// A running receiver.
@@ -94,6 +102,7 @@ struct Batch {
 pub struct CollectorHandle {
     addr: SocketAddr,
     counters: Arc<Counters>,
+    paused: Arc<AtomicBool>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
@@ -116,6 +125,24 @@ impl CollectorHandle {
         self.counters.snapshot()
     }
 
+    /// Stop storing records without closing the port.
+    ///
+    /// The port stays bound deliberately: an exporter posting into a refused
+    /// connection logs errors the user never asked for, and a paused receiver
+    /// that still answers keeps `doctor` truthful about what is running.
+    ///
+    /// **Records that arrive while paused are gone.** OTEL events are not
+    /// replayable from disk the way transcripts are, so this is a real cost —
+    /// counted in `paused_drops` rather than hidden.
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+
     /// Ask the server to stop.
     pub fn shutdown(&mut self) {
         if let Some(tx) = self.shutdown.take() {
@@ -129,21 +156,29 @@ impl CollectorHandle {
 pub struct Collector;
 
 impl Collector {
-    /// Bind `addr` and serve until the returned handle is shut down.
+    /// Bind `addr`, owning the database outright.
     ///
-    /// `db` moves to a writer thread, which owns the only write handle for the
-    /// lifetime of the collector.
+    /// Starts a writer of its own. Use [`Collector::start_with_writer`] when
+    /// the process already has one to share — which the application does.
     pub async fn start(db: Db, addr: SocketAddr) -> std::io::Result<CollectorHandle> {
+        let writer = writer::spawn(db)?;
+        Self::start_with_writer(writer, addr, Arc::new(AtomicBool::new(false))).await
+    }
+
+    /// Bind `addr`, submitting writes to an existing writer.
+    ///
+    /// `paused` is shared with the rest of the application so one switch stops
+    /// both lanes.
+    pub async fn start_with_writer(
+        writer: WriteHandle,
+        addr: SocketAddr,
+        paused: Arc<AtomicBool>,
+    ) -> std::io::Result<CollectorHandle> {
         let counters = Arc::new(Counters::default());
-        let (tx, rx) = tokio::sync::mpsc::channel::<Batch>(QUEUE_DEPTH);
-
-        std::thread::Builder::new()
-            .name("toolog-otlp-writer".into())
-            .spawn(move || writer_loop(&db.into_connection(), rx))?;
-
         let state = AppState {
-            tx,
+            writer,
             counters: Arc::clone(&counters),
+            paused: Arc::clone(&paused),
         };
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let bound = listener.local_addr()?;
@@ -162,24 +197,9 @@ impl Collector {
         Ok(CollectorHandle {
             addr: bound,
             counters,
+            paused,
             shutdown: Some(shutdown_tx),
         })
-    }
-}
-
-/// Drain batches into the database, one at a time.
-fn writer_loop(conn: &Connection, mut rx: tokio::sync::mpsc::Receiver<Batch>) {
-    while let Some(batch) = rx.blocking_recv() {
-        match ingest::ingest_records(conn, &batch.source_ref, &batch.records) {
-            Ok(stats) => tracing::debug!(
-                received = stats.received,
-                stored = stats.stored,
-                rejections = stats.projected.rejections,
-                "otlp batch ingested"
-            ),
-            // One bad batch must not take down capture for the rest.
-            Err(e) => tracing::error!(error = %e, "otlp batch failed"),
-        }
     }
 }
 
@@ -237,13 +257,29 @@ async fn logs(
         return (StatusCode::OK, String::new());
     }
 
-    let seq = state.counters.batches.fetch_add(1, Ordering::Relaxed);
-    let batch = Batch {
-        source_ref: format!("otlp:batch-{seq}"),
-        records,
-    };
+    if state.paused.load(Ordering::Relaxed) {
+        state.counters.paused_drops.fetch_add(1, Ordering::Relaxed);
+        // 200, not an error: the export succeeded, we chose not to keep it.
+        return (StatusCode::OK, String::new());
+    }
 
-    match state.tx.try_send(batch) {
+    let seq = state.counters.batches.fetch_add(1, Ordering::Relaxed);
+    let source_ref = format!("otlp:batch-{seq}");
+
+    let submitted = state.writer.try_submit(move |conn| {
+        match ingest::ingest_records(conn, &source_ref, &records) {
+            Ok(ingested) => tracing::debug!(
+                received = ingested.received,
+                stored = ingested.stored,
+                rejections = ingested.projected.rejections,
+                "otlp batch ingested"
+            ),
+            // One bad batch must not take down capture for the rest.
+            Err(e) => tracing::error!(error = %e, "otlp batch failed"),
+        }
+    });
+
+    match submitted {
         Ok(()) => {
             state
                 .counters
@@ -252,7 +288,7 @@ async fn logs(
             (StatusCode::OK, String::new())
         }
         // Backpressure: refuse rather than queue without limit, and say so.
-        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+        Err(SubmitError::Full) => {
             state.counters.dropped.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(records = n, "otlp queue full; batch refused");
             (
@@ -260,7 +296,7 @@ async fn logs(
                 "ingest queue full".to_string(),
             )
         }
-        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+        Err(SubmitError::Stopped) => {
             state.counters.dropped.fetch_add(1, Ordering::Relaxed);
             (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -281,6 +317,7 @@ async fn metrics() -> StatusCode {
 async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
     Json(serde_json::json!({
         "status": "ok",
+        "paused": state.paused.load(Ordering::Relaxed),
         "counters": state.counters.snapshot(),
     }))
 }

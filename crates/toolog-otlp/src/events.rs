@@ -2,8 +2,9 @@
 //!
 //! This is the decision lane of [ADR-0002] — everything transcripts cannot
 //! record. Most of it is convenience (durations, cost, tokens), but one part is
-//! irreplaceable: **a rejected tool call leaves no transcript trace at all**, so
-//! `claude_code.tool_decision` is the only place a refusal is ever observed.
+//! irreplaceable: `claude_code.tool_decision` is the only place **who refused a
+//! call, and under which rule**, is ever stated. The transcript keeps a record
+//! of the refusal, but only as prose inside a result string.
 //!
 //! Unrecognised events are returned as [`Event::Other`] rather than dropped. The
 //! record is already in `raw_event` by the time this runs ([ADR-0004]), so a new

@@ -31,8 +31,8 @@ the paired `user` record carries `toolUseResult`, including `structuredPatch` di
 Envelopes add `cwd`, `gitBranch`, `version`, `isSidechain` and `promptId`.
 
 **Where transcripts fall short.** They contain no permission decision, no `duration_ms`, and no cost
-or token data. Most importantly, **a tool call the user denied leaves no transcript trace at all** —
-it exists only as a `claude_code.tool_decision` with `decision=reject`. An audit tool that cannot
+or token data. Most importantly, **a tool call that was denied carries no record of who denied it or
+why** — that exists only as a `claude_code.tool_decision` with `decision=reject`. An audit tool that cannot
 show what was refused is missing half the security story.
 
 The two sources are complementary in exactly the places each is weak. Neither is sufficient alone.
@@ -80,5 +80,22 @@ tail dropping calls.
 | Alternative | Why rejected |
 |---|---|
 | OTEL only (as the brief sketched) | Evidence too lossy — 512-char truncation on tool inputs, result content off by default. Single point of failure with no fallback if the `env` block is clobbered. |
-| Transcripts only | No permission decisions, no rejected calls, no duration or cost. Loses the entire risk-review and analytics surface. |
+| Transcripts only | No permission decisions, no decision source, no duration or cost. A refusal appears only as English prose inside a result string. Loses the entire risk-review and analytics surface. |
 | Add hooks as a third lane | Real tamper-evidence value from a third independent witness, but it sits on the tool-execution path and mostly duplicates transcript content. Deferred, not dismissed. |
+
+## Correction — Phase 4
+
+This ADR originally claimed that "a tool call the user denied leaves no transcript trace at all".
+A live denial in Phase 4 disproved it: with `--permission-mode dontAsk`, a refused `Bash` call and a
+refused `Read` call both appeared in **both** lanes, the transcript holding the `tool_use` block and
+a `tool_result` whose content is the refusal message.
+
+The conclusion of this ADR is unchanged, and the reasoning is now sharper. The transcript says
+*that* something was refused, in prose. Only OTEL says **who refused it and under which rule**, as
+`decision` and `decision_source` — queryable columns rather than a sentence to grep. The dual-lane
+design is what makes "which calls did a config rule auto-approve, and which did it deny?" a query
+instead of a text search.
+
+See [ADR-0009](0009-correlate-on-tool-use-id.md) for the consequence that matters in code: a
+rejection is identified by its `decision`, never by a missing transcript. The interactive-refusal
+case — a person pressing no — remains unmeasured.

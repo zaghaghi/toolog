@@ -4,14 +4,37 @@
 //! write handle, the menu-bar item and the window — and the same binary serves
 //! the CLI by argv dispatch. One artifact to install, sign, notarize and update.
 //!
-//! Tauri, the tray and the LaunchAgent arrive in Phase 4.
-//!
 //! [ADR-0007]: ../../../docs/adr/0007-single-resident-process.md
 
+mod app;
+#[cfg(test)]
+mod bindings;
+mod commands;
+mod state;
+mod tray;
+mod window;
+
+use clap::Parser;
+use toolog_cli::cli::Cli;
+
 fn main() {
-    println!(
-        "{} {} — scaffolding. See docs/README.md for the phase plan.",
-        toolog_core::constants::APP_NAME,
-        env!("CARGO_PKG_VERSION"),
-    );
+    let cli = Cli::parse();
+
+    // A subcommand runs and exits. Only a bare invocation opens the
+    // application, so `toolog export | jq` never leaves a window, a listener or
+    // a resident process behind.
+    if cli.command.is_some() {
+        match toolog_cli::cli::run(&cli) {
+            Ok(code) => std::process::exit(code),
+            Err(e) => {
+                eprintln!("toolog: {e:#}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if let Err(e) = app::run(cli.background) {
+        eprintln!("toolog: {e:#}");
+        std::process::exit(1);
+    }
 }
