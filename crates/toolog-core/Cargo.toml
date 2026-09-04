@@ -1,0 +1,15 @@
+[package]
+name = "toolog-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Schema, migrations, normalization and queries for toolog"
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]

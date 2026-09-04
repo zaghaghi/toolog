@@ -1,0 +1,76 @@
+# Privacy
+
+> **Skeleton.** The posture below is settled ([ADR-0008]) and is being built against.
+> Sections marked *Phase 7* describe controls not yet implemented. This file is
+> completed in [Phase 7](docs/phases/07-privacy-retention-integrity.md), task 7.10 —
+> and it is written first deliberately, so the guarantees are stated before the code
+> that must honour them.
+
+## The short version
+
+Nothing leaves your machine.
+
+## What is captured
+
+Toolog records the tool calls Claude Code makes on your machine, from two sources:
+
+| Source | What it contributes |
+|---|---|
+| `~/.claude/projects/**/*.jsonl` | The tool calls themselves — shell commands, file paths, file contents read and written, diffs, and results. Read-only; toolog never modifies these files. |
+| Claude Code's OpenTelemetry export | Permission decisions and their source, durations, token counts, cost, model, and **rejected calls**. |
+
+**This is sensitive data.** It includes every shell command run in every repository,
+file contents, and paths that can reveal project and client names.
+
+## What is *not* captured
+
+- **Your prompts.** `OTEL_LOG_USER_PROMPTS` is deliberately never set.
+- **Claude's responses.** `OTEL_LOG_ASSISTANT_RESPONSES` is deliberately never set.
+
+Only prompt *length* and invoked command *name* are recorded. See [ADR-0006] for the
+exact environment block toolog writes, and why it uses per-signal variables so an
+existing corporate telemetry pipeline is left untouched.
+
+## Where it is stored
+
+One SQLite file, on your machine:
+
+```
+~/Library/Application Support/toolog/toolog.db
+```
+
+Readable with any `sqlite3` binary. Deleting it deletes everything toolog holds.
+
+## What leaves your machine
+
+Nothing — with one exception, named here rather than buried.
+
+- The OTLP receiver binds `127.0.0.1` only. It is not reachable from your network.
+- There is no analytics, no crash reporting, no remote configuration, no account, no
+  license check.
+- **A CI test asserts that no non-loopback socket is opened during a full ingest and
+  query run.** The guarantee is a build failure when broken, not a promise in a
+  document. *(Phase 7, task 7.7.)*
+
+**The exception:** an update check against GitHub Releases. It is **off by default**,
+**opt-in at first run**, and **sends no user data** — it fetches a version manifest.
+*(Phase 8, task 8.5.)*
+
+## Your controls — *Phase 7*
+
+- Pause and resume capture from the menu bar
+- Per-project exclusion
+- Retention limits by age and size, with a preview of exactly what a purge deletes
+- Delete a session, removing raw and derived records together
+- Secret redaction — API keys, tokens, private keys, `.env` values
+- A documented choice about whether redaction also rewrites the raw evidence store,
+  since redacting evidence is irreversible and that trade-off is yours to make
+
+## Uninstalling — *Phase 8*
+
+Uninstall removes the LaunchAgent, restores `~/.claude/settings.json` from the backup
+taken before toolog modified it, and asks before deleting the database — defaulting to
+keeping it.
+
+[ADR-0006]: docs/adr/0006-configure-via-settings-env-block.md
+[ADR-0008]: docs/adr/0008-local-only-zero-egress.md

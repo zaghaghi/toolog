@@ -1,0 +1,30 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node (frontend, Phase 5)
+node_modules/
+/ui/dist/
+*.tsbuildinfo
+
+# macOS
+.DS_Store
+
+# Local databases — never commit captured audit data (ADR-0008)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+
+# Un-anonymized transcript captures. Only the scrubbed fixtures from Phase 2.12
+# belong in the repository; the raw source of those never does.
+/fixtures/raw/
+
+# Build artifacts
+/dist/
+*.dmg
+*.app/
+
+# Local environment
+.env
+.env.local

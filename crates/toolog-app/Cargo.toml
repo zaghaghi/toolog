@@ -1,0 +1,21 @@
+[package]
+name = "toolog-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The toolog desktop application and CLI entry point"
+
+[lints]
+workspace = true
+
+# ADR-0007: one artifact. This binary is both the resident menu-bar app and the
+# CLI; Tauri is added in Phase 4.
+[[bin]]
+name = "toolog"
+path = "src/main.rs"
+
+[dependencies]
+toolog-core.workspace = true
+toolog-cli.workspace = true

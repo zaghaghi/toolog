@@ -1,0 +1,77 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+authors = ["Hamed Zaghaghi <hamed.zaghaghi@gmail.com>"]
+description = "A local audit trail for Claude Code tool calls"
+
+# Versions pinned from crates.io at planning time. Members opt in individually
+# with `dep.workspace = true`; declaring one here does not pull it into a build.
+[workspace.dependencies]
+# --- internal ---
+toolog-core = { path = "crates/toolog-core" }
+toolog-ingest = { path = "crates/toolog-ingest" }
+toolog-otlp = { path = "crates/toolog-otlp" }
+toolog-cli = { path = "crates/toolog-cli" }
+
+# --- storage (ADR-0003) ---
+# `bundled` compiles SQLite from source: no system dependency, no version skew.
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+refinery = { version = "0.9.2", features = ["rusqlite"] }
+
+# --- OTLP receiver (ADR-0005) ---
+axum = "0.8.9"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "fs", "signal"] }
+opentelemetry-proto = "0.32.0"
+prost = "0.14.4"
+
+# --- ingestion (ADR-0002) ---
+notify = "8.2.0"
+walkdir = "2.5.0"
+
+# --- serialization ---
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+
+# --- errors, logging, time, paths ---
+anyhow = "1.0.104"
+thiserror = "2.0.20"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+jiff = "0.2.35"
+directories = "6.0.0"
+
+# --- hashing: raw_event dedup and the Phase 7 integrity chain (ADR-0004) ---
+sha2 = "0.11.0"
+hex = "0.4.3"
+
+# --- CLI ---
+clap = { version = "4.6.6", features = ["derive"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Noisy for a workspace whose crates are named after their domain.
+module_name_repetitions = "allow"
+# Docs are in ADRs and phase files; per-fn error sections are not the house style.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# Fires on any CamelCase word. These doc comments are architectural prose full of
+# proper nouns (LaunchAgent, OpenTelemetry, SQLCipher); backticking them all would
+# read worse than the lint is worth.
+doc_markdown = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

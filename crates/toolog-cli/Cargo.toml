@@ -1,0 +1,16 @@
+[package]
+name = "toolog-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Command implementations for the toolog CLI surface"
+
+[lints]
+workspace = true
+
+[dependencies]
+toolog-core.workspace = true
+toolog-ingest.workspace = true
+toolog-otlp.workspace = true
