@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
 description = "Embedded OTLP receiver for toolog"
 
 [lints]
@@ -12,3 +13,16 @@ workspace = true
 
 [dependencies]
 toolog-core.workspace = true
+axum.workspace = true
+tokio.workspace = true
+opentelemetry-proto.workspace = true
+prost.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+jiff.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

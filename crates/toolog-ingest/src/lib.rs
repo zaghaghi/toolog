@@ -14,9 +14,11 @@ pub mod backfill;
 pub mod discover;
 pub mod envelope;
 pub mod jsonl;
-pub mod normalize;
 pub mod projector;
 pub mod tail;
+
+/// Re-exported from `toolog-core`, where both lanes share it.
+pub use toolog_core::normalize;
 
 pub use backfill::{Backfill, BackfillReport};
 pub use projector::{ProjectStats, TranscriptProjector};

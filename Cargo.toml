@@ -31,7 +31,14 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 # --- OTLP receiver (ADR-0005) ---
 axum = "0.8.9"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "fs", "signal"] }
-opentelemetry-proto = "0.32.0"
+# `gen-tonic-messages` gives the prost message types without the gRPC stack;
+# `with-serde` makes the same types decode OTLP/JSON, so one crate serves both
+# wire formats (verified against the JS exporter's int64-as-string encoding).
+opentelemetry-proto = { version = "0.32.0", default-features = false, features = [
+    "gen-tonic-messages",
+    "logs",
+    "with-serde",
+] }
 prost = "0.14.4"
 
 # --- ingestion (ADR-0002) ---

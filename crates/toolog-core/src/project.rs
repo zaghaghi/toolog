@@ -152,11 +152,13 @@ pub fn upsert_otel(conn: &Connection, tool_use_id: &str, f: &OtelFacts) -> Resul
         "INSERT INTO tool_call (
              tool_use_id, session_id, prompt_id, message_uuid, tool_name, tool_kind,
              mcp_server, mcp_tool, called_at, duration_ms, error_type, decision,
-             decision_source, permission_mode, success, provenance)
+             decision_source, permission_mode, success, input_json, input_summary,
+             target_path, provenance)
          VALUES (
              :tool_use_id, :session_id, :prompt_id, :message_uuid, :tool_name, :tool_kind,
              :mcp_server, :mcp_tool, :called_at, :duration_ms, :error_type, :decision,
-             :decision_source, :permission_mode, :success, :bit)
+             :decision_source, :permission_mode, :success, :attempted_input_json,
+             :attempted_input_summary, :attempted_target_path, :bit)
          ON CONFLICT (tool_use_id) DO UPDATE SET
              session_id      = COALESCE(excluded.session_id,      tool_call.session_id),
              prompt_id       = COALESCE(excluded.prompt_id,       tool_call.prompt_id),
@@ -172,6 +174,12 @@ pub fn upsert_otel(conn: &Connection, tool_use_id: &str, f: &OtelFacts) -> Resul
              decision_source = COALESCE(excluded.decision_source, tool_call.decision_source),
              permission_mode = COALESCE(excluded.permission_mode, tool_call.permission_mode),
              success         = COALESCE(excluded.success,         tool_call.success),
+             -- Existing-wins, the reverse of every field above: a transcript's
+             -- untruncated input must never be displaced by OTEL's 512-character
+             -- copy. This only fills a hole, which is the rejected-call case.
+             input_json      = COALESCE(tool_call.input_json,      excluded.input_json),
+             input_summary   = COALESCE(tool_call.input_summary,   excluded.input_summary),
+             target_path     = COALESCE(tool_call.target_path,     excluded.target_path),
              provenance      = tool_call.provenance | :bit",
     )?
     .execute(named_params! {
@@ -190,6 +198,9 @@ pub fn upsert_otel(conn: &Connection, tool_use_id: &str, f: &OtelFacts) -> Resul
         ":decision_source": f.decision_source,
         ":permission_mode": f.permission_mode,
         ":success": f.success,
+        ":attempted_input_json": f.attempted_input_json,
+        ":attempted_input_summary": f.attempted_input_summary,
+        ":attempted_target_path": f.attempted_target_path,
         ":bit": provenance::OTLP,
     })?;
     Ok(())

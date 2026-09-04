@@ -30,6 +30,7 @@ pub mod error;
 pub mod fts;
 pub mod migrations;
 pub mod model;
+pub mod normalize;
 pub mod project;
 pub mod query;
 pub mod raw;

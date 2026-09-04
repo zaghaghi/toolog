@@ -17,7 +17,7 @@ Toolog records the tool calls Claude Code makes on your machine, from two source
 | Source | What it contributes |
 |---|---|
 | `~/.claude/projects/**/*.jsonl` | The tool calls themselves — shell commands, file paths, file contents read and written, diffs, and results. Read-only; toolog never modifies these files. |
-| Claude Code's OpenTelemetry export | Permission decisions and their source, durations, token counts, cost, model, and **rejected calls**. |
+| Claude Code's OpenTelemetry export | Permission decisions and their source, durations, token counts, cost, model, and **rejected calls**. Every event also carries your Claude account identity — email, user id, account and organization UUIDs — which is stored as received and never sent anywhere. |
 
 **This is sensitive data.** It includes every shell command run in every repository,
 file contents, and paths that can reveal project and client names.

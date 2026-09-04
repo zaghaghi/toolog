@@ -34,3 +34,17 @@ Used to keep the synthetic fixtures faithful.
 Real transcripts. `tests/real_corpus.rs` reads `~/.claude/projects` directly when it exists
 and asserts on properties rather than values, so real data provides regression coverage
 without ever being committed. `.gitignore` excludes `fixtures/raw/`.
+
+## `otlp/`
+
+One exemplar of each event type captured from a **real** Claude Code session, with identity
+and paths scrubbed and the structure left exact.
+
+Unlike transcripts, these commit safely: an OTLP event's attributes are few and fully
+enumerable, so scrubbing is verifiable rather than best-effort. Identifiers that differed in
+the original are scrubbed to *different* values, so rows that were distinct stay distinct.
+
+They exist because assumptions taken from documentation proved wrong in ways only live traffic
+revealed — the `event.name` attribute carries the bare name while the body carries it
+qualified, and `plugin_loaded` / `hook_registered` / `assistant_response` arrive without being
+in the reference at all.

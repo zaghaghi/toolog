@@ -1,6 +1,10 @@
 //! Per-tool normalizers: turning a tool's arguments and result into the columns
 //! the timeline, filters and search actually use.
 //!
+//! Shared by both lanes. The transcript lane uses all of it; the OTLP lane uses
+//! [`input`] to summarize the `tool_input` attribute, which for a **rejected**
+//! call is the only record of what was attempted anywhere.
+//!
 //! Two rules govern everything here.
 //!
 //! **Unknown tools must degrade, never fail.** New tools ship constantly, and
@@ -14,8 +18,8 @@
 
 use std::fmt::Write as _;
 
+use crate::model::FileChange;
 use serde_json::{Map, Value};
-use toolog_core::model::FileChange;
 
 /// Longest `input_summary` kept. Enough for a real shell command; short enough
 /// that the timeline stays scannable.

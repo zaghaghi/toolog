@@ -31,7 +31,7 @@ use toolog_core::project::{self, Projector};
 use toolog_core::{Connection, Result, raw};
 
 use crate::envelope::Envelope;
-use crate::normalize;
+use toolog_core::normalize;
 
 /// Counts of what a projection run saw.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

@@ -36,11 +36,20 @@ OTEL defines per-signal overrides for exactly this reason.
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "OTEL_LOGS_EXPORTER": "otlp",
     "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "http/protobuf",
-    "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://127.0.0.1:47318",
+    "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://127.0.0.1:47318/v1/logs",
     "OTEL_LOGS_EXPORT_INTERVAL": "2000",
     "OTEL_LOG_TOOL_DETAILS": "1"
 } }
 ```
+
+> **The `/v1/logs` path is required and was originally missing here.** Phase 3's end-to-end
+> test against a real Claude Code session captured nothing until it was added. The OTLP
+> specification says a per-signal endpoint "MUST be used as-is without any modification",
+> so unlike the generic `OTEL_EXPORTER_OTLP_ENDPOINT` — to which the SDK appends `/v1/logs`
+> — the per-signal variable needs the full path written out. Without it the exporter posts
+> to `/`, receives a 404, and reports nothing above debug level. The receiver now also
+> accepts logs on `/` so a base-URL-shaped value still works, but the configuration this
+> ADR writes must carry the path.
 
 Binding rules, all enforced in code:
 

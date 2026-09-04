@@ -163,6 +163,17 @@ pub struct OtelFacts {
     pub decision_source: Option<String>,
     pub permission_mode: Option<String>,
     pub success: Option<bool>,
+
+    /// What the call was *asked* to do, from OTEL's `tool_input`.
+    ///
+    /// Written with **existing-wins** semantics, unlike every other field here:
+    /// OTEL truncates values at 512 characters, so it must never displace a
+    /// transcript's full copy. It fills in only where nothing else can — which
+    /// is exactly the rejected-call case, where no transcript exists and this is
+    /// the sole record of what was attempted.
+    pub attempted_input_json: Option<String>,
+    pub attempted_input_summary: Option<String>,
+    pub attempted_target_path: Option<String>,
 }
 
 /// A fully assembled tool call.
