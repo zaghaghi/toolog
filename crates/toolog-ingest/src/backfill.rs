@@ -118,7 +118,7 @@ pub fn ingest_file(conn: &Connection, path: &Path, from: Option<i64>) -> Result<
 
     let stored_offset = match from {
         Some(o) => o,
-        None => raw::max_offset(conn, &source_ref)?.map_or(0, |o| o),
+        None => raw::max_offset(conn, &source_ref)?.unwrap_or(0),
     };
 
     let file = std::fs::File::open(path)?;
