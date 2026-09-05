@@ -143,10 +143,32 @@ mod tests {
         assert_eq!(project_path_hint(p).as_deref(), Some("/Users/x/my/app"));
     }
 
+    /// The exclusion policy is process-wide by design, so the tests that set
+    /// it cannot run alongside one another: cargo runs them on threads of a
+    /// single process, and whichever finishes first calls `set_excluded(vec![])`
+    /// and clears the list out from under the others. That made this suite fail
+    /// about one run in three, on a test that looks deterministic.
+    ///
+    /// Serialized rather than made per-caller: the policy really is global —
+    /// see [`set_excluded`] — and a test-only knob would be testing something
+    /// other than the thing that ships.
+    static POLICY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Hold the exclusion policy for the duration of one test.
+    ///
+    /// Recovers from poisoning: one panicking test should fail alone, not take
+    /// every other test of this policy down with it.
+    fn exclusively() -> std::sync::MutexGuard<'static, ()> {
+        POLICY
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Task 7.8: an excluded project is never opened, so nothing from it is
     /// ever stored — which is a stronger claim than hiding it from a view.
     #[test]
     fn an_excluded_project_is_not_discovered() {
+        let _policy = exclusively();
         let tmp = tempfile::tempdir().expect("tempdir");
         let kept = tmp.path().join("-Users-x-Projects-keep");
         let dropped = tmp.path().join("-Users-x-Projects-secret");
@@ -167,6 +189,7 @@ mod tests {
     /// decoded path: decoding cannot tell these two apart.
     #[test]
     fn a_project_whose_name_contains_a_dash_is_matched_exactly() {
+        let _policy = exclusively();
         let tmp = tempfile::tempdir().expect("tempdir");
         let dashed = tmp.path().join("-Users-x-claude-code-tools-log");
         std::fs::create_dir_all(&dashed).expect("mkdir");
@@ -186,6 +209,7 @@ mod tests {
 
     #[test]
     fn an_empty_exclusion_list_captures_everything() {
+        let _policy = exclusively();
         set_excluded(Vec::new());
         assert!(excluded().is_empty());
         let tmp = tempfile::tempdir().expect("tempdir");

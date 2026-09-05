@@ -1,6 +1,16 @@
 # toolog — task runner
 # `just` with no arguments lists available recipes.
 
+# The bundler is a build tool, so it is pinned: a `.app` built here and a `.app`
+# built in CI must come from the same one. `just bundle` installs it if missing.
+tauri_cli := "2.11.4"
+
+# The Developer ID that signs a release (task 8.2). Tauri reads this exact
+# variable name, so exporting it in the environment works identically. Empty
+# means an unsigned bundle, which is what a machine without the certificate
+# gets — and it still builds.
+export APPLE_SIGNING_IDENTITY := env("APPLE_SIGNING_IDENTITY", "")
+
 default:
     @just --list
 
@@ -68,10 +78,96 @@ bindings:
 agent action="status":
     cargo run --bin toolog -- agent {{action}}
 
-# Build the distributable .app / .dmg. Arrives in Phase 8.
-bundle:
-    @echo "Phase 8 — not implemented. See docs/phases/08-packaging-distribution.md"
-    @exit 1
+# Install the pinned Tauri CLI, unless it is already the pinned version.
+tauri-cli:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    have=$(cargo tauri --version 2>/dev/null | awk '{print $2}' || true)
+    if [ "$have" != "{{tauri_cli}}" ]; then
+        echo "installing tauri-cli {{tauri_cli}} (found: ${have:-none})"
+        cargo install tauri-cli --version {{tauri_cli}} --locked
+    fi
+
+# Build the distributable universal .app and .dmg (task 8.1).
+bundle: ui tauri-cli
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Universal because a Homebrew cask ships one artifact and both
+    # architectures have to run it. Signed only if APPLE_SIGNING_IDENTITY is
+    # set; without it you still get a bundle, it just carries an ad-hoc
+    # signature that Gatekeeper refuses.
+    rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
+    if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+        echo "signing as: $APPLE_SIGNING_IDENTITY"
+    else
+        echo "note: APPLE_SIGNING_IDENTITY is unset — the bundle will be unsigned."
+    fi
+    cargo tauri build --target universal-apple-darwin
+    just verify-bundle
+
+# Check a built bundle the way a user's Mac will (task 8.2).
+verify-bundle:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Four separate questions, because each fails on its own and three of them
+    # fail quietly: is it universal, is it signed by a Developer ID under the
+    # hardened runtime, does it ask for entitlements, has it been through Apple.
+    app=target/universal-apple-darwin/release/bundle/macos/toolog.app
+    dmg=$(ls target/universal-apple-darwin/release/bundle/dmg/*.dmg 2>/dev/null | head -1 || true)
+    [ -d "$app" ] || { echo "no bundle at $app — run \`just bundle\` first"; exit 1; }
+
+    echo "== architectures =="
+    lipo -archs "$app/Contents/MacOS/toolog"
+
+    echo "== signature =="
+    codesign -dv --verbose=4 "$app" 2>&1 | grep -E "Authority=|TeamIdentifier=|flags=" || true
+    codesign --verify --strict --deep --verbose=2 "$app" 2>&1 | tail -2 || true
+
+    echo "== entitlements (ADR-0008: expected to be an empty dict) =="
+    codesign -d --entitlements - "$app" 2>/dev/null | tail -1 || true
+
+    echo "== Gatekeeper =="
+    # The question a user's first launch actually asks. "rejected" here on a
+    # machine that built the app usually means notarization has not run yet.
+    spctl --assess --type execute --verbose=2 "$app" 2>&1 | tail -2 || true
+    if [ -n "$dmg" ]; then
+        echo "== dmg =="
+        ls -lh "$dmg" | awk '{print $9, $5}'
+        xcrun stapler validate "$dmg" 2>&1 | tail -1 || true
+    fi
+
+# Notarize and staple the built .dmg (task 8.2).
+notarize:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Needs an App Store Connect API key in the environment:
+    #   APPLE_API_KEY_PATH  the .p8 file
+    #   APPLE_API_KEY       its key id
+    #   APPLE_API_ISSUER    the issuer uuid
+    #
+    # Tauri notarizes and staples the .app, but only *signs* the .dmg it puts
+    # the app inside — so a downloaded .dmg fails Gatekeeper even though the
+    # app within it would pass. The container needs notarizing in its own right.
+    : "${APPLE_API_KEY_PATH:?set APPLE_API_KEY_PATH to the .p8 file}"
+    : "${APPLE_API_KEY:?set APPLE_API_KEY to the key id}"
+    : "${APPLE_API_ISSUER:?set APPLE_API_ISSUER to the issuer uuid}"
+    dmg=$(ls target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -1)
+    echo "submitting $dmg"
+    xcrun notarytool submit "$dmg" \
+        --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" \
+        --wait
+    xcrun stapler staple "$dmg"
+    xcrun stapler validate "$dmg"
+    just verify-bundle
+
+# SHA-256 sums for the release artifacts (task 8.4).
+checksums:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd target/universal-apple-darwin/release/bundle/dmg
+    shasum -a 256 *.dmg | tee SHA256SUMS
+    echo
+    echo "wrote $(pwd)/SHA256SUMS"
 
 # Remove build artifacts.
 clean:

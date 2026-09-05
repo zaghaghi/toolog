@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Deliberately empty (ADR-0008).
+
+  Entitlements under the hardened runtime are relaxations: each one hands back
+  a protection the runtime would otherwise enforce. toolog asks for none, so it
+  keeps all of them. Library validation stays on, JIT and unsigned executable
+  memory stay off, dyld environment overrides are ignored, and the process
+  cannot be attached to by a debugger it did not consent to.
+
+  This file exists rather than being left out so the claim is a line in the
+  repository instead of an absence nobody would notice being filled in. It is
+  asserted by `the_shipped_app_asks_for_no_entitlements` in tests/bundle.rs,
+  and anyone holding a built copy can confirm it for themselves by asking
+  codesign to display the entitlements of the installed application.
+
+  Editing note: XML forbids two consecutive hyphens inside a comment, and
+  codesign's entitlement parser rejects the entire file when it finds them
+  while plutil reports the same file as valid. So no command line spelling a
+  long option can be written here, which is why the check above is described
+  rather than quoted.
+-->
+<dict>
+</dict>
+</plist>

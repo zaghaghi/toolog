@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  A menu-bar app, not a Dock app. app.rs sets the same policy at runtime,
+	  but that happens after AppKit has already decided to show a Dock icon
+	  and an app-switcher entry, so the launch flickers one up. Declaring it
+	  here means it never appears in the first place.
+	-->
+	<key>LSUIElement</key>
+	<true/>
+	<!--
+	  Nothing here opens at login by itself: the LaunchAgent is installed
+	  explicitly, from the tray or `toolog agent install` (ADR-0007).
+	-->
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+</dict>
+</plist>
