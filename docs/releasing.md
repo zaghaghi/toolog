@@ -1,0 +1,106 @@
+# Releasing
+
+One artifact, signed and notarized, published by pushing a tag. This is the whole process.
+
+## Once: the six secrets
+
+`.github/workflows/release.yml` signs and notarizes on GitHub's macOS runners, which need the
+certificate and the notary key. Set them on `zaghaghi/toolog`:
+
+```bash
+# Piped rather than passed as --body, so the key material never lands in shell history.
+base64 -i ~/.appstoreconnect/private_keys/DeveloperIDApplication.p12 \
+  | gh secret set MACOS_CERT_P12_BASE64 -R zaghaghi/toolog
+base64 -i ~/.appstoreconnect/private_keys/AuthKey_S6R73B35W4.p8 \
+  | gh secret set APPLE_AUTH_KEY_P8_BASE64 -R zaghaghi/toolog
+
+gh secret set APPLE_SIGNING_IDENTITY -R zaghaghi/toolog \
+  --body "Developer ID Application: Hamed Zaghaghi (6G2X3HSD2S)"
+gh secret set APPLE_AUTH_KEY_ID -R zaghaghi/toolog --body "S6R73B35W4"
+
+# These two are typed in: the .p12 export password, and the App Store Connect
+# issuer UUID from Users and Access → Integrations → Team Keys.
+gh secret set MACOS_CERT_PASSWORD -R zaghaghi/toolog
+gh secret set APPLE_AUTH_KEY_ISSUER_ID -R zaghaghi/toolog
+```
+
+`gh secret list -R zaghaghi/toolog` should then show all six. The same set already exists on
+`zaghaghi/project-spy`, which is where this arrangement came from.
+
+To check the certificate is still the one in the keychain:
+
+```bash
+security find-identity -v -p codesigning
+```
+
+A Developer ID certificate expires after five years, and a release built with an expired one
+still notarizes — Apple honours the timestamp — but a *new* one cannot be issued from it.
+
+## Every release
+
+```bash
+just check                       # fmt, clippy, both test suites
+# bump `version` under [workspace.package] in Cargo.toml
+git commit -am "Release vX.Y.Z" && git push
+git tag vX.Y.Z && git push origin vX.Y.Z
+```
+
+The tag is the trigger and the only one. The workflow:
+
+1. **Refuses to run if the tag disagrees with `Cargo.toml`.** A release named after a version
+   the binary does not report is worse than no release.
+2. Runs both test suites **before anything is signed** — `ci.yml` triggers on branches and pull
+   requests, which a tag push does not match.
+3. Builds the universal bundle, signs it, notarizes and staples **the `.dmg` as well as the
+   `.app`** — Tauri only signs the container, so a downloaded image would otherwise fail
+   Gatekeeper even though the app inside it passes.
+4. Asserts against the artifact rather than the config: universal, hardened runtime, no
+   entitlements, `spctl` clean.
+5. Publishes the `.dmg` and `SHA256SUMS` with generated notes.
+
+## Then the tap
+
+The cask's checksum has to be the released artifact's, not a local build's — the two are not
+byte-identical, and publishing the local one hands everybody a cask that refuses to install.
+
+```bash
+just cask X.Y.Z        # reads SHA256SUMS from the release
+just cask-check        # lints it the way Homebrew will
+```
+
+Then copy `packaging/homebrew/toolog.rb` to `Casks/toolog.rb` in `zaghaghi/homebrew-tap`. The
+first time, the tap has to exist:
+
+```bash
+gh repo create zaghaghi/homebrew-tap --public \
+  --description "Homebrew tap for toolog"
+```
+
+## Verify it the way a stranger would
+
+The point of the whole exercise is a first launch with no Gatekeeper warning, and that cannot be
+demonstrated on the machine that signed it — a Mac trusts what it built. On a machine that has
+never seen this certificate:
+
+```bash
+brew install --cask zaghaghi/tap/toolog
+open /Applications/toolog.app          # no warning, no right-click-Open dance
+toolog doctor
+brew uninstall --cask toolog
+```
+
+The last line matters as much as the first. It should leave `~/.claude/settings.json` exactly as
+it was before the install — the cask runs `toolog uninstall --apply` before removing the app, and
+that restores the pre-install backup byte for byte when nothing else has changed it.
+
+## Building locally
+
+```bash
+just bundle            # unsigned unless APPLE_SIGNING_IDENTITY is set
+just verify-bundle     # architectures, signature, entitlements, Gatekeeper
+just notarize          # needs APPLE_API_KEY_PATH, APPLE_API_KEY, APPLE_API_ISSUER
+just checksums
+```
+
+`spctl: rejected — source=Unnotarized Developer ID` from `verify-bundle` is the expected state
+of a freshly signed local build. It means the signature is good and Apple has not seen it yet.

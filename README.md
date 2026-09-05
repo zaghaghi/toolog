@@ -177,3 +177,4 @@ your existing telemetry pipeline is not ours to redirect. See
 - [docs/README.md](docs/README.md) — phases, milestones, and the facts the design rests on
 - [docs/adr/](docs/adr/README.md) — nine architecture decision records
 - [PRIVACY.md](PRIVACY.md) — what is captured, what is not, and what never leaves
+- [docs/releasing.md](docs/releasing.md) — how a signed, notarized release is cut

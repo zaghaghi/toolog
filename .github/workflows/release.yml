@@ -68,6 +68,15 @@ jobs:
       - name: Build the window
         run: npm --prefix ui ci && npm --prefix ui run build
 
+      # ci.yml triggers on branches and pull requests, which a tag push does not
+      # match — so without this a release could be cut from a tree whose tests
+      # fail, and the artifact would be signed and notarized before anyone knew.
+      # The bundle is built from this same checkout moments later.
+      - name: Tests must pass before anything is signed
+        run: |
+          npm --prefix ui test
+          cargo test --workspace --all-targets
+
       - name: Import the Developer ID certificate
         # Decoded into a throwaway keychain so `codesign` can reach the private
         # key, and deleted again in the cleanup step whatever happens.

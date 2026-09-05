@@ -24,6 +24,11 @@ Nine phases. Each ends in something runnable and checkable. **Phase 5 was the fi
 | [07 — Privacy, retention, integrity](phases/07-privacy-retention-integrity.md) | Earn the word "audit" | done |
 | [08 — Packaging & distribution](phases/08-packaging-distribution.md) | Dead simple install | **v1.0** — done |
 
+## Releasing
+
+[releasing.md](releasing.md) — the six signing secrets, the tag that triggers everything, the tap,
+and the clean-machine check that is the only real proof of the Phase 8 exit criterion.
+
 ## Decisions
 
 See [docs/adr/](adr/README.md) — nine ADRs, each with the alternative it rejected and why.
