@@ -154,7 +154,7 @@ mod linux {
                     *slot = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
                 }
                 // Each 32-bit word is little-endian on the wire.
-                for word in octets.chunks_exact_mut(4) {
+                for word in octets.as_chunks_mut::<4>().0 {
                     word.reverse();
                 }
                 Some(IpAddr::V6(Ipv6Addr::from(octets)))
