@@ -48,7 +48,11 @@ pub fn content_hash(body: &str) -> String {
 ///
 /// [ADR-0007]: ../../../docs/adr/0007-single-resident-process.md
 pub fn insert(conn: &Connection, event: &NewRawEvent<'_>) -> Result<RawInsert> {
-    let hash = content_hash(event.body);
+    // Off by default: the evidence keeps what the projection hides, so a
+    // redaction pattern that turns out to be wrong can be fixed and the
+    // projection rebuilt. Task 7.3, and `crate::redact::REDACT_EVIDENCE`.
+    let body = crate::redact::evidence(event.body);
+    let hash = content_hash(&body);
     let at = now_ms();
     let digest = crate::chain::row_digest(
         event.lane.as_str(),
@@ -75,7 +79,7 @@ pub fn insert(conn: &Connection, event: &NewRawEvent<'_>) -> Result<RawInsert> {
                 event.source_offset,
                 hash,
                 at,
-                event.body,
+                body.as_ref(),
                 chained,
             ],
             |row| row.get::<_, i64>(0),

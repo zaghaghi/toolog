@@ -114,16 +114,22 @@ impl Tail {
 
         let mut pending: HashSet<PathBuf> = HashSet::new();
         let mut oldest: Option<Instant> = None;
-        let mut last_sweep = Instant::now();
+        // `None` means "not swept yet", so the first pass happens immediately
+        // rather than one interval from now. That closes a real hole: a watcher
+        // takes a moment to arm, and anything written in that window produces
+        // no event ever again. Waiting a full sweep to notice was thirty
+        // seconds of silence at every startup.
+        let mut last_sweep: Option<Instant> = None;
 
         loop {
             if should_stop() {
                 return Ok(());
             }
 
-            // The safety net: collect anything an event never told us about.
-            if last_sweep.elapsed() >= self.sweep {
-                last_sweep = Instant::now();
+            // The safety net: collect anything an event never told us about,
+            // including everything already on disk when the watch started.
+            if last_sweep.is_none_or(|at| at.elapsed() >= self.sweep) {
+                last_sweep = Some(Instant::now());
                 let all = crate::discover::transcripts(&self.root);
                 if !all.is_empty() {
                     on_batch(&all);

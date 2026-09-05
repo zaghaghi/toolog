@@ -16,10 +16,10 @@ trusted, bounded and defended.
 
   This is what lets the tool state its own completeness rather than assume it, and it is the
   feature that most distinguishes an audit tool from a log viewer.
-- [ ] **7.2** **Secret redaction** at normalization: API keys, bearer tokens, `Authorization`
+- [x] **7.2** **Secret redaction** at normalization: API keys, bearer tokens, `Authorization`
   headers, private keys, `.env` values, connection strings, AWS/GCP credentials. Pattern set as
   data, user-extensible.
-- [ ] **7.3** **Decide, expose and document whether `raw_event` is redacted too.** Redacting the
+- [x] **7.3** **Decide, expose and document whether `raw_event` is redacted too.** Redacting the
   evidence store is defensible but lossy and irreversible; leaving it intact is defensible but
   keeps secrets on disk. This is the user's call, surfaced explicitly in Preferences with the
   trade-off stated — not a silent default.
@@ -45,8 +45,9 @@ trusted, bounded and defended.
 
 ## Progress
 
-**Done: the two things that let the record be trusted (7.1, 7.6) and the one that keeps it here
-(7.7).** Privacy and retention are next.
+**Done: 7.1, 7.2, 7.3, 7.6, 7.7.** The record can now say what it is missing, show that it has not
+been altered, keep secrets out of what it shows, and fail the build if anything tries to leave the
+machine. Retention, oversized bodies, session deletion and the SQLCipher decision are next.
 
 ### Completeness and integrity are different claims
 
@@ -78,6 +79,53 @@ edit, because such a chain is consistent with itself. That is what the printed *
 single string covering every record before it, worth keeping outside the database. And deleting a
 record from the middle leaves the head untouched — so neither check substitutes for the other.
 
+### Redaction, and what measuring it changed (7.2, 7.3)
+
+Patterns are data, the same shape as the risk rules: a built-in TOML set and a user file whose ids
+replace built-ins. A pattern that does not compile is skipped with a warning — a typo in a regex
+must not stop capture, because a tool that stops recording when misconfigured records nothing.
+
+**The projection is redacted; the evidence is not, unless asked.** That is 7.3's decision, and it
+follows from ADR-0004: `raw_event` is what every other table is rebuilt from, so redacting it is
+irreversible in a way redacting a projection is not — a pattern that turns out to be wrong can be
+fixed and the projection regenerated, but only while the original is there. The cost is stated
+rather than hidden, in **Status → Privacy** and in PRIVACY.md: with the default, a secret that went
+past is on disk in `raw_event`. Turning the switch on is forward-only; it cannot reach backwards.
+
+Two implementation notes worth keeping:
+
+- **Applying patterns one after another was wrong.** The first replacement leaves
+  `password=[redacted: password-assignment]` in the text, and the next pattern reads `[redacted:`
+  as the value of `password=` and redacts *that*. Every pattern now matches the original in one
+  pass, with earlier patterns winning overlaps, and existing markers protected — which is also what
+  makes it idempotent, and it has to be, because with `redact_evidence` on the projector reads
+  bodies that were already redacted on the way in.
+- **Redaction happens at normalization**, at the one point every summary, target and result body
+  passes through, so a new tool's normalizer cannot forget it.
+
+#### The pattern set was wrong until it was measured
+
+`cargo run --example measure_redaction` reads a store read-only and reports what each pattern would
+change, with the text around every change. Run against the owner's 3,497 commands and 3,496 result
+bodies, the first draft produced **five distinct false positives**, every one of which is now a
+regression test:
+
+| What it mangled | Why | Fix |
+|---|---|---|
+| `TOKEN=$(curl -s …)` → `TOKEN=[redacted] -s …` | a command substitution is an expression, not a literal | value may not start with `$` or a backtick |
+| `let token = issue_jwt(host_id, "host")` | source code in a heredoc; a shell assignment has no spaces around `=` | no space before `=` |
+| `pub password: String,` (×18) | a type name is not a password | the `=` form only; the colon form must be quoted |
+| `"new-password" : "current-password"` | matched on the *tail* of a quoted string | the key must be fully quoted, or start a line |
+| ``Authorization: Bearer`. Design tokens…`` (×12) | prose describing an API | the token must be 20+ characters, so a bare scheme word is not one |
+
+After tuning: **8 of 3,497 commands** and **31 of 3,496 result bodies**, with no false positives
+left. What it does catch on the real store includes a live-shaped JWT in an API response and an AWS
+STS access key in `aws sts` output — both exactly what this is for.
+
+A detail that says something about doing this on your own machine: several remaining "hits" turned
+out to be the measurement's *own previous output*, stored in the timeline because running it is a
+tool call like any other. The corpus contains the tool's development.
+
 ### Zero egress is now a build failure (7.7)
 
 Three checks, because each catches what the others cannot: a **socket census** taken from the
@@ -107,7 +155,9 @@ Two things fell out of writing it:
   **Met, and the number on a real store is 17.5% — which is the point.** Reconciliation is reported,
   not assumed: every call the OTLP lane witnessed is accounted for, the 2,790 it did not are named
   with the windows they fall in, and the 2 refusals are listed separately from both.
-- A deliberately introduced secret in a test transcript is redacted in the projection.
+- A deliberately introduced secret in a test transcript is redacted in the projection. **Met**, in
+  `crates/toolog-ingest/tests/redaction.rs` — and its other half is asserted too: by default the
+  evidence still holds it, which is the trade-off 7.3 exists to make explicit.
 - `toolog verify --chain` detects a row edited directly with the `sqlite3` CLI. **Met on the real
   corpus**: a `.backup` copy of the owner's store sealed 17,633 records, an `UPDATE` from `sqlite3`
   appended one byte to one body, and the walk reported exactly that row with exit code 1.

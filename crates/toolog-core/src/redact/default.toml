@@ -1,0 +1,148 @@
+# The secrets toolog redacts from its projection (task 7.2).
+#
+# This file is data. Copy it to
+# `~/Library/Application Support/toolog/redaction.toml` and edit it: a pattern
+# with an id that appears here replaces the one below, so a pattern can be
+# retuned or switched off (give it a regex that matches nothing) without
+# touching the application. Ids that do not appear here are added.
+#
+# Each pattern is:
+#
+#   id       a short name; it appears in the replacement, so you can tell which
+#            pattern fired by reading the row
+#   title    what it is, for the preferences pane
+#   regex    Rust `regex` syntax. Compiled at startup; one that does not compile
+#            is skipped with a warning rather than stopping capture
+#   group    which capture group to replace. 0 (the default) replaces the whole
+#            match; 1 or more keeps the surrounding text, which is what makes a
+#            redacted command still read as the command it was
+#
+# Over-redaction is the safer failure here. A row that says
+# `[redacted: env-assignment]` where a variable was merely *named* like a secret
+# is a small loss of fidelity; a row that prints a live key is not. The evidence
+# in `raw_event` is not redacted by default, so nothing is lost irreversibly —
+# see PRIVACY.md and the `redact_evidence` preference.
+
+# --------------------------------------------------------------------------
+# Whole-value credentials — the shape is the secret, so the whole match goes
+# --------------------------------------------------------------------------
+
+[[pattern]]
+id = "private-key-block"
+title = "PEM private key blocks"
+# The body between the markers, so the row still says a key was there.
+regex = '(?s)(-----BEGIN [A-Z ]*PRIVATE KEY-----)(.+?)(-----END [A-Z ]*PRIVATE KEY-----)'
+group = 2
+
+[[pattern]]
+id = "aws-access-key-id"
+title = "AWS access key ids"
+regex = '\b(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b'
+
+[[pattern]]
+id = "github-token"
+title = "GitHub personal access and app tokens"
+regex = '\bgh[pousr]_[A-Za-z0-9]{20,}\b'
+
+[[pattern]]
+id = "slack-token"
+title = "Slack tokens"
+regex = '\bxox[abposr]-[A-Za-z0-9-]{10,}\b'
+
+[[pattern]]
+id = "api-key-sk"
+title = "`sk-` API keys (OpenAI, Anthropic and others)"
+regex = '\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}\b'
+
+[[pattern]]
+id = "google-api-key"
+title = "Google API keys"
+regex = '\bAIza[0-9A-Za-z_-]{35}\b'
+
+[[pattern]]
+id = "jwt"
+title = "JSON Web Tokens"
+regex = '\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b'
+
+# --------------------------------------------------------------------------
+# Values in context — the name stays, the value goes
+# --------------------------------------------------------------------------
+
+[[pattern]]
+id = "bearer-token"
+title = "Bearer tokens"
+regex = '(?i)\bbearer\s+([A-Za-z0-9._~+/-]{12,}=*)'
+group = 1
+
+[[pattern]]
+id = "authorization-header"
+title = "Authorization headers"
+# At least twenty token characters, so the *words* "Authorization: Bearer" in
+# prose are not a match. Measured: without the floor this fired twelve times on
+# the owner's store, every one of them a sentence in a project's own
+# documentation describing how its API is called.
+regex = '''(?i)authorization\s*:\s*(?:Bearer\s+|Basic\s+|Token\s+)?([A-Za-z0-9._~+/-]{20,}=*)'''
+group = 1
+
+[[pattern]]
+id = "credentials-in-a-url"
+title = "Credentials embedded in a URL"
+regex = '://([^/\s:@]+:[^/\s:@]+)@'
+group = 1
+
+[[pattern]]
+id = "password-assignment"
+title = "Passwords in connection strings and flags"
+# The same constraints as `env-assignment`, and for the same reasons —
+# `password=$PGPASSWORD` names a variable rather than holding one.
+#
+# The `=` form only. `password: String,` is a field in a Rust struct and
+# `password: string)` is a TypeScript parameter, and the colon form matched
+# eighteen of those on the owner's store and not one password. The quoted form
+# below covers JSON and quoted YAML; an *unquoted* YAML password is a known
+# gap, and a three-line user pattern away.
+regex = '''(?i)\b(?:password|passwd|pwd)=["']?([^\s"'$`\\][^\s"'\\]{3,})'''
+group = 1
+
+[[pattern]]
+id = "env-assignment"
+title = "Environment variables that name themselves a secret"
+# The variable name is kept, which is most of what makes the row readable.
+#
+# Three constraints, each of them a false positive measured against the owner's
+# real store rather than imagined:
+#
+#   no space before `=`   a shell assignment has none; source code does. Without
+#                         this, `let token = issue_jwt(host_id, "host")` in a
+#                         heredoc became `let token = [redacted] "host")`, which
+#                         is not a secret and is no longer code either.
+#   value not `$` or `` ` ``   `TOKEN=$(curl -s ...)` is a command substitution.
+#                         An expression is not a literal.
+#   value has no `\`      a JSON string's escapes are not part of the value.
+#
+# `regex` has no lookaround, so all three live in the character classes.
+regex = '''(?i)\b[A-Z0-9_]*(?:SECRET|TOKEN|APIKEY|API_KEY|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)[A-Z0-9_]*=["']?([^\s"'$`\\][^\s"'\\]{3,})'''
+group = 1
+
+[[pattern]]
+id = "password-field"
+title = "Passwords in JSON and quoted YAML"
+# Quoted, which is what tells a value from a type name — and the key must be
+# either fully quoted (JSON) or at the start of a line (YAML). An optional
+# quote was not enough: `autoComplete={isNew ? "new-password" : "current-
+# password"}` matched on the tail of `new-password`, four times on the owner's
+# store, in React components about password fields.
+regex = '''(?im)(?:"(?:password|passwd|pwd)"|^\s*(?:password|passwd|pwd))\s*:\s*"([^"\\]{4,})"'''
+group = 1
+
+[[pattern]]
+id = "gcp-service-account-key"
+title = "The private key inside a Google service-account JSON"
+regex = '"private_key"\s*:\s*"([^"]{40,})"'
+group = 1
+
+[[pattern]]
+id = "aws-secret-access-key"
+title = "AWS secret access keys, where they are named"
+regex = '''(?i)\baws_secret_access_key\s*[=:]\s*["']?([A-Za-z0-9/+=]{20,})'''
+group = 1

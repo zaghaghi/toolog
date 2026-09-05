@@ -5,15 +5,17 @@
 //! "is this thing actually recording?" is answered, and task 5.13 points at it
 //! from the timeline's "the collector is not running" banner.
 
-import type { Setup, Status } from "./bindings";
+import type { Prefs, Setup, Status } from "./bindings";
 import {
   applyDoctorFix,
   collectorStatus,
   doctorStatus,
+  getPrefs,
   revealLogs,
   runBackfill,
   setLoginAgent,
   setPaused,
+  setPrefs,
 } from "./bindings";
 import { el, fill, span } from "./dom";
 import { count } from "./format";
@@ -207,10 +209,79 @@ export class SetupView {
       }
     }
 
+    view.append(el("h2", { text: "Privacy" }), this.privacy());
+
     view.append(
       el("h2", { text: "Diagnostics" }),
       el("pre", { class: "report", text: setup.report }),
     );
     return view;
+  }
+
+  /**
+   * Task 7.3, stated rather than defaulted.
+   *
+   * Secrets are always stripped from the projection — the rows the four views
+   * read. Whether they are also stripped from the **evidence** is a real
+   * choice with a cost in both directions, so it is a switch with the cost
+   * next to it: off keeps every projection rebuildable and keeps secrets on
+   * disk; on stops storing them and makes that irreversible.
+   */
+  private privacy(): HTMLElement {
+    const card = el("div", { class: "card" }, [
+      el("p", { class: "note" }, [
+        "Secrets are removed from what the timeline, risk and usage views show — commands, ",
+        "arguments and results — using patterns you can extend. ",
+        el("strong", { text: "That much is not optional." }),
+      ]),
+    ]);
+
+    const box = el("input", { type: "checkbox", attrs: { id: "pref-redact-evidence" } });
+    box.disabled = true;
+    const why = span(
+      "switch-why",
+      "The evidence store keeps every record exactly as it arrived, which is what lets a " +
+        "projection be rebuilt when a pattern turns out to be wrong — and means a secret that " +
+        "went past stays on disk. Turning this on stops storing them at all, and cannot be " +
+        "undone or applied backwards: records already held keep what they hold.",
+    );
+
+    void getPrefs()
+      .then((prefs) => {
+        box.checked = prefs.redact_evidence;
+        box.disabled = false;
+        box.addEventListener("change", () => {
+          const next: Prefs = { ...prefs, redact_evidence: box.checked };
+          void setPrefs(next)
+            .then((saved) => {
+              box.checked = saved.redact_evidence;
+              this.options.onNotice(
+                saved.redact_evidence
+                  ? "New records will be redacted before they are stored. Records already held are unchanged."
+                  : "New records will be stored exactly as they arrive.",
+              );
+            })
+            .catch((error: unknown) => {
+              box.checked = prefs.redact_evidence;
+              this.options.onNotice(String(error));
+            });
+        });
+      })
+      .catch((error: unknown) => this.options.onNotice(String(error)));
+
+    card.append(
+      el("div", { class: "switch" }, [
+        box,
+        el("div", {}, [
+          el("label", {
+            attrs: { for: "pref-redact-evidence" },
+            class: "switch-label",
+            text: "Redact the evidence store too",
+          }),
+          why,
+        ]),
+      ]),
+    );
+    return card;
   }
 }

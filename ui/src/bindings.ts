@@ -348,7 +348,17 @@ notify_refusals: boolean,
 /**
  * Notify when a call trips a high-severity risk rule.
  */
-notify_high_risk: boolean, };
+notify_high_risk: boolean, 
+/**
+ * Redact secrets from the **evidence** as well as the projection.
+ *
+ * Off, like everything else here, and the trade-off is real in both
+ * directions — see [`toolog_core::redact`]. Off keeps secrets on disk in
+ * `raw_event` and keeps every projection rebuildable; on stops storing
+ * them at all and makes that irreversible. It is forward-only either way:
+ * turning it on does not reach back into records already stored.
+ */
+redact_evidence: boolean, };
 
 export type CounterSnapshot = { batches: number, records: number, dropped: number, rejected_bodies: number, paused_drops: number, };
 

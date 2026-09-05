@@ -44,9 +44,41 @@ Readable with any `sqlite3` binary. Deleting it deletes everything toolog holds.
 Alongside it, `rules.toml` — if you write one — holds your own risk rules. It is read, never
 written, and is the file to edit to retune or switch off anything `toolog risk` reports.
 
-Also alongside it, `prefs.json` holds which notifications you have switched on. It is created the
-first time you turn one on; until then there is no file, because **every notification is off by
-default**. It contains two booleans and nothing else — no history, no identifiers.
+Also alongside it, `prefs.json` holds the switches you have turned on. It is created the first time
+you turn one on; until then there is no file, because **every switch is off by default**. It
+contains three booleans and nothing else — no history, no identifiers.
+
+## Secrets
+
+Claude Code runs shell commands, and shell commands carry keys. A tool that keeps a durable record
+of what ran would, left alone, keep a durable record of every credential that went past.
+
+**Secrets are removed from the projection** — the rows the timeline, risk and usage views read, and
+what an export contains. API keys, bearer tokens, `Authorization` headers, private keys, passwords
+in connection strings, AWS and Google credentials, JWTs. The pattern set lives in the binary and is
+listed in `crates/toolog-core/src/redact/default.toml`; a `redaction.toml` beside the database adds
+to it, or replaces any pattern by id.
+
+**The evidence store is not redacted, unless you ask.** `raw_event` holds every record exactly as it
+arrived, because that is what every other table is rebuilt from: a pattern that turns out to be
+wrong can be fixed and the projection regenerated, but only while the original is still there. The
+cost is real and stated rather than hidden — with the default, a secret that went past is on disk in
+`raw_event`.
+
+The switch is in **Status → Privacy**. Turning it on redacts records **before** they are stored, and
+that is irreversible in two directions: those records never hold the original, and it does not reach
+backwards — anything already stored keeps what it holds. Deleting the database is the blunt way to
+be rid of that; a finer one arrives with retention (Phase 7.4).
+
+Redaction is deliberately over-eager: a row reading `[redacted: env-assignment]` where a variable
+was merely *named* like a secret loses a little fidelity, while a row printing a live key loses the
+key. To see what the patterns would do to your own store before changing anything:
+
+```
+cargo run --release -p toolog-core --example measure_redaction -- ~/Library/Application\ Support/toolog/toolog.db
+```
+
+It reads, reports and writes nothing.
 
 ## What leaves your machine
 

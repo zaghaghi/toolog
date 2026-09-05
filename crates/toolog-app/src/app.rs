@@ -45,7 +45,11 @@ pub(crate) fn run(background: bool) -> anyhow::Result<()> {
             let handle = app.handle().clone();
             // Read once at startup and shared with the live sink, so deciding
             // whether to notify costs no disk access on the arrival path.
-            let prefs = Arc::new(RwLock::new(toolog_cli::prefs::load()));
+            let saved = toolog_cli::prefs::load();
+            // Evidence redaction is read on the write path, so it has to be in
+            // force before capture starts, not when the window first asks.
+            saved.apply();
+            let prefs = Arc::new(RwLock::new(saved));
             let capture = start_capture(&handle, db_path.clone(), Arc::clone(&prefs))?;
             let endpoint_changed = capture.port_changed();
             let endpoint = capture.endpoint();
@@ -292,7 +296,7 @@ mod tests {
     fn each_switch_notifies_only_about_its_own_kind() {
         let refusals = Prefs {
             notify_refusals: true,
-            notify_high_risk: false,
+            ..Prefs::default()
         };
         let (title, body) = notification_for(&refused(), refusals, || None).expect("a refusal");
         assert_eq!(title, "Bash was refused");
@@ -303,8 +307,8 @@ mod tests {
         );
 
         let risk = Prefs {
-            notify_refusals: false,
             notify_high_risk: true,
+            ..Prefs::default()
         };
         let (title, body) =
             notification_for(&call(), risk, || Some("Credentials read".into())).expect("a hit");
@@ -321,6 +325,7 @@ mod tests {
         let both = Prefs {
             notify_refusals: true,
             notify_high_risk: true,
+            ..Prefs::default()
         };
         let (title, _) =
             notification_for(&refused(), both, || Some("Credentials read".into())).expect("one");

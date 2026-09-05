@@ -57,6 +57,7 @@ impl AppState {
     /// two cannot disagree about what the user asked for.
     pub(crate) fn set_prefs(&self, next: Prefs) -> anyhow::Result<Prefs> {
         toolog_cli::prefs::save(next)?;
+        next.apply();
         let mut guard = self
             .prefs
             .write()

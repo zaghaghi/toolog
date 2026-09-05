@@ -4777,6 +4777,7 @@ dependencies = [
  "directories",
  "hex",
  "jiff",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

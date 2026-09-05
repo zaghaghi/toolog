@@ -91,7 +91,24 @@ pub fn classify(name: &str) -> (ToolKind, Option<String>, Option<String>) {
 ///
 /// Dispatch is by tool name, with [`generic`] as the fallback that makes an
 /// unrecognised tool degrade instead of erroring.
+#[must_use]
 pub fn input(tool: &str, input: &Value) -> InputFacts {
+    redacted(match_tool(tool, input))
+}
+
+/// Strip secrets from the strings that reach the projection (task 7.2).
+///
+/// Applied here, at the one point every summary and target passes through, so a
+/// new tool's normalizer cannot forget it. The evidence in `raw_event` is
+/// untouched — see [`crate::redact`] for why that split, and what it costs.
+fn redacted(mut facts: InputFacts) -> InputFacts {
+    let redactor = crate::redact::active();
+    redactor.in_place(&mut facts.summary);
+    redactor.in_place(&mut facts.target);
+    facts
+}
+
+fn match_tool(tool: &str, input: &Value) -> InputFacts {
     let s = |key: &str| input.get(key).and_then(Value::as_str);
 
     match tool {
@@ -131,7 +148,7 @@ pub fn input(tool: &str, input: &Value) -> InputFacts {
             summary: s("skill").or_else(|| s("command")).map(truncate),
             target: s("skill").map(str::to_string),
         },
-        _ => generic(input),
+        _ => generic_facts(input),
     }
 }
 
@@ -139,7 +156,12 @@ pub fn input(tool: &str, input: &Value) -> InputFacts {
 ///
 /// Tries the keys tools conventionally use, then falls back to compact JSON, so
 /// a brand-new tool still produces a readable row.
+#[must_use]
 pub fn generic(input: &Value) -> InputFacts {
+    redacted(generic_facts(input))
+}
+
+fn generic_facts(input: &Value) -> InputFacts {
     const LIKELY: &[&str] = &[
         "command",
         "file_path",
@@ -204,6 +226,13 @@ pub fn result(value: &Value, is_error: Option<bool>) -> ResultFacts {
         }
     } else if is_error == Some(false) && facts.success.is_none() {
         facts.success = Some(true);
+    }
+
+    // A result body is where a secret is most likely to be: `cat .env`,
+    // `printenv`, an API response. Redacted here for the same reason inputs
+    // are, at the one point every shape passes through.
+    if let std::borrow::Cow::Owned(redacted) = crate::redact::active().text(&facts.text) {
+        facts.text = redacted;
     }
     facts
 }

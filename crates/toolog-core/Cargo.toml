@@ -12,6 +12,7 @@ description = "Schema, migrations, normalization and queries for toolog"
 workspace = true
 
 [dependencies]
+regex.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 ts-rs.workspace = true

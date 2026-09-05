@@ -24,13 +24,30 @@ pub struct Prefs {
     pub notify_refusals: bool,
     /// Notify when a call trips a high-severity risk rule.
     pub notify_high_risk: bool,
+    /// Redact secrets from the **evidence** as well as the projection.
+    ///
+    /// Off, like everything else here, and the trade-off is real in both
+    /// directions — see [`toolog_core::redact`]. Off keeps secrets on disk in
+    /// `raw_event` and keeps every projection rebuildable; on stops storing
+    /// them at all and makes that irreversible. It is forward-only either way:
+    /// turning it on does not reach back into records already stored.
+    pub redact_evidence: bool,
 }
 
 impl Prefs {
-    /// Whether anything at all needs watching for.
+    /// Whether any notification needs watching for.
     #[must_use]
     pub fn any(self) -> bool {
         self.notify_refusals || self.notify_high_risk
+    }
+
+    /// Push the settings that live in `toolog-core` into it.
+    ///
+    /// Redaction of the evidence store is read on the write path, far from
+    /// anything that knows what a preference is, so the preference has to be
+    /// handed over rather than looked up.
+    pub fn apply(self) {
+        toolog_core::redact::set_evidence_redaction(self.redact_evidence);
     }
 }
 
@@ -73,10 +90,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_notification_is_off_until_someone_turns_it_on() {
+    fn every_switch_is_off_until_someone_turns_it_on() {
         let prefs = Prefs::default();
         assert!(!prefs.notify_refusals);
         assert!(!prefs.notify_high_risk);
+        assert!(!prefs.redact_evidence);
         assert!(!prefs.any());
     }
 

@@ -66,7 +66,11 @@ export class LiveView {
   /** Newest last, which is the order a log is read in. */
   private calls: ToolCall[] = [];
   private readonly seen = new Map<string, number>();
-  private prefs: Prefs = { notify_refusals: false, notify_high_risk: false };
+  private prefs: Prefs = {
+    notify_refusals: false,
+    notify_high_risk: false,
+    redact_evidence: false,
+  };
   private stuck = true;
   private timer = 0;
 

@@ -234,7 +234,7 @@ fn attempted_input(a: &Attrs<'_>) -> OtelFacts {
         let parsed: Value = serde_json::from_str(raw).unwrap_or(Value::Null);
         let facts = normalize::input(tool, &parsed);
         return OtelFacts {
-            attempted_input_json: Some(raw.to_string()),
+            attempted_input_json: Some(toolog_core::redact::active().text(raw).into_owned()),
             attempted_input_summary: facts.summary,
             attempted_target_path: facts.target,
             ..OtelFacts::default()
@@ -260,7 +260,7 @@ fn attempted_input(a: &Attrs<'_>) -> OtelFacts {
     .or_else(|| normalize::generic(&params).summary);
 
     OtelFacts {
-        attempted_input_json: Some(params.to_string()),
+        attempted_input_json: Some(toolog_core::redact::active().json(&params).to_string()),
         attempted_input_summary: summary,
         attempted_target_path: normalize::generic(&params).target,
         ..OtelFacts::default()

@@ -11,7 +11,11 @@ import type { LiveSession, Prefs, ToolCall } from "./bindings";
 
 const state = {
   sessions: [] as LiveSession[],
-  prefs: { notify_refusals: false, notify_high_risk: false } as Prefs,
+  prefs: {
+    notify_refusals: false,
+    notify_high_risk: false,
+    redact_evidence: false,
+  } as Prefs,
   saved: [] as Prefs[],
 };
 
@@ -89,7 +93,7 @@ async function mount(sessions: LiveSession[] = [session()]) {
 
 beforeEach(() => {
   state.sessions = [];
-  state.prefs = { notify_refusals: false, notify_high_risk: false };
+  state.prefs = { notify_refusals: false, notify_high_risk: false, redact_evidence: false };
   state.saved = [];
 });
 
@@ -221,6 +225,8 @@ describe("notifications", () => {
     refusals.dispatchEvent(new Event("change"));
     await Promise.resolve();
 
-    expect(state.saved).toEqual([{ notify_refusals: true, notify_high_risk: false }]);
+    expect(state.saved).toEqual([
+      { notify_refusals: true, notify_high_risk: false, redact_evidence: false },
+    ]);
   });
 });

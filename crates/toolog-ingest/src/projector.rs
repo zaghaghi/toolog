@@ -234,7 +234,10 @@ impl TranscriptProjector {
                     mcp_server: server,
                     mcp_tool: tool,
                     called_at: ts,
-                    input_json: Some(use_.input.to_string()),
+                    // The stored copy of the arguments is redacted like the
+                    // summary derived from it; the unredacted original stays in
+                    // `raw_event` unless the user asked otherwise (task 7.3).
+                    input_json: Some(toolog_core::redact::active().json(&use_.input).to_string()),
                     input_summary: facts.summary,
                     target_path: facts.target,
                     permission_mode: match e.session_id.as_deref() {
@@ -271,7 +274,9 @@ impl TranscriptProjector {
         }
 
         let facts = normalize::result(result, is_error);
-        let stored = normalize::elide_binary(result).to_string();
+        let stored = toolog_core::redact::active()
+            .json(&normalize::elide_binary(result))
+            .to_string();
 
         project::upsert_transcript(
             conn,

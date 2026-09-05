@@ -45,6 +45,12 @@ prost = "0.14.4"
 notify = "8.2.0"
 walkdir = "2.5.0"
 
+# --- secret redaction (Phase 7.2) ---
+# Already in the graph via `tauri-utils`, so this adds a direct dependency and
+# no new compilation. Patterns are data a user can extend, which means they are
+# compiled at runtime and must be able to fail without taking the process down.
+regex = "1.13.1"
+
 # --- risk rules as data (Phase 6.1) ---
 # TOML rather than JSON, because this is a file users are meant to edit: literal
 # strings need no backslash escaping, and comments survive.

@@ -378,3 +378,58 @@ fn a_file_finished_after_the_last_event_is_still_collected() {
         "collected exactly once — dedup keeps the sweep from duplicating"
     );
 }
+
+/// A file written *before* the watch starts is picked up straight away.
+///
+/// The hole this closes: a filesystem watcher takes a moment to arm, and
+/// anything written in that window produces no event, ever. The safety-net
+/// sweep would eventually find it — thirty seconds later, by default, which is
+/// thirty seconds of an apparently dead application every time it starts. It
+/// showed up as this file's first test failing about one run in four with an
+/// entirely empty store.
+#[test]
+fn what_was_written_before_the_watch_started_is_not_waited_for() {
+    let _serial = exclusive();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db_path = dir.path().join("t.db");
+    let watch = dir.path().join("projects");
+    std::fs::create_dir_all(&watch).expect("mkdir");
+
+    // On disk before anything is watching it.
+    let transcript = watch.join("before.jsonl");
+    std::fs::write(&transcript, format!("{}\n", record(1))).expect("seed");
+
+    // Opened here first, so the schema is created once: two connections
+    // migrating the same new file at the same moment is a race about this
+    // test's setup rather than about the tailer.
+    let reader = Db::open(&db_path).expect("reader");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let worker = {
+        let (stop, db_path, watch) = (stop.clone(), db_path.clone(), watch.clone());
+        std::thread::spawn(move || {
+            let db = Db::open(&db_path).expect("open");
+            // A sweep interval far longer than the assertion below, so passing
+            // cannot be the safety net coming round on its own schedule.
+            Tail::new(&watch)
+                .with_debounce(Duration::from_millis(50))
+                .with_sweep(Duration::from_mins(10))
+                .run(db.conn(), |_| {}, &|| stop.load(Ordering::SeqCst))
+                .expect("tail");
+        })
+    };
+
+    let found = wait_until(Duration::from_secs(5), || {
+        query::timeline_count(reader.conn(), &TimelineFilter::default()).unwrap_or(0) >= 1
+    });
+
+    stop.store(true, Ordering::SeqCst);
+    std::fs::write(dir.path().join("nudge.jsonl"), "").ok();
+    worker.join().expect("join");
+
+    assert!(
+        found,
+        "a transcript already on disk was not read within five seconds, so the \
+         first sweep is still waiting for its interval"
+    );
+}
