@@ -125,10 +125,15 @@ download or `brew`.
   notification, lossy project-directory decoding, and a database any reader of the disk can
   open.
 
-  **Screenshots of the four views are outstanding**, and deliberately so: the only store on
-  this machine large enough to photograph is the owner's real work, and its project names,
-  commands and paths do not belong in a public README. It needs either a synthetic corpus
-  built for the purpose or the owner's own review of what each frame shows.
+- [ ] **8.8a** Screenshots of the four views. **Deferred by decision, not overlooked.**
+
+  The only store on this machine large enough to photograph is the owner's real work, and its
+  project names, commands and paths do not belong in a public README. The alternatives were
+  weighed — build a synthetic corpus for the purpose, or capture the real store and review
+  every frame before committing — and shipping v1.0 without screenshots was chosen over
+  delaying it for either. Nothing else in the phase depends on them, and the honest way to add
+  them later is the synthetic corpus, which also gives the design mockups something real to
+  check against.
 
 - [x] **8.9** First-run experience measured end to end.
 
@@ -171,3 +176,4 @@ mistaken for done:
    `packaging/homebrew/toolog.rb` to `Casks/toolog.rb` in `zaghaghi/homebrew-tap`.
 3. **Open the notarized build on a Mac that has never seen this certificate**, which is the
    only way to demonstrate the no-Gatekeeper-warning criterion rather than design for it.
+4. **Screenshots**, if and when there is a store worth photographing — see 8.8a.

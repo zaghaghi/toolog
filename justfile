@@ -169,22 +169,48 @@ checksums:
     echo
     echo "wrote $(pwd)/SHA256SUMS"
 
-# Regenerate the Homebrew cask from the built .dmg (task 8.3).
-cask:
+# Fill in the cask's version and checksum (task 8.3).
+cask version="":
     #!/usr/bin/env bash
     set -euo pipefail
-    # The version and the checksum are read off the artifact rather than typed,
-    # because a cask that names the wrong sha256 fails at install time on
-    # someone else's machine and nowhere earlier.
-    dmg=$(ls target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -1)
-    version=$(basename "$dmg" | sed -E 's/^toolog_(.+)_universal\.dmg$/\1/')
-    sha=$(shasum -a 256 "$dmg" | awk '{print $1}')
+    # With no argument, reads the locally built .dmg — useful for testing the
+    # cask. With a version ("just cask 1.0.0"), reads SHA256SUMS from that
+    # GitHub release, which is the only checksum a user will ever download. A
+    # local build and a CI build are not byte-identical, so publishing the
+    # local one would hand everybody a cask that refuses to install.
     file=packaging/homebrew/toolog.rb
-    /usr/bin/sed -i '' -E "s/^  version \".*\"$/  version \"$version\"/" "$file"
-    /usr/bin/sed -i '' -E "s/^  sha256 \".*\"$/  sha256 \"$sha\"/" "$file"
+    if [ -n "{{version}}" ]; then
+        v="{{version}}"
+        url="https://github.com/zaghaghi/toolog/releases/download/v$v/SHA256SUMS"
+        echo "reading $url"
+        sha=$(curl -fsSL "$url" | awk '/universal\.dmg$/{print $1; exit}')
+        [ -n "$sha" ] || { echo "no universal .dmg line in that release's SHA256SUMS"; exit 1; }
+    else
+        dmg=$(ls target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -1)
+        v=$(basename "$dmg" | sed -E 's/^toolog_(.+)_universal\.dmg$/\1/')
+        sha=$(shasum -a 256 "$dmg" | awk '{print $1}')
+        echo "reading the local build: $dmg"
+        echo "note: a local build is not byte-identical to the released one."
+        echo "      Run \`just cask $v\` once the release exists, before publishing."
+    fi
+    /usr/bin/sed -i '' -E "s/^  version \".*\"$/  version \"$v\"/" "$file"
+    /usr/bin/sed -i '' -E "s/^  sha256 .*$/  sha256 \"$sha\"/" "$file"
     grep -E '^  (version|sha256) ' "$file"
-    echo
-    echo "To publish: copy $file to Casks/toolog.rb in zaghaghi/homebrew-tap."
+
+# Lint the Homebrew cask the way Homebrew will (task 8.3).
+cask-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The cask cops only run on a file that is inside a tap: linting the file
+    # where it lives reports Homebrew's own Sorbet and frozen-string-literal
+    # rules, which do not apply to casks, and stays silent about the ones that
+    # do. So the file is staged into a throwaway tap and removed again.
+    tap="$(brew --repository)/Library/Taps/toolog-caskcheck/homebrew-tmp"
+    trap 'rm -rf "$(brew --repository)/Library/Taps/toolog-caskcheck"' EXIT
+    mkdir -p "$tap/Casks"
+    cp packaging/homebrew/toolog.rb "$tap/Casks/toolog.rb"
+    brew style --cask toolog-caskcheck/tmp
+    brew info --cask toolog-caskcheck/tmp/toolog | head -12
 
 # Remove build artifacts.
 clean:

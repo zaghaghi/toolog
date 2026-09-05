@@ -26,7 +26,10 @@
 #            what `toolog uninstall --delete-data` would have removed.
 cask "toolog" do
   version "1.0.0"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  # Replaced by `just cask <version>`, which reads it from the release's
+  # SHA256SUMS. Left as an impossible value rather than :no_check: a cask
+  # published by accident must fail to install, not install anything.
+  sha256 "0" * 64
 
   url "https://github.com/zaghaghi/toolog/releases/download/v#{version}/toolog_#{version}_universal.dmg",
       verified: "github.com/zaghaghi/toolog/"
@@ -41,13 +44,18 @@ cask "toolog" do
 
   # Matches LSMinimumSystemVersion in the bundle. The artifact is universal, so
   # there is one download for both architectures.
-  depends_on macos: ">= :catalina"
+  depends_on macos: :catalina
 
   app "toolog.app"
   binary "#{appdir}/toolog.app/Contents/MacOS/toolog"
 
-  uninstall quit:      "com.zaghaghi.toolog",
-            launchctl: "com.zaghaghi.toolog",
+  # Written in Homebrew's canonical order, which is also the order it runs them
+  # in whatever order they appear: unload the agent, quit the app, then let the
+  # app's own uninstaller put ~/.claude/settings.json back. That sequence is the
+  # right one — the script must not run while a resident process still holds the
+  # database and the port.
+  uninstall launchctl: "com.zaghaghi.toolog",
+            quit:      "com.zaghaghi.toolog",
             script:    {
               executable:   "#{appdir}/toolog.app/Contents/MacOS/toolog",
               args:         ["uninstall", "--apply"],
