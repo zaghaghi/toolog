@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The window's own commands, and opening a local folder in Finder. No network, no filesystem, no shell.",
+  "description": "The window's own commands, and revealing a local file or folder in Finder. No network, no filesystem, no shell — the one file this process writes outside its own store is an export, to a path a native save panel returned.",
   "windows": ["main"],
   "permissions": [
     "core:default",

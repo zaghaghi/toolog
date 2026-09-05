@@ -27,13 +27,39 @@ agent_name: string | null, slug: string | null, first_seen: number | null, last_
 
 export type FileChange = { tool_use_id: string, file_path: string, lines_added: number, lines_removed: number, patch_json: string | null, };
 
-export type SearchHit = { tool_call: ToolCall, snippet: string, };
-
-export type TimelineFilter = { session_id: string | null, project_path: string | null, tool_name: string | null, since: number | null, until: number | null, success: boolean | null, is_sidechain: boolean | null, decision_source: string | null, 
+export type TimelineFilter = { session_id: string | null, 
 /**
- * Rows whose provenance includes every bit set here.
+ * Only calls whose session the store never learned.
+ *
+ * A group the timeline can show but `session_id` cannot name, and without
+ * it "expand that group" would quietly widen to every row.
  */
-provenance_mask: number | null, };
+session_unknown: boolean | null, project_path: string | null, tool_name: string | null, since: number | null, until: number | null, success: boolean | null, is_sidechain: boolean | null, decision: string | null, decision_source: string | null, permission_mode: string | null, 
+/**
+ * One subagent instance.
+ */
+agent_id: string | null, 
+/**
+ * `true`: only main-thread calls. `false`: only subagent calls.
+ *
+ * Reads `agent_id`, which is present on every sidechain call and no
+ * main-thread one, rather than `is_sidechain`, which is null on any row
+ * the transcript lane has not witnessed.
+ */
+main_thread: boolean | null, 
+/**
+ * Free text, as typed. Sanitized into an FTS5 expression before use —
+ * `rm -rf` is a search term here, not an operator.
+ */
+query: string | null, 
+/**
+ * Rows witnessed by exactly this set of lanes.
+ *
+ * Exact, not a mask. A mask can say "the OTLP lane saw this" but not "and
+ * the transcript lane did not", and it was a mask that let `--rejected`
+ * quietly mean "every call OTEL witnessed" for two phases.
+ */
+provenance: number | null, };
 
 export type Page = { limit: number, offset: number, };
 
@@ -60,6 +86,47 @@ otel_only: number,
  * rejection is identified by this column, never by a missing transcript.
  */
 rejected: number, };
+
+export type TimelineRow = { call: ToolCall, project_path: string | null, git_branch: string | null, 
+/**
+ * An FTS `snippet()` with the match bracketed. `None` unless the filter
+ * carried a search term — the match may be in `result_text`, which the
+ * row itself never shows.
+ */
+snippet: string | null, 
+/**
+ * Lines this call added and removed, summed over the files it touched.
+ *
+ * `None` for a call that changed no file. An `Edit` row without its size
+ * is the one row in this list that says nothing about what it did.
+ */
+lines_added: number | null, lines_removed: number | null, };
+
+export type AgentGroup = { 
+/**
+ * The subagent *instance*. Present on every sidechain call.
+ */
+agent_id: string, 
+/**
+ * The subagent *type* (`Explore`, `general-purpose`), where it is known.
+ */
+agent_name: string | null, calls: number, first_at: number | null, last_at: number | null, };
+
+export type SessionGroup = { 
+/**
+ * `None` for calls whose session the store never learned — an OTLP event
+ * that arrived before any transcript line named the session.
+ */
+session_id: string | null, project_path: string | null, git_branch: string | null, slug: string | null, cc_version: string | null, calls: number, main_thread_calls: number, failures: number, refusals: number, first_at: number | null, last_at: number | null, 
+/**
+ * Sum of `api_request.cost_usd_micros` for the session.
+ *
+ * `None`, never `0`, when the OTLP lane never saw this session: imported
+ * history has no cost data at all, and a zero would read as free.
+ */
+cost_usd_micros: number | null, agents: Array<AgentGroup>, };
+
+export type Facets = { projects: Array<string>, tools: Array<string>, decision_sources: Array<string>, permission_modes: Array<string>, agents: Array<string>, };
 
 export type Totals = { raw_events: number, sessions: number, tool_calls: number, file_changes: number, api_requests: number, 
 /**
@@ -104,13 +171,38 @@ port_changed: boolean, };
 
 export type Summary = { files: number, lines: number, stored: number, duplicates: number, tool_uses: number, sessions: number, };
 
-export type Format = "json" | "jsonl" | "csv";
+export type Format = "json" | "jsonl" | "csv" | "markdown";
 
 export type ToolCallDetail = { call: ToolCall, 
 /**
  * Files this call changed, with their diffs.
  */
-file_changes: Array<FileChange>, };
+file_changes: Array<FileChange>, 
+/**
+ * The envelope the call ran inside: cwd, branch, Claude Code version.
+ * `None` for a call whose session the store never learned.
+ */
+session: Session | null, };
+
+export type SourceView = { 
+/**
+ * The transcript that recorded this call.
+ */
+path: string, 
+/**
+ * 1-based line number, when the file is still on disk to count into.
+ */
+line: number | null, 
+/**
+ * Whether that file is still there. Transcripts are Claude Code's to
+ * delete, and the stored record outlives them.
+ */
+exists: boolean, 
+/**
+ * The stored transcript line, verbatim. This is the evidence; the file is
+ * a convenience.
+ */
+body: string, };
 
 export type Stats = { totals: Totals, tools: Array<ToolUsage>, 
 /**
@@ -124,8 +216,16 @@ export type Setup = { configured: boolean, listening: boolean, endpoint: string,
  */
 report: string, };
 
-export function queryTimeline(filter: TimelineFilter, page: Page): Promise<Array<ToolCall>> {
+export function queryTimeline(filter: TimelineFilter, page: Page): Promise<Array<TimelineRow>> {
   return invoke("query_timeline", { filter, page });
+}
+
+export function timelineGroups(filter: TimelineFilter): Promise<Array<SessionGroup>> {
+  return invoke("timeline_groups", { filter });
+}
+
+export function facets(): Promise<Facets> {
+  return invoke("facets");
 }
 
 export function timelineCount(filter: TimelineFilter): Promise<number> {
@@ -136,16 +236,16 @@ export function getToolCall(toolUseId: string): Promise<ToolCallDetail | null> {
   return invoke("get_tool_call", { toolUseId });
 }
 
+export function getSource(toolUseId: string): Promise<SourceView | null> {
+  return invoke("get_source", { toolUseId });
+}
+
 export function listSessions(page: Page): Promise<Array<Session>> {
   return invoke("list_sessions", { page });
 }
 
 export function stats(): Promise<Stats> {
   return invoke("stats");
-}
-
-export function search(input: string, page: Page): Promise<Array<SearchHit>> {
-  return invoke("search", { input, page });
 }
 
 export function collectorStatus(): Promise<Status> {
@@ -164,6 +264,10 @@ export function exportCalls(filter: TimelineFilter, format: Format, limit: numbe
   return invoke("export_calls", { filter, format, limit });
 }
 
+export function saveExport(filter: TimelineFilter, format: Format, limit: number | null): Promise<string | null> {
+  return invoke("save_export", { filter, format, limit });
+}
+
 export function doctorStatus(): Promise<Setup> {
   return invoke("doctor_status");
 }
@@ -178,5 +282,9 @@ export function setLoginAgent(install: boolean): Promise<Setup> {
 
 export function revealLogs(): Promise<null> {
   return invoke("reveal_logs");
+}
+
+export function revealTranscript(path: string): Promise<null> {
+  return invoke("reveal_transcript", { path });
 }
 

@@ -1,0 +1,21 @@
+{
+  "name": "toolog-ui",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "The toolog window. No component framework: four views over a table do not justify one (ADR-0001).",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.14.0",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "^5.0.0"
+  }
+}

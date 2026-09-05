@@ -17,9 +17,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use toolog_cli::capture;
 use toolog_cli::commands::{self as cli, Format};
-use toolog_core::model::{
-    FileChange, Page, Reconciliation, SearchHit, Session, TimelineFilter, ToolCall,
-};
+use toolog_core::model::{FileChange, Page, Reconciliation, Session, TimelineFilter, ToolCall};
 use toolog_core::query;
 use ts_rs::TS;
 
@@ -33,6 +31,51 @@ pub(crate) struct ToolCallDetail {
     pub(crate) call: ToolCall,
     /// Files this call changed, with their diffs.
     pub(crate) file_changes: Vec<FileChange>,
+    /// The envelope the call ran inside: cwd, branch, Claude Code version.
+    /// `None` for a call whose session the store never learned.
+    pub(crate) session: Option<Session>,
+}
+
+/// Where a call's evidence sits on disk, for "open the transcript".
+///
+/// Deliberately not part of [`ToolCallDetail`]: finding it is a scan over one
+/// transcript's stored lines, and the detail pane follows the selection as the
+/// user arrows down the list. It is fetched when the source is asked for.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export_to = "unused/")]
+pub(crate) struct SourceView {
+    /// The transcript that recorded this call.
+    pub(crate) path: String,
+    /// 1-based line number, when the file is still on disk to count into.
+    pub(crate) line: Option<u32>,
+    /// Whether that file is still there. Transcripts are Claude Code's to
+    /// delete, and the stored record outlives them.
+    pub(crate) exists: bool,
+    /// The stored transcript line, verbatim. This is the evidence; the file is
+    /// a convenience.
+    pub(crate) body: String,
+}
+
+/// Count the lines before a byte offset, for a 1-based line number.
+///
+/// Reads only as far as the offset rather than the whole transcript, which in
+/// this corpus runs to tens of megabytes.
+fn line_at(path: &std::path::Path, offset: i64) -> std::io::Result<u32> {
+    use std::io::{BufRead as _, Read as _};
+
+    let take = u64::try_from(offset).unwrap_or(0);
+    let mut reader = std::io::BufReader::new(std::fs::File::open(path)?).take(take);
+    let mut line = Vec::new();
+    let mut lines = 1u32;
+    while reader.read_until(b'\n', &mut line)? > 0 {
+        if line.last() != Some(&b'\n') {
+            // The offset landed inside a line, which is still that line.
+            break;
+        }
+        lines = lines.saturating_add(1);
+        line.clear();
+    }
+    Ok(lines)
 }
 
 /// Everything the analytics view opens with.
@@ -153,8 +196,25 @@ commands! {
     |app, handle|
 
     /// One page of the timeline, newest first.
-    query_timeline(filter: TimelineFilter, page: Page) -> Vec<ToolCall> {
-        app.read(|c| query::timeline_page(c, &filter, page))
+    ///
+    /// Rows carry the session facts they display and, when the filter carried
+    /// a search term, the snippet showing where the match was — the list never
+    /// makes a second call to draw a row.
+    query_timeline(filter: TimelineFilter, page: Page) -> Vec<query::TimelineRow> {
+        app.read(|c| query::timeline_rows(c, &filter, page))
+    }
+
+    /// The sessions a filter touches, with their subagents and sizes.
+    ///
+    /// The index a grouped list is built from: knowing each group's size up
+    /// front is what lets it collapse a session without having fetched it.
+    timeline_groups(filter: TimelineFilter) -> Vec<query::SessionGroup> {
+        app.read(|c| query::timeline_groups(c, &filter))
+    }
+
+    /// The distinct values the filter controls offer.
+    facets() -> query::Facets {
+        app.read(query::facets)
     }
 
     /// How many calls match a filter, ignoring paging.
@@ -165,15 +225,44 @@ commands! {
         app.read(|c| query::timeline_count(c, &filter))
     }
 
-    /// One call and the files it changed.
+    /// One call, the files it changed, and the session it ran in.
     get_tool_call(tool_use_id: String) -> Option<ToolCallDetail> {
         app.read(|c| {
             let Some(call) = query::tool_call_detail(c, &tool_use_id)? else {
                 return Ok(None);
             };
+            let session = match call.session_id.as_deref() {
+                Some(id) => query::session(c, id)?,
+                None => None,
+            };
             Ok(Some(ToolCallDetail {
                 file_changes: query::file_changes(c, &tool_use_id)?,
+                session,
                 call,
+            }))
+        })
+    }
+
+    /// The transcript line that recorded a call, and where to find it.
+    get_source(tool_use_id: String) -> Option<SourceView> {
+        app.read(|c| {
+            let Some(call) = query::tool_call_detail(c, &tool_use_id)? else {
+                return Ok(None);
+            };
+            let Some(record) = query::source_record(c, &call)? else {
+                return Ok(None);
+            };
+            let path = std::path::PathBuf::from(&record.source_ref);
+            let exists = path.is_file();
+            let line = record
+                .source_offset
+                .filter(|_| exists)
+                .and_then(|offset| line_at(&path, offset).ok());
+            Ok(Some(SourceView {
+                path: record.source_ref,
+                line,
+                exists,
+                body: record.body,
             }))
         })
     }
@@ -192,11 +281,6 @@ commands! {
                 reconciliation: query::reconcile(c)?,
             })
         })
-    }
-
-    /// Full-text search over commands, paths and result text.
-    search(input: String, page: Page) -> Vec<SearchHit> {
-        app.read(|c| query::search(c, &input, page))
     }
 
     /// Whether capture is running, and how much it has taken in.
@@ -256,6 +340,38 @@ commands! {
         })
     }
 
+    /// Write the current filter to a file the user chooses.
+    ///
+    /// The only path this process writes outside its own store, and it comes
+    /// from a native save panel rather than from the WebView. Returns `None`
+    /// when the panel was dismissed.
+    save_export(filter: TimelineFilter, format: Format, limit: Option<u32>) -> Option<String> {
+        use tauri_plugin_dialog::DialogExt;
+
+        let (ext, label) = match format {
+            Format::Json => ("json", "JSON"),
+            Format::Jsonl => ("jsonl", "JSON Lines"),
+            Format::Csv => ("csv", "CSV"),
+            Format::Markdown => ("md", "Markdown"),
+        };
+        let Some(chosen) = handle
+            .dialog()
+            .file()
+            .set_file_name(format!("{}.{ext}", cli::export_file_stem()))
+            .add_filter(label, &[ext])
+            .blocking_save_file()
+        else {
+            return Ok(None);
+        };
+        let path = chosen
+            .into_path()
+            .map_err(|e| anyhow::anyhow!("that location cannot be written to: {e}"))?;
+
+        let mut file = std::fs::File::create(&path)?;
+        app.read(|c| cli::export(c, &filter, limit, format, &mut file))?;
+        Ok(Some(path.display().to_string()))
+    }
+
     /// The state of the Claude Code integration, for the wizard.
     doctor_status() -> Setup {
         setup_now()
@@ -290,5 +406,20 @@ commands! {
         let dir = toolog_cli::logging::log_dir()?;
         std::fs::create_dir_all(&dir)?;
         window::reveal(&handle, &dir)
+    }
+
+    /// Show a transcript in the file manager.
+    ///
+    /// Confined to `~/.claude/projects`. The frontend only ever passes a path
+    /// this process put there, but "reveal whatever the WebView asks for" is
+    /// not a command worth having, and the check costs one comparison.
+    reveal_transcript(path: String) -> () {
+        let path = std::path::PathBuf::from(path);
+        let root = toolog_ingest::discover::projects_dir()
+            .ok_or_else(|| anyhow::anyhow!("no transcripts directory on this machine"))?;
+        if !path.starts_with(&root) {
+            anyhow::bail!("{} is not a transcript", path.display());
+        }
+        window::reveal(&handle, &path)
     }
 }

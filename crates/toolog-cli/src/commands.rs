@@ -7,7 +7,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use toolog_core::model::{Page, TimelineFilter, provenance};
+use toolog_core::model::{Page, TimelineFilter, ToolCall};
 use toolog_core::{Connection, Db, Result, project, query};
 use toolog_ingest::Backfill;
 
@@ -150,6 +150,99 @@ pub enum Format {
     Jsonl,
     /// Spreadsheet columns: the display fields only, not the full payloads.
     Csv,
+    /// A table to paste into a report or an issue. Human-readable, and the
+    /// only format that spells out which lanes witnessed each row.
+    Markdown,
+}
+
+/// Which lanes witnessed a row, in words.
+///
+/// An export is evidence, and evidence that does not say how completely it was
+/// observed is worth less than one that does. `transcript` means no decision,
+/// duration or cost was ever recorded for that call.
+#[must_use]
+fn lanes(provenance: i64) -> &'static str {
+    match (
+        provenance & toolog_core::model::provenance::TRANSCRIPT != 0,
+        provenance & toolog_core::model::provenance::OTLP != 0,
+    ) {
+        (true, true) => "both",
+        (true, false) => "transcript",
+        (false, true) => "otel",
+        (false, false) => "none",
+    }
+}
+
+/// An epoch-millisecond timestamp as RFC 3339 UTC, for a human-readable export.
+fn stamp(ms: Option<i64>) -> String {
+    ms.and_then(|ms| jiff::Timestamp::from_millisecond(ms).ok())
+        .map(|t| t.to_string())
+        .unwrap_or_default()
+}
+
+/// One Markdown table cell.
+///
+/// Shell commands contain pipes and newlines, both of which end a table cell.
+fn md(value: Option<&str>) -> String {
+    value
+        .unwrap_or("")
+        .replace('\\', "\\\\")
+        .replace('|', "\\|")
+        .replace(['\n', '\r'], " ")
+}
+
+/// Write one row in the chosen format.
+///
+/// `written` is how many rows are already out, which JSON needs for its commas.
+fn write_row(out: &mut dyn Write, row: &ToolCall, format: Format, written: u32) -> Result<()> {
+    match format {
+        Format::Json => {
+            if written > 0 {
+                writeln!(out, ",")?;
+            }
+            write!(out, "{}", serde_json::to_string(row).unwrap_or_default())?;
+        }
+        Format::Jsonl => {
+            writeln!(out, "{}", serde_json::to_string(row).unwrap_or_default())?;
+        }
+        Format::Csv => {
+            writeln!(
+                out,
+                "{},{},{},{},{},{},{},{},{},{}",
+                row.called_at.map(|t| t.to_string()).unwrap_or_default(),
+                csv(row.session_id.as_deref()),
+                csv(row.tool_name.as_deref()),
+                row.success.map(|s| s.to_string()).unwrap_or_default(),
+                row.duration_ms.map(|d| d.to_string()).unwrap_or_default(),
+                csv(row.decision.as_deref()),
+                csv(row.decision_source.as_deref()),
+                csv(Some(lanes(row.provenance))),
+                csv(row.target_path.as_deref()),
+                csv(row.input_summary.as_deref()),
+            )?;
+        }
+        Format::Markdown => {
+            writeln!(
+                out,
+                "| {} | {} | {} | {} | {} | {} | {} |",
+                stamp(row.called_at),
+                md(row.tool_name.as_deref()),
+                match (row.decision.as_deref(), row.success) {
+                    (Some("reject"), _) => "refused".to_string(),
+                    (_, Some(true)) => "ok".to_string(),
+                    (_, Some(false)) => "failed".to_string(),
+                    (_, None) => String::new(),
+                },
+                row.duration_ms
+                    .map(|d| format!("{d} ms"))
+                    .unwrap_or_default(),
+                md(row.decision_source.as_deref()),
+                lanes(row.provenance),
+                md(row.input_summary.as_deref().or(row.target_path.as_deref())),
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Write matching tool calls to `out`.
@@ -176,8 +269,17 @@ pub fn export(
     if format == Format::Csv {
         writeln!(
             out,
-            "called_at,session_id,tool_name,success,duration_ms,decision,decision_source,target_path,input_summary"
+            "called_at,session_id,tool_name,success,duration_ms,decision,decision_source,lanes,target_path,input_summary"
         )?;
+    }
+    if format == Format::Markdown {
+        writeln!(out, "# toolog export\n")?;
+        writeln!(out, "Exported {}.\n", jiff::Timestamp::now())?;
+        writeln!(
+            out,
+            "| Time (UTC) | Tool | Result | Duration | Decision | Lanes | Summary |"
+        )?;
+        writeln!(out, "|---|---|---|---|---|---|---|")?;
     }
 
     loop {
@@ -195,32 +297,7 @@ pub fn export(
         }
 
         for row in &rows {
-            match format {
-                Format::Json => {
-                    if written > 0 {
-                        writeln!(out, ",")?;
-                    }
-                    write!(out, "{}", serde_json::to_string(row).unwrap_or_default())?;
-                }
-                Format::Jsonl => {
-                    writeln!(out, "{}", serde_json::to_string(row).unwrap_or_default())?;
-                }
-                Format::Csv => {
-                    writeln!(
-                        out,
-                        "{},{},{},{},{},{},{},{},{}",
-                        row.called_at.map(|t| t.to_string()).unwrap_or_default(),
-                        csv(row.session_id.as_deref()),
-                        csv(row.tool_name.as_deref()),
-                        row.success.map(|s| s.to_string()).unwrap_or_default(),
-                        row.duration_ms.map(|d| d.to_string()).unwrap_or_default(),
-                        csv(row.decision.as_deref()),
-                        csv(row.decision_source.as_deref()),
-                        csv(row.target_path.as_deref()),
-                        csv(row.input_summary.as_deref()),
-                    )?;
-                }
-            }
+            write_row(out, row, format, written)?;
             written += 1;
         }
 
@@ -229,6 +306,14 @@ pub fn export(
 
     if format == Format::Json {
         writeln!(out, "\n]")?;
+    }
+    if format == Format::Markdown {
+        writeln!(
+            out,
+            "\n{written} calls. **Lanes** is how completely each call was observed: \
+             `both` is the full record; `transcript` means no decision, duration or cost \
+             was ever recorded for it; `otel` means no transcript body was written."
+        )?;
     }
     out.flush()?;
     Ok(written)
@@ -243,11 +328,28 @@ fn csv(value: Option<&str>) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 
-/// Only calls that OTEL saw and the transcript did not — the refusals.
+/// A default file name for an export: `toolog-2026-09-05`.
+///
+/// Dated rather than timestamped: an evidence bundle is usually re-exported a
+/// few times in one sitting, and a name that collides is a name the save panel
+/// will warn about, which is the right prompt.
+#[must_use]
+pub fn export_file_stem() -> String {
+    jiff::Zoned::now().strftime("toolog-%Y-%m-%d").to_string()
+}
+
+/// Only calls that were refused.
+///
+/// Read from `decision`, which the OTLP lane supplies. **Not** inferred from
+/// provenance: Phase 4 measured two real refusals and found both in *both*
+/// lanes, because a denied call still leaves a `tool_use` block and a
+/// `tool_result` whose body is the refusal message. The lane-based version of
+/// this filter matched every call OTEL witnessed — 30 rows on the owner's
+/// store, of which 2 were actually refused.
 #[must_use]
 pub fn rejected_only() -> TimelineFilter {
     TimelineFilter {
-        provenance_mask: Some(provenance::OTLP),
+        decision: Some("reject".to_string()),
         ..TimelineFilter::default()
     }
 }
@@ -375,7 +477,125 @@ mod tests {
     }
 
     #[test]
-    fn the_rejected_filter_selects_the_otel_only_lane() {
-        assert_eq!(rejected_only().provenance_mask, Some(provenance::OTLP));
+    fn every_export_says_which_lanes_witnessed_each_row() {
+        let db = seeded();
+        // A refusal: OTEL saw it, and only OTEL knows who refused it.
+        project::upsert_otel(
+            db.conn(),
+            "toolu_1",
+            &toolog_core::model::OtelFacts {
+                duration_ms: Some(41),
+                decision: Some("reject".to_string()),
+                decision_source: Some("user_reject".to_string()),
+                ..toolog_core::model::OtelFacts::default()
+            },
+        )
+        .expect("otel");
+
+        let render = |format| {
+            let mut out = Vec::new();
+            export(
+                db.conn(),
+                &TimelineFilter::default(),
+                None,
+                format,
+                &mut out,
+            )
+            .expect("export");
+            String::from_utf8(out).expect("utf8")
+        };
+
+        let csv = render(Format::Csv);
+        assert!(csv.lines().next().expect("header").contains("lanes"));
+        assert!(
+            csv.contains("\"both\""),
+            "provenance travels with the row: {csv}"
+        );
+
+        let md = render(Format::Markdown);
+        assert!(md.starts_with("# toolog export"));
+        assert!(md.contains("| Time (UTC) |"));
+        assert!(
+            md.contains("| Bash | refused | 41 ms | user_reject | both |"),
+            "a refusal must read as one, not as a success: {md}"
+        );
+        assert!(
+            md.contains("`transcript` means no decision"),
+            "an export that does not say how completely it was observed is worth less"
+        );
+    }
+
+    /// Shell commands contain pipes, and a pipe ends a Markdown table cell.
+    #[test]
+    fn a_markdown_cell_survives_a_shell_pipeline() {
+        let db = Db::open_in_memory().expect("db");
+        project::upsert_transcript(
+            db.conn(),
+            "toolu_p",
+            &TranscriptFacts {
+                tool_name: Some("Bash".to_string()),
+                input_summary: Some("ps aux | grep -v grep\nwc -l".to_string()),
+                called_at: Some(1),
+                ..TranscriptFacts::default()
+            },
+        )
+        .expect("project");
+
+        let mut out = Vec::new();
+        export(
+            db.conn(),
+            &TimelineFilter::default(),
+            None,
+            Format::Markdown,
+            &mut out,
+        )
+        .expect("export");
+        let text = String::from_utf8(out).expect("utf8");
+        let row = text
+            .lines()
+            .find(|l| l.contains("ps aux"))
+            .expect("the row");
+        assert!(row.contains(r"grep -v grep"));
+        assert_eq!(
+            row.matches(" | ").count(),
+            6,
+            "seven columns, whatever the command contains: {row}"
+        );
+        assert!(!row.contains('\n'));
+    }
+
+    /// The filter behind `toolog export --rejected`, which for two phases
+    /// selected the OTLP lane rather than the refusals in it.
+    #[test]
+    fn the_rejected_filter_selects_refusals_not_a_lane() {
+        let db = Db::open_in_memory().expect("db");
+        for (id, decision) in [("toolu_ok", "accept"), ("toolu_no", "reject")] {
+            project::upsert_transcript(
+                db.conn(),
+                id,
+                &TranscriptFacts {
+                    tool_name: Some("Bash".to_string()),
+                    called_at: Some(1),
+                    ..TranscriptFacts::default()
+                },
+            )
+            .expect("transcript");
+            project::upsert_otel(
+                db.conn(),
+                id,
+                &toolog_core::model::OtelFacts {
+                    decision: Some(decision.to_string()),
+                    decision_source: Some("config".to_string()),
+                    ..toolog_core::model::OtelFacts::default()
+                },
+            )
+            .expect("otel");
+        }
+
+        // Both rows carry the OTLP bit; only one of them was refused.
+        let mut out = Vec::new();
+        let n = export(db.conn(), &rejected_only(), None, Format::Jsonl, &mut out).expect("export");
+        assert_eq!(n, 1, "a refusal is a decision, not a provenance");
+        assert!(String::from_utf8(out).expect("utf8").contains("toolu_no"));
     }
 }

@@ -52,6 +52,10 @@ Nothing — with one exception, named here rather than buried.
   query run.** The guarantee is a build failure when broken, not a promise in a
   document. *(Phase 7, task 7.7.)*
 
+**Exports go where you point them.** The timeline's export opens a native save panel, and toolog
+writes the file you choose and nothing else. What it contains is the same sensitive data the store
+holds — commands, paths, results — so where you put it is the decision that matters.
+
 **The exception:** an update check against GitHub Releases. It is **off by default**,
 **opt-in at first run**, and **sends no user data** — it fetches a version manifest.
 *(Phase 8, task 8.5.)*

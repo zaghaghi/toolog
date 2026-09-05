@@ -75,6 +75,9 @@ tauri-build = "2.6.3"
 tauri-plugin-single-instance = "2.4.4"
 tauri-plugin-notification = "2.4.0"
 tauri-plugin-opener = "2.5.5"
+# The one dialog the app opens: "save this export where?". No network, and the
+# path it returns is the only place the process writes outside its own store.
+tauri-plugin-dialog = "2.4.1"
 
 # --- the Rust/TypeScript boundary (Phase 4.9) ---
 # A plain dependency rather than a feature: every type that crosses the IPC

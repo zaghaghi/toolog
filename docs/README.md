@@ -1,7 +1,8 @@
 # Documentation
 
-**Status: Phases 0–4 complete.** Capture works end to end — both lanes, the menu-bar app and the
-CLI. Phases 5–8 remain.
+**Status: Phases 0–5 complete — this is v0.1.** Capture works end to end, and the timeline is the
+first view over it: virtualized, searchable, filterable, with diffs and evidence export. Phases 6–8
+remain.
 
 ## Phases
 
@@ -15,7 +16,7 @@ Nine phases. Each ends in something runnable and checkable. **Phase 5 is the fir
 | [02 — Transcript ingestion](phases/02-transcript-ingestion.md) | Backfill and live tail; the content lane | done |
 | [03 — OTLP collector](phases/03-otlp-collector.md) | Decisions, durations, cost; the decision lane | done |
 | [04 — App shell](phases/04-app-shell.md) | Installs itself, stays resident, frontend can query | done |
-| [05 — Timeline view](phases/05-timeline-view.md) | The forensic view | **v0.1** |
+| [05 — Timeline view](phases/05-timeline-view.md) | The forensic view | **v0.1** — done |
 | [06 — Risk, analytics & live](phases/06-risk-analytics-live.md) | The other three surfaces | |
 | [07 — Privacy, retention, integrity](phases/07-privacy-retention-integrity.md) | Earn the word "audit" | |
 | [08 — Packaging & distribution](phases/08-packaging-distribution.md) | Dead simple install | **v1.0** |
@@ -38,6 +39,7 @@ version moves substantially.
 | `OTEL_EXPORTER_OTLP_ENDPOINT` is global across signals | Use per-signal variables only → [ADR-0006](adr/0006-configure-via-settings-env-block.md) |
 | `~/.claude/settings.json` supports an `env` block | Install is one file write → [ADR-0006](adr/0006-configure-via-settings-env-block.md) |
 | 271 of 2,334 local tool calls are `isSidechain` | Subagent attribution is not an edge case → [Phase 2](phases/02-transcript-ingestion.md) |
+| Every one of 342 real `structuredPatch` hunks carries the same five keys — and four lines in them are `\ No newline at end of file`, which is a note rather than a line | The diff renderer counts it as neither → [Phase 5](phases/05-timeline-view.md) |
 
 ## Backfill numbers to check against
 

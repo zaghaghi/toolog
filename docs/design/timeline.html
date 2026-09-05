@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>toolog — timeline mockup (task 5.2)</title>
+    <!-- The same token file the application uses, so this cannot drift from it. -->
+    <link rel="stylesheet" href="../../ui/src/styles/tokens.css" />
+    <style>
+      /* Only what the mockup needs. The real rules live in ui/src/styles/app.css. */
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--paper); color: var(--ink);
+        font: var(--text-base) / var(--leading) var(--font);
+        -webkit-font-smoothing: antialiased;
+      }
+      .note { max-width: 78ch; margin: var(--s7) auto var(--s5); padding: 0 var(--s6);
+              color: var(--ink-soft); font-size: var(--text-base); }
+      .note h1 { font-size: var(--text-lg); color: var(--ink); margin: 0 0 var(--s3); letter-spacing: -0.01em; }
+      .note code { font-family: var(--mono); font-size: var(--text-sm); }
+      .frame { max-width: 1120px; margin: 0 auto var(--s8); padding: 0 var(--s6); }
+      .window { display: grid; grid-template-columns: 1fr var(--pane-w);
+                border: 1px solid var(--line-strong); border-radius: var(--r-lg);
+                overflow: hidden; background: var(--card); box-shadow: var(--shadow); }
+
+      .bar { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s5);
+             border-bottom: 1px solid var(--line); background: var(--card); }
+      .search { flex: 1; font: var(--text-base)/1 var(--mono); color: var(--ink);
+                background: var(--sunken); border: 1px solid var(--line);
+                border-radius: var(--r-md); padding: var(--s3) var(--s4); }
+      .pick { font: var(--text-sm)/1 var(--font); color: var(--ink-soft);
+              background: var(--card); border: 1px solid var(--line);
+              border-radius: var(--r-md); padding: var(--s3) var(--s4); }
+
+      .day { display: flex; align-items: center; justify-content: space-between;
+             padding: var(--s2) var(--s5); font-size: var(--text-xs); font-weight: 600;
+             letter-spacing: var(--tracking-caps); text-transform: uppercase;
+             color: var(--ink-faint); background: var(--paper);
+             border-bottom: 1px solid var(--line); }
+
+      .row { display: grid; align-items: center; height: var(--row-h);
+             grid-template-columns: var(--col-time) var(--col-project) var(--col-tool)
+                                    var(--col-status) 1fr var(--col-duration) var(--col-decision);
+             gap: var(--s4); padding: 0 var(--s5); border-bottom: 1px solid var(--line);
+             font-size: var(--text-base); white-space: nowrap; }
+      .row:hover { background: var(--sunken); }
+      .row.sel { background: var(--clay-wash); box-shadow: inset 2px 0 0 var(--clay); }
+      .time { font: var(--text-sm)/1 var(--mono); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+      .project, .dur, .dec { overflow: hidden; text-overflow: ellipsis; }
+      .project { color: var(--ink-soft); font-size: var(--text-sm); }
+      .tool { font-size: var(--text-xs); font-weight: 650; letter-spacing: 0.02em;
+              color: var(--ink-soft); background: var(--sunken); border: 1px solid var(--line);
+              border-radius: var(--r-sm); padding: 1px var(--s3); justify-self: start;
+              max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+      .st { font-size: 11px; text-align: center; }
+      .st.ok { color: var(--good); } .st.no { color: var(--bad); } .st.ref { color: var(--refused); }
+      .sum { font: var(--text-base)/1 var(--mono); overflow: hidden; text-overflow: ellipsis; }
+      .sum mark { background: var(--mark); color: inherit; border-radius: 2px; }
+      .dur { font: var(--text-sm)/1 var(--mono); color: var(--ink-soft); text-align: right;
+             font-variant-numeric: tabular-nums; }
+      .dec { font-size: var(--text-xs); color: var(--ink-faint); text-align: right; }
+      .dec.user { color: var(--warn); }
+      .none { color: var(--ink-faint); }
+      .sub .sum::before { content: "└ "; color: var(--ink-faint); }
+      .sub .time { padding-left: var(--s4); }
+      .agent { font-size: var(--text-xs); color: var(--refused); }
+
+      .ghead { display: grid; align-items: center; height: var(--row-h);
+               grid-template-columns: 1fr auto; gap: var(--s4); padding: 0 var(--s5);
+               background: var(--sunken); border-bottom: 1px solid var(--line);
+               font-size: var(--text-sm); font-weight: 600; }
+      .ghead .meta { font-weight: 400; color: var(--ink-soft); font-size: var(--text-xs); }
+
+      .pane { border-left: 1px solid var(--line); padding: var(--s5); overflow: hidden; }
+      .pane h2 { font-size: var(--text-md); margin: 0 0 var(--s2); }
+      .pane h3 { font-size: var(--text-xs); text-transform: uppercase; font-weight: 600;
+                 letter-spacing: var(--tracking-caps); color: var(--ink-faint);
+                 margin: var(--s6) 0 var(--s3); }
+      .kv { display: grid; grid-template-columns: 92px 1fr; gap: var(--s2) var(--s4);
+            font-size: var(--text-sm); }
+      .kv dt { color: var(--ink-faint); } .kv dd { margin: 0; font-family: var(--mono); }
+      .well { background: var(--sunken); border: 1px solid var(--line); border-radius: var(--r-md);
+              padding: var(--s4); font: var(--text-sm)/1.5 var(--mono); overflow-x: auto; }
+      .diff { border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden;
+              font: var(--text-sm)/1.5 var(--mono); }
+      .diff div { padding: 0 var(--s4); white-space: pre; }
+      .diff .hunk { background: var(--sunken); color: var(--ink-faint); }
+      .diff .add { background: var(--add-bg); color: var(--add-ink); }
+      .diff .del { background: var(--del-bg); color: var(--del-ink); }
+      .chip { display: inline-block; font-size: var(--text-xs); font-weight: 600;
+              border-radius: 999px; padding: 1px var(--s3); }
+      .chip.ok { color: var(--good); background: color-mix(in srgb, var(--good) 12%, transparent); }
+      .chip.lane { color: var(--ink-soft); background: var(--sunken); }
+    </style>
+  </head>
+  <body>
+    <div class="note">
+      <h1>Timeline — agreed anatomy</h1>
+      <p>
+        Task 5.2's deliverable, and the thing tasks 5.3–5.9 are built against. Dense single-line
+        rows, because <code>Bash</code> is 71% of the corpus and the question is nearly always
+        “what ran, and did it go through?”. One accent colour; status carried by a glyph rather
+        than by a coloured row, so a screen of failures still reads as a list.
+      </p>
+      <p>
+        Every value below comes from <code>ui/src/styles/tokens.css</code>. Open this file
+        alongside the app to check the two still agree.
+      </p>
+    </div>
+
+    <div class="frame">
+      <div class="window">
+        <div>
+          <div class="bar">
+            <input class="search" value="rm -rf" aria-label="Search" />
+            <span class="pick">Project: toolog</span>
+            <span class="pick">Any tool</span>
+            <span class="pick">Any result</span>
+            <span class="pick">Group by session</span>
+          </div>
+
+          <div class="day"><span>Today · 5 September</span><span>2,817 calls</span></div>
+
+          <div class="row">
+            <span class="time">09:41:07</span><span class="project">toolog</span>
+            <span class="tool">Bash</span><span class="st ok">✓</span>
+            <span class="sum">rtk proxy cargo test --workspace --all-targets</span>
+            <span class="dur">1.2 s</span><span class="dec">config</span>
+          </div>
+          <div class="row">
+            <span class="time">09:41:03</span><span class="project">toolog</span>
+            <span class="tool">Edit</span><span class="st ok">✓</span>
+            <span class="sum">crates/toolog-core/src/query.rs <span class="none">+18 −4</span></span>
+            <span class="dur none">—</span><span class="dec none">—</span>
+          </div>
+          <div class="row sel">
+            <span class="time">09:40:58</span><span class="project">taptrigg</span>
+            <span class="tool">Read</span><span class="st ok">✓</span>
+            <span class="sum">apps/host-panel/src/App.tsx</span>
+            <span class="dur">40 ms</span><span class="dec">config</span>
+          </div>
+          <div class="row">
+            <span class="time">09:40:12</span><span class="project">toolog</span>
+            <span class="tool">Bash</span><span class="st no">✗</span>
+            <span class="sum">cargo clippy --workspace -- -D warnings</span>
+            <span class="dur">8.4 s</span><span class="dec">config</span>
+          </div>
+          <div class="row">
+            <span class="time">09:39:55</span><span class="project">toolog</span>
+            <span class="tool">Bash</span><span class="st ref">⛔</span>
+            <span class="sum"><mark>rm -rf</mark> target/debug</span>
+            <span class="dur none">—</span><span class="dec user">user_reject</span>
+          </div>
+
+          <div class="ghead">
+            <span>Explore <span class="meta">· subagent · 12 calls · 09:39:20–09:39:48</span></span>
+            <span class="meta">collapse</span>
+          </div>
+          <div class="row sub">
+            <span class="time">09:39:48</span><span class="project">toolog</span>
+            <span class="tool">Grep</span><span class="st ok">✓</span>
+            <span class="sum">"decision_source" crates/</span>
+            <span class="dur">12 ms</span><span class="dec none">—</span>
+          </div>
+          <div class="row sub">
+            <span class="time">09:39:31</span><span class="project">toolog</span>
+            <span class="tool">Bash</span><span class="st ok">✓</span>
+            <span class="sum"><mark>rm -rf</mark> /tmp/scratch &amp;&amp; mkdir -p /tmp/scratch</span>
+            <span class="dur">31 ms</span><span class="dec none">—</span>
+          </div>
+
+          <div class="ghead">
+            <span>taptrigg <span class="meta">· feat/photos · 61 calls · $0.42 · 08:50–09:04</span></span>
+            <span class="meta">collapse</span>
+          </div>
+          <div class="row">
+            <span class="time">09:04:22</span><span class="project">taptrigg</span>
+            <span class="tool">Write</span><span class="st ok">✓</span>
+            <span class="sum">apps/host-panel/src/photos/Upload.tsx</span>
+            <span class="dur">—</span><span class="dec none">—</span>
+          </div>
+        </div>
+
+        <div class="pane">
+          <h2>Read <span class="chip ok">ok</span> <span class="chip lane">both lanes</span></h2>
+          <div class="none" style="font-family: var(--mono); font-size: var(--text-sm)">
+            /Users/hamedzaghaghi/Projects/taptrigg/apps/host-panel/src/App.tsx
+          </div>
+
+          <h3>Call</h3>
+          <dl class="kv">
+            <dt>Started</dt><dd>09:40:58.221</dd>
+            <dt>Duration</dt><dd>40 ms</dd>
+            <dt>Decision</dt><dd>accept · config</dd>
+            <dt>Mode</dt><dd>acceptEdits</dd>
+          </dl>
+
+          <h3>Session</h3>
+          <dl class="kv">
+            <dt>Project</dt><dd>taptrigg</dd>
+            <dt>Branch</dt><dd>feat/photos</dd>
+            <dt>Claude Code</dt><dd>2.1.260</dd>
+          </dl>
+
+          <h3>Diff — 1 file, +18 −4</h3>
+          <div class="diff">
+            <div class="hunk">@@ -84,6 +84,9 @@</div>
+            <div>   bind!(f.decision_source, "tc.decision_source = ?");</div>
+            <div class="add">+  bind!(f.permission_mode, "tc.permission_mode = ?");</div>
+            <div class="add">+  bind!(f.agent_id,        "tc.agent_id = ?");</div>
+            <div class="del">-  // TODO: permission mode</div>
+          </div>
+
+          <h3>Input</h3>
+          <div class="well">{ "file_path": "/Users/…/App.tsx" }</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -42,6 +42,23 @@ jobs:
         with:
           shared-key: toolog
 
+      # Phase 5.1 puts the window on TypeScript and Vite. The bundle is
+      # embedded in the binary, so it is built before anything compiles it, and
+      # `npm run build` type-checks first — a frontend that does not compile
+      # must fail CI as loudly as a crate that does not.
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build the window
+        run: npm --prefix ui ci && npm --prefix ui run build
+
+      - name: Frontend tests
+        run: npm --prefix ui test
+
       - name: Format
         run: cargo fmt --all -- --check
 
@@ -75,4 +92,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: msrv
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm --prefix ui ci && npm --prefix ui run build
       - run: cargo check --workspace --all-targets

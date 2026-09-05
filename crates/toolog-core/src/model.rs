@@ -300,15 +300,37 @@ pub struct PermissionModeChange {
 #[ts(export_to = "unused/")]
 pub struct TimelineFilter {
     pub session_id: Option<String>,
+    /// Only calls whose session the store never learned.
+    ///
+    /// A group the timeline can show but `session_id` cannot name, and without
+    /// it "expand that group" would quietly widen to every row.
+    pub session_unknown: Option<bool>,
     pub project_path: Option<String>,
     pub tool_name: Option<String>,
     pub since: Option<i64>,
     pub until: Option<i64>,
     pub success: Option<bool>,
     pub is_sidechain: Option<bool>,
+    pub decision: Option<String>,
     pub decision_source: Option<String>,
-    /// Rows whose provenance includes every bit set here.
-    pub provenance_mask: Option<i64>,
+    pub permission_mode: Option<String>,
+    /// One subagent instance.
+    pub agent_id: Option<String>,
+    /// `true`: only main-thread calls. `false`: only subagent calls.
+    ///
+    /// Reads `agent_id`, which is present on every sidechain call and no
+    /// main-thread one, rather than `is_sidechain`, which is null on any row
+    /// the transcript lane has not witnessed.
+    pub main_thread: Option<bool>,
+    /// Free text, as typed. Sanitized into an FTS5 expression before use —
+    /// `rm -rf` is a search term here, not an operator.
+    pub query: Option<String>,
+    /// Rows witnessed by exactly this set of lanes.
+    ///
+    /// Exact, not a mask. A mask can say "the OTLP lane saw this" but not "and
+    /// the transcript lane did not", and it was a mask that let `--rejected`
+    /// quietly mean "every call OTEL witnessed" for two phases.
+    pub provenance: Option<i64>,
 }
 
 /// Paging for a timeline query.

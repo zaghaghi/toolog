@@ -34,6 +34,7 @@ pub(crate) fn run(background: bool) -> anyhow::Result<()> {
         }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(commands::handler())
         .setup(move |app| {
             // A menu-bar app, not a Dock app: no icon, no app switcher entry.

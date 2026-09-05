@@ -1,0 +1,131 @@
+/*
+ * Design tokens (task 5.2).
+ *
+ * Written before the first row, because "simple but beautiful" is cheaper to
+ * decide than to retrofit. Everything the interface draws comes from here:
+ * a colour, a size or a spacing that is not a token is a bug waiting to be
+ * inconsistent.
+ *
+ * The palette continues Phase 4's — warm paper, near-black ink, one clay
+ * accent — and adds the states a forensic list needs: a failure, a refusal, a
+ * search hit and the two halves of a diff.
+ *
+ * The mockup this was agreed against is docs/design/timeline.html.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* --- surface ------------------------------------------------------- */
+  --paper: #f7f6f3;          /* the window */
+  --card: #ffffff;           /* raised surfaces: rows, panes, popovers */
+  --sunken: #f1efea;         /* wells: code blocks, inputs, the report */
+  --line: #e4e2dc;           /* hairlines */
+  --line-strong: #d3cfc6;    /* borders that must be seen */
+
+  /* --- ink ------------------------------------------------------------ */
+  --ink: #1c1f26;            /* primary text */
+  --ink-soft: #5f6672;       /* labels, metadata, the second rank */
+  --ink-faint: #8d93a0;      /* the third rank: placeholders, "—" */
+
+  /* --- accent and state ----------------------------------------------- */
+  --clay: #b8542f;           /* the one accent: selection, primary actions */
+  --clay-wash: #f6e8e1;      /* its tint, for fills behind text */
+  --good: #2f7d52;           /* a call that succeeded */
+  --bad: #b3311f;            /* a call that failed */
+  --refused: #8a3ffc;        /* a call that was denied — neither ok nor error */
+  --warn: #8a6100;           /* attention, not failure */
+  --mark: #ffe08a;           /* a search match */
+
+  /* Diffs. Tinted backgrounds rather than coloured text: a diff is read by
+     shape first, and green-on-white text at 12px is not that. */
+  --add-bg: #e4f4e9;
+  --add-ink: #1f6b41;
+  --del-bg: #fbe6e3;
+  --del-ink: #9c2b1c;
+
+  /* --- type ------------------------------------------------------------ */
+  --font: ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --text-xs: 10.5px;         /* chips, column headings */
+  --text-sm: 11.5px;         /* metadata inside a row */
+  --text-base: 12.5px;       /* the row, and body copy */
+  --text-md: 14px;           /* pane headings */
+  --text-lg: 19px;           /* the one title on a screen */
+
+  --leading-tight: 1.25;
+  --leading: 1.55;
+  --tracking-caps: 0.07em;
+
+  /* --- space ----------------------------------------------------------- */
+  --s1: 2px;
+  --s2: 4px;
+  --s3: 6px;
+  --s4: 8px;
+  --s5: 12px;
+  --s6: 16px;
+  --s7: 24px;
+  --s8: 32px;
+  --s9: 44px;
+
+  /* --- shape ------------------------------------------------------------ */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 10px;
+
+  /* --- the list --------------------------------------------------------- */
+  /* One height for every item in the virtual list — rows, session headers and
+     agent headers alike. Uniform heights turn "which item is at pixel N?" into
+     a division, which is what keeps 100k rows scrolling smoothly. */
+  --row-h: 28px;
+  --col-time: 62px;
+  --col-project: 104px;
+  --col-tool: 76px;
+  --col-status: 18px;
+  --col-duration: 58px;
+  --col-decision: 74px;
+  --pane-w: 440px;
+
+  /* --- motion ------------------------------------------------------------ */
+  /* Short enough to feel like a response rather than an animation. */
+  --fast: 90ms;
+  --ease: cubic-bezier(0.2, 0, 0.2, 1);
+
+  --shadow: 0 1px 2px rgb(28 31 38 / 6%), 0 8px 24px rgb(28 31 38 / 8%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #14161b;
+    --card: #1b1e24;
+    --sunken: #101216;
+    --line: #282c34;
+    --line-strong: #3a3f49;
+
+    --ink: #e8e6e1;
+    --ink-soft: #9aa1ad;
+    --ink-faint: #6b7280;
+
+    --clay: #d97757;
+    --clay-wash: #33231d;
+    --good: #6cc08b;
+    --bad: #e8705c;
+    --refused: #b78cff;
+    --warn: #d9a441;
+    --mark: #6b5320;
+
+    --add-bg: #16301f;
+    --add-ink: #7fd3a0;
+    --del-bg: #341a17;
+    --del-ink: #f0897a;
+
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 45%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --fast: 0ms;
+  }
+}

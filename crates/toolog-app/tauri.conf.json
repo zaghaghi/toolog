@@ -4,10 +4,10 @@
   "version": "0.0.0",
   "identifier": "com.zaghaghi.toolog",
   "build": {
-    "frontendDist": "../../ui"
+    "frontendDist": "../../ui/dist"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"

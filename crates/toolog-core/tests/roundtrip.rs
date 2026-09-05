@@ -375,13 +375,25 @@ fn timeline_filters_and_paging() {
         4
     );
 
-    let rejected = TimelineFilter {
-        provenance_mask: Some(provenance::OTLP),
+    // Exact, not a mask: the whole point of the lane filter is to separate
+    // "both lanes agree" from "only one lane ever saw this".
+    let both_lanes = TimelineFilter {
+        provenance: Some(provenance::BOTH),
         ..TimelineFilter::default()
     };
     assert_eq!(
-        query::timeline_count(db.conn(), &rejected).expect("count"),
-        3
+        query::timeline_count(db.conn(), &both_lanes).expect("count"),
+        2
+    );
+
+    let otel_only = TimelineFilter {
+        provenance: Some(provenance::OTLP),
+        ..TimelineFilter::default()
+    };
+    assert_eq!(
+        query::timeline_count(db.conn(), &otel_only).expect("count"),
+        1,
+        "one call had no transcript body written for it"
     );
 
     let page = Page {
@@ -405,7 +417,10 @@ fn search_matches_ranks_and_survives_shell_syntax() {
     let hits = query::search(db.conn(), "cargo", Page::default()).expect("search");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].tool_call.tool_use_id, "toolu_1");
-    assert!(hits[0].snippet.contains('['), "snippet marks the match");
+    assert!(
+        hits[0].snippet.contains(query::MATCH_OPEN),
+        "snippet marks the match"
+    );
 
     // Result text is indexed too, not just the command.
     assert_eq!(

@@ -1,8 +1,9 @@
 # Toolog
 
-> **Status: Phases 0–4 done.** Capture works end to end — both lanes, the menu-bar app and the
-> CLI. The timeline and the other three views arrive in Phases 5 and 6.
-> See [docs/](docs/README.md).
+> **Status: v0.1 — Phases 0–5 done.** Capture works end to end, and the timeline is usable: a
+> virtualized list over every tool call, full-text search, filters that live in the URL, diffs for
+> every `Edit`, and export to JSON, CSV or Markdown. Risk review, analytics and the live view arrive
+> in Phase 6. See [docs/](docs/README.md).
 
 A local audit trail for Claude Code tool calls.
 
@@ -63,12 +64,16 @@ See [ADR-0002](docs/adr/0002-dual-ingestion-transcripts-and-otel.md) for the ful
 No packaged build yet — see [Phase 8](docs/phases/08-packaging-distribution.md). From a checkout:
 
 ```
-cargo build --release        # one binary: the app and the CLI
+npm --prefix ui ci           # the window's dependencies, once
+just release                 # bundles the window, then builds one binary: the app and the CLI
 toolog doctor                # what is configured, what is running, what is missing
 toolog doctor --fix          # configures Claude Code telemetry, merged, with a backup
 toolog backfill              # imports your existing history
 toolog                       # starts the menu-bar app and the receiver
 ```
+
+The window is TypeScript compiled by Vite and **embedded in the binary**, so it is built first;
+`just build`, `just release` and `just run` all do that for you.
 
 `brew install --cask toolog` is the Phase 8 target.
 
@@ -80,7 +85,7 @@ toolog                       # starts the menu-bar app and the receiver
 | `toolog doctor [--fix]` | The state of the integration. Read-only unless `--fix` |
 | `toolog backfill` | Import `~/.claude/projects`. Safe to re-run |
 | `toolog verify` | Cross-check the two lanes: gaps, refusals, completeness |
-| `toolog export` | JSON, JSONL or CSV, with filters |
+| `toolog export` | JSON, JSONL, CSV or Markdown, with filters |
 | `toolog agent install` | A login agent so capture survives a restart |
 
 `doctor --fix` writes only to `~/.claude/settings.json`, merges rather than overwrites, keeps a

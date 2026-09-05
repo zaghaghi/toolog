@@ -4,12 +4,28 @@
 default:
     @just --list
 
-# Build the workspace (debug).
-build:
+# Install the frontend's dependencies. Needed once, and after package.json moves.
+ui-install:
+    npm --prefix ui ci
+
+# Type-check and bundle the window into ui/dist (Phase 5.1).
+ui:
+    npm --prefix ui run build
+
+# Type-check the frontend without bundling.
+ui-check:
+    npm --prefix ui run check
+
+# The frontend's tests.
+ui-test:
+    npm --prefix ui test
+
+# Build the workspace (debug). The window is embedded, so it is built first.
+build: ui
     cargo build --workspace --all-targets
 
 # Build optimized.
-release:
+release: ui
     cargo build --workspace --release
 
 # Run the test suite.
@@ -25,11 +41,11 @@ lint:
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets -- -D warnings
 
-# Format, lint and test in one pass.
-check: fmt lint test
+# Format, lint and test in one pass — Rust and the frontend.
+check: fmt lint ui-check ui-test test
 
-# Run the application.
-run *ARGS:
+# Run the application. The window is compiled in, so it is bundled first.
+run *ARGS: ui
     cargo run --bin toolog -- {{ARGS}}
 
 # Report the state of the Claude Code integration. Read-only; `--fix` mutates.
