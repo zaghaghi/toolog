@@ -93,6 +93,32 @@ The last line matters as much as the first. It should leave `~/.claude/settings.
 it was before the install — the cask runs `toolog uninstall --apply` before removing the app, and
 that restores the pre-install backup byte for byte when nothing else has changed it.
 
+## When notarization returns 403
+
+```
+failed to notarize app: Error: HTTP status code: 403.
+A required agreement is missing or has expired.
+```
+
+Nothing is wrong with the build, the certificate or the key: signing has already succeeded by
+the time this appears. Apple periodically revises the Apple Developer Program License
+Agreement, and until the **Account Holder** accepts the new one, the notary service refuses
+every submission from the team with this 403. It is invisible until you notarize — a signed
+build works locally, and `security find-identity` still lists a valid certificate.
+
+Fix it at [developer.apple.com/account](https://developer.apple.com/account) (a "Review
+Agreement" banner) or in App Store Connect under **Business**. It has to be the Account
+Holder; an Admin cannot accept it. Then re-run the workflow against the tag that is already
+pushed — there is no need to re-tag or bump the version:
+
+```bash
+gh run rerun <run-id> -R zaghaghi/toolog
+```
+
+This bit the v1.0.0 release. The failed run got as far as building the universal binary and
+signing it with the Developer ID, and stopped at the notarization step; because the publish
+job depends on the bundle job, no partial release was created.
+
 ## Building locally
 
 ```bash
