@@ -31,6 +31,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "agent_attribution",
         sql: include_str!("migrations/002_agent_attribution.sql"),
     },
+    Migration {
+        version: 3,
+        name: "rule_dismissals",
+        sql: include_str!("migrations/003_rule_dismissals.sql"),
+    },
 ];
 
 /// The schema version this build knows how to produce.
@@ -134,11 +139,12 @@ mod tests {
             .expect("rewind");
         db.conn()
             .execute_batch(
-                "DROP INDEX tool_call_agent_id;
+                "DROP TABLE rule_dismissal;
+                 DROP INDEX tool_call_agent_id;
                  ALTER TABLE tool_call DROP COLUMN agent_id;
                  ALTER TABLE session DROP COLUMN slug;",
             )
-            .expect("undo 002");
+            .expect("undo everything after 001");
 
         let ended = migrate(db.conn()).expect("step to latest");
         assert_eq!(ended, latest_version());

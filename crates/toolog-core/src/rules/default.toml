@@ -1,0 +1,244 @@
+# The rules toolog ships with (task 6.2).
+#
+# This file is data. Copy it to
+# `~/Library/Application Support/toolog/rules.toml` and edit it: a rule with an
+# id that appears here replaces the one below, so a rule can be retuned or
+# switched off (give it a condition that matches nothing) without touching the
+# application. Ids that do not appear here are added.
+#
+# The vocabulary a `[rule.match]` block may use:
+#
+#   tools, kinds, decisions, decision_sources, permission_modes
+#                       lists; the column must be one of the values
+#   success             true or false
+#   main_thread         true for the main thread, false for subagents only
+#   first_line          match the command's first line only, so a heredoc body
+#                       is treated as the data it is rather than as the command
+#   summary_contains    case-insensitive substrings of the command
+#   summary_glob        SQLite GLOB patterns over the command (case-sensitive)
+#   path_glob           GLOB patterns over the file the call targeted
+#   outside_cwd         the target is not under the session's directory
+#   mode_changed        the session's permission mode changed while running
+#
+# `scope` is `call` (the default), `session`, or `retry_after_refusal`.
+# `severity` is `info`, `low`, `medium` or `high`.
+
+# --------------------------------------------------------------------------
+# Permission posture
+# --------------------------------------------------------------------------
+
+[[rule]]
+id = "unattended-permission-mode"
+title = "Calls made with permission prompts turned off"
+explanation = """
+`dontAsk` and `bypassPermissions` mean nothing stopped to ask. Everything the \
+agent decided to do in these calls, it did. This is a legitimate way to work \
+and worth knowing the extent of."""
+severity = "medium"
+scope = "call"
+[rule.match]
+permission_modes = ["dontAsk", "bypassPermissions"]
+
+[[rule]]
+id = "permission-mode-changed-mid-session"
+title = "Permission mode changed while the session was running"
+explanation = """
+The rules the agent was working under were not the rules it started under. \
+Worth reading alongside the timeline, which shows where the change falls."""
+severity = "low"
+scope = "session"
+[rule.match]
+mode_changed = true
+
+# --------------------------------------------------------------------------
+# What was auto-approved
+# --------------------------------------------------------------------------
+
+[[rule]]
+id = "auto-approved-destructive-bash"
+title = "Destructive shell commands approved by a rule, not a person"
+explanation = """
+`decision_source = config` means a permission rule let this through without \
+anyone seeing it. These are the commands where that matters most: recursive \
+deletes, raw disk writes, filesystem creation and history rewrites."""
+severity = "high"
+scope = "call"
+[rule.match]
+first_line = true
+tools = ["Bash"]
+decision_sources = ["config"]
+summary_contains = [
+  "rm -rf",
+  "rm -fr",
+  "rm -r ",
+  "dd if=",
+  "mkfs",
+  "git push --force",
+  "git push -f",
+  "git reset --hard",
+  "git filter-branch",
+  "shred ",
+  "> /dev/sd",
+  "chmod -R 777",
+]
+
+[[rule]]
+id = "curl-piped-to-a-shell"
+title = "A download piped straight into a shell"
+explanation = """
+`curl … | sh` runs whatever the server returned, unread. It is the shape of \
+both an ordinary installer and a supply-chain compromise, and nothing in the \
+record distinguishes them after the fact."""
+severity = "high"
+scope = "call"
+[rule.match]
+first_line = true
+tools = ["Bash"]
+summary_glob = [
+  "*curl*|*sh*",
+  "*curl*|*bash*",
+  "*wget*|*sh*",
+  "*wget*|*bash*",
+  "*iwr*|*iex*",
+]
+
+[[rule]]
+id = "destructive-bash-any-approval"
+title = "Destructive shell commands, however they were approved"
+explanation = """
+The same commands as the auto-approved rule, without the condition on who \
+approved them — the complete list of times something irreversible was run."""
+severity = "medium"
+scope = "call"
+[rule.match]
+first_line = true
+tools = ["Bash"]
+summary_contains = ["rm -rf", "rm -fr", "dd if=", "mkfs", "git push --force", "shred "]
+
+# --------------------------------------------------------------------------
+# Reach
+# --------------------------------------------------------------------------
+
+[[rule]]
+id = "write-outside-the-working-directory"
+title = "Files written outside the session's own directory"
+explanation = """
+An edit or a write whose target is not under the directory the session was \
+started in. Often a legitimate shared config; occasionally a repository the \
+agent was never asked to touch."""
+severity = "medium"
+scope = "call"
+[rule.match]
+tools = ["Edit", "Write", "NotebookEdit"]
+outside_cwd = true
+
+[[rule]]
+id = "secrets-read"
+title = "Credentials and keys that were read"
+explanation = """
+These files were opened and their contents entered the conversation. If any of \
+them held a live secret, treat it as seen."""
+severity = "high"
+scope = "call"
+[rule.match]
+tools = ["Read", "Bash"]
+path_glob = [
+  "*/.env",
+  "*/.env.*",
+  "*/id_rsa",
+  "*/id_ed25519",
+  "*.pem",
+  "*.p12",
+  "*/credentials",
+  "*/.aws/*",
+  "*/.ssh/*",
+  "*/.netrc",
+  "*/.npmrc",
+  "*/.pgpass",
+]
+
+[[rule]]
+id = "secrets-read-by-command"
+title = "Credentials and keys reached by a shell command"
+explanation = """
+The same files, opened by a command rather than by the Read tool — `cat`, \
+`grep` and `security find-generic-password` leave the same exposure and a \
+different trace."""
+severity = "high"
+scope = "call"
+[rule.match]
+first_line = true
+tools = ["Bash"]
+summary_contains = [
+  ".env",
+  "id_rsa",
+  "id_ed25519",
+  ".aws/credentials",
+  ".netrc",
+  ".pgpass",
+  "security find-generic-password",
+  "security find-internet-password",
+]
+
+[[rule]]
+id = "network-reaching-commands"
+title = "Shell commands that reached the network"
+explanation = """
+Commands that fetched or sent something. Data leaving the machine is the one \
+class of action a local audit trail cannot reconstruct afterwards, so the \
+record of the attempt is all there is."""
+severity = "low"
+scope = "call"
+[rule.match]
+first_line = true
+tools = ["Bash"]
+summary_glob = [
+  "curl *", "* curl *", "wget *", "* wget *",
+  "ssh *", "* ssh *", "scp *", "* scp *",
+  "nc *", "* nc *", "rsync *", "* rsync *",
+]
+
+# --------------------------------------------------------------------------
+# Sequences
+# --------------------------------------------------------------------------
+
+[[rule]]
+id = "retry-after-refusal"
+title = "A refused call that then went through"
+explanation = """
+Something was refused, and a call very like it ran afterwards in the same \
+session. This is the pattern that most justifies keeping an audit trail: the \
+refusal is only meaningful if what followed is visible too."""
+severity = "high"
+scope = "retry_after_refusal"
+[rule.match]
+main_thread = true
+
+# --------------------------------------------------------------------------
+# Third-party tools
+# --------------------------------------------------------------------------
+
+[[rule]]
+id = "mcp-tool-usage"
+title = "Tools provided by MCP servers"
+explanation = """
+These calls ran code from a server outside Claude Code. Grouped here so the \
+set of third parties that have acted on this machine is visible in one place."""
+severity = "info"
+scope = "call"
+[rule.match]
+kinds = ["mcp"]
+
+[[rule]]
+id = "failed-destructive-attempts"
+title = "Destructive commands that failed"
+explanation = """
+A failed `rm -rf` leaves the same intent on the record as one that worked, and \
+a failure is often the reason a second, broader attempt followed."""
+severity = "low"
+scope = "call"
+[rule.match]
+first_line = true
+tools = ["Bash"]
+success = false
+summary_contains = ["rm -rf", "rm -fr", "dd if=", "git push --force"]

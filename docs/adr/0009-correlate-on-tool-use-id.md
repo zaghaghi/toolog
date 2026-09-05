@@ -56,8 +56,9 @@ smoothing it over.**
 
 1. `tool_call.tool_use_id` is the primary key. Both lanes upsert into it.
 2. Each lane writes only its own columns. The transcript lane owns `input_json`, `result_json`,
-   `input_summary`, `target_path`, `is_sidechain`. The OTLP lane owns `duration_ms`, `error_type`,
-   `decision`, `decision_source`.
+   `input_summary`, `target_path`, `is_sidechain` and — since Phase 6 measured that OTEL never sends
+   it — `permission_mode`. The OTLP lane owns `duration_ms`, `error_type`, `decision`,
+   `decision_source`.
 3. A `provenance` bitmask records which lanes witnessed the call — bit 1 transcript, bit 2 OTLP.
 4. **Upserts are order-independent.** Either lane may create the row; neither overwrites the other's
    columns. Tests assert both arrival orders converge on the same row.

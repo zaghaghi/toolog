@@ -103,6 +103,7 @@ fn seed(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
                 called_at: Some(1_700_000_000_000 + n * 900),
                 success: Some(i % 23 != 0),
                 is_sidechain: Some(sidechain),
+                permission_mode: Some(if i % 50 == 0 { "dontAsk" } else { "default" }.to_string()),
                 agent_id: sidechain.then(|| format!("agent-{session}")),
                 agent_name: sidechain.then(|| "Explore".to_string()),
                 ..TranscriptFacts::default()
@@ -126,7 +127,6 @@ fn seed(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
                         }
                         .to_string(),
                     ),
-                    permission_mode: Some("default".to_string()),
                     ..OtelFacts::default()
                 },
             )?;

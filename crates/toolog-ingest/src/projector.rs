@@ -26,7 +26,7 @@
 use std::collections::HashMap;
 
 use serde_json::Value;
-use toolog_core::model::{RawEvent, Session, TranscriptFacts};
+use toolog_core::model::{PermissionModeChange, RawEvent, Session, TranscriptFacts};
 use toolog_core::project::{self, Projector};
 use toolog_core::{Connection, Result, raw};
 
@@ -60,6 +60,11 @@ pub struct TranscriptProjector {
     seen_sessions: std::collections::HashSet<String>,
     /// `session_id` -> relocated cwd, applied in [`Self::finish`].
     relocations: HashMap<String, String>,
+    /// `session_id` -> the permission mode in force, as records go by.
+    ///
+    /// Stateful because a tool call's own record does not carry the mode: it is
+    /// established by an earlier record and holds until another changes it.
+    modes: HashMap<String, String>,
 }
 
 impl TranscriptProjector {
@@ -115,13 +120,64 @@ impl TranscriptProjector {
             self.agent_types.insert(id.clone(), kind.clone());
         }
 
+        self.note_permission_mode(conn, e, ts)?;
+
         match e.kind() {
             "assistant" => self.project_tool_uses(conn, e, ts)?,
             "user" => self.project_tool_result(conn, e, ts)?,
-            "agent-name" | "relocated" => {} // handled by the session upsert above
+            // `permission-mode` records carry nothing but the mode, which
+            // `note_permission_mode` has already taken.
+            "agent-name" | "relocated" | "permission-mode" => {}
             _ => self.stats.unknown_records += 1,
         }
         Ok(())
+    }
+
+    /// Follow the permission mode, and record where it changes.
+    ///
+    /// **The plan had this coming from OTEL, and it does not.** 987 OTLP
+    /// records across 11 event types carried no `permission_mode` attribute and
+    /// no `permission_mode_changed` event; Claude Code 2.1.260 sends
+    /// `safe_mode` (a boolean) and nothing else. The mode lives in the
+    /// transcript instead, in two shapes: a bare `permission-mode` record, and
+    /// a `permissionMode` field on each `user` turn.
+    ///
+    /// Both are used, and the `user` turns are what make it reliable. A bare
+    /// `permission-mode` record carries no uuid and no timestamp, so two of
+    /// them with the same value are byte-identical and the second is dropped by
+    /// content-hash deduplication ([ADR-0004]) — an `auto` → `plan` → `auto`
+    /// return would lose its last step. Every `user` record is unique, so the
+    /// next prompt turn resynchronises the mode regardless.
+    ///
+    /// [ADR-0004]: ../../../docs/adr/0004-store-raw-project-normalized.md
+    fn note_permission_mode(
+        &mut self,
+        conn: &Connection,
+        e: &Envelope,
+        ts: Option<i64>,
+    ) -> Result<()> {
+        let (Some(session_id), Some(mode)) = (e.session_id.clone(), e.permission_mode.clone())
+        else {
+            return Ok(());
+        };
+
+        let previous = self.modes.insert(session_id.clone(), mode.clone());
+        if previous.as_ref() == Some(&mode) {
+            return Ok(());
+        }
+
+        // The first observation is recorded too, with no `from_mode`: it is how
+        // the session started, which a risk review needs as much as a change.
+        project::insert_permission_mode_change(
+            conn,
+            &PermissionModeChange {
+                session_id: Some(session_id),
+                from_mode: previous,
+                to_mode: Some(mode),
+                trigger: Some(e.kind().to_string()),
+                ts,
+            },
+        )
     }
 
     fn project_tool_uses(
@@ -163,6 +219,11 @@ impl TranscriptProjector {
                     input_json: Some(use_.input.to_string()),
                     input_summary: facts.summary,
                     target_path: facts.target,
+                    permission_mode: e
+                        .session_id
+                        .as_ref()
+                        .and_then(|id| self.modes.get(id))
+                        .cloned(),
                     ..TranscriptFacts::default()
                 },
             )?;
@@ -248,7 +309,11 @@ impl Projector for TranscriptProjector {
         }
         // Any instance whose type was never named still gets a consistent label
         // from whichever of its own records happened to carry one.
-        project::spread_agent_names(conn)
+        project::spread_agent_names(conn)?;
+
+        // A subagent's transcript carries no `permission-mode` record, so its
+        // calls take the mode of the session they were spawned inside.
+        project::inherit_permission_modes(conn)
     }
 }
 

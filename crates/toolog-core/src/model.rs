@@ -146,6 +146,13 @@ pub struct TranscriptFacts {
     pub result_text: Option<String>,
     pub result_size: Option<i64>,
     pub success: Option<bool>,
+    /// The permission mode in force when the call was made.
+    ///
+    /// Measured, not assumed: 987 OTLP records across 11 event types carried no
+    /// `permission_mode` attribute and no `permission_mode_changed` event.
+    /// Claude Code 2.1.260 puts the mode in the **transcript** — on a
+    /// `permission-mode` record and on each `user` turn.
+    pub permission_mode: Option<String>,
 }
 
 /// The columns the **OTLP lane** owns.
@@ -166,7 +173,6 @@ pub struct OtelFacts {
     pub error_type: Option<String>,
     pub decision: Option<String>,
     pub decision_source: Option<String>,
-    pub permission_mode: Option<String>,
     pub success: Option<bool>,
 
     /// What the call was *asked* to do, from OTEL's `tool_input`.

@@ -59,6 +59,8 @@ pub enum Command {
     Verify,
     /// Write tool calls to stdout or a file.
     Export(ExportArgs),
+    /// Evaluate the risk rules: what got approved, and how.
+    Risk,
     /// Install or remove the login agent that keeps capture running.
     Agent {
         #[command(subcommand)]
@@ -118,6 +120,7 @@ pub fn run(cli: &Cli) -> anyhow::Result<i32> {
         } => run_backfill(cli, path.as_deref(), *quiet, *reproject),
         Command::Verify => run_verify(cli),
         Command::Export(args) => run_export(cli, args),
+        Command::Risk => run_risk(cli),
         Command::Agent { action } => run_agent(action),
     }
 }
@@ -215,6 +218,20 @@ fn run_verify(cli: &Cli) -> anyhow::Result<i32> {
     let db = toolog_core::Db::open(db_path(cli)?)?;
     let reconciliation = commands::verify(&db)?;
     print!("{}", commands::render_verify(&reconciliation));
+    Ok(0)
+}
+
+fn run_risk(cli: &Cli) -> anyhow::Result<i32> {
+    let db = toolog_core::Db::open(db_path(cli)?)?;
+    let findings = commands::risk(&db)?;
+    print!("{}", commands::render_risk(&findings));
+    if let Some(path) = commands::rules_path() {
+        println!(
+            "{} rules in force. Add your own in {}.",
+            commands::rules()?.len(),
+            path.display()
+        );
+    }
     Ok(0)
 }
 

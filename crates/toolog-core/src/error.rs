@@ -30,6 +30,9 @@ pub enum Error {
     )]
     SchemaFromTheFuture { found: u32, known: u32 },
 
+    #[error("the rules file is not valid: {0}")]
+    Rules(String),
+
     #[error("migration {version} ({name}) failed: {source}")]
     Migration {
         version: u32,

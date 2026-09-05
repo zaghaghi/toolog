@@ -328,6 +328,68 @@ fn csv(value: Option<&str>) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 
+/// Where a user's own rules live, if they have written any.
+#[must_use]
+pub fn rules_path() -> Option<PathBuf> {
+    toolog_core::db::default_path()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("rules.toml")))
+}
+
+/// Every rule in force: the built-in set, plus the user's file if it exists.
+pub fn rules() -> Result<Vec<toolog_core::rules::Rule>> {
+    let user = rules_path().and_then(|p| std::fs::read_to_string(p).ok());
+    toolog_core::rules::load(user.as_deref())
+}
+
+/// Evaluate the risk rules against the store.
+pub fn risk(db: &Db) -> Result<Vec<toolog_core::rules::Finding>> {
+    toolog_core::rules::evaluate(db.conn(), &rules()?)
+}
+
+/// Render findings the way a review is read: worst first, with examples.
+#[must_use]
+pub fn render_risk(findings: &[toolog_core::rules::Finding]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+
+    if findings.is_empty() {
+        return "No rule matched anything in this store.\n".to_string();
+    }
+
+    for f in findings {
+        let severity = format!("{:?}", f.severity).to_uppercase();
+        let _ = writeln!(out, "[{severity}] {}", f.title);
+        let _ = writeln!(
+            out,
+            "  {} {} across {} session{}{}",
+            f.calls,
+            if f.calls == 1 { "call" } else { "calls" },
+            f.sessions,
+            if f.sessions == 1 { "" } else { "s" },
+            if f.projects.is_empty() {
+                String::new()
+            } else {
+                format!(" in {}", f.projects.len())
+            },
+        );
+        if let Some(d) = &f.dismissed {
+            let _ = writeln!(out, "  dismissed: {}", d.note);
+        }
+        for call in f.examples.iter().take(3) {
+            let summary = call
+                .input_summary
+                .as_deref()
+                .or(call.target_path.as_deref())
+                .unwrap_or("");
+            let summary: String = summary.chars().take(90).collect();
+            let _ = writeln!(out, "    {} {summary}", call.tool_use_id);
+        }
+        let _ = writeln!(out);
+    }
+    out
+}
+
 /// A default file name for an export: `toolog-2026-09-05`.
 ///
 /// Dated rather than timestamped: an evidence bundle is usually re-exported a

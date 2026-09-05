@@ -82,12 +82,12 @@ pub fn upsert_transcript(conn: &Connection, tool_use_id: &str, f: &TranscriptFac
              tool_use_id, session_id, prompt_id, message_uuid, parent_uuid, is_sidechain,
              agent_id, agent_name, tool_name, tool_kind, mcp_server, mcp_tool, called_at, completed_at,
              input_json, input_summary, target_path, result_json, result_text, result_size,
-             success, provenance)
+             success, permission_mode, provenance)
          VALUES (
              :tool_use_id, :session_id, :prompt_id, :message_uuid, :parent_uuid, :is_sidechain,
              :agent_id, :agent_name, :tool_name, :tool_kind, :mcp_server, :mcp_tool, :called_at, :completed_at,
              :input_json, :input_summary, :target_path, :result_json, :result_text, :result_size,
-             :success, :bit)
+             :success, :permission_mode, :bit)
          ON CONFLICT (tool_use_id) DO UPDATE SET
              session_id    = COALESCE(excluded.session_id,    tool_call.session_id),
              prompt_id     = COALESCE(excluded.prompt_id,     tool_call.prompt_id),
@@ -109,6 +109,7 @@ pub fn upsert_transcript(conn: &Connection, tool_use_id: &str, f: &TranscriptFac
              result_text   = COALESCE(excluded.result_text,   tool_call.result_text),
              result_size   = COALESCE(excluded.result_size,   tool_call.result_size),
              success       = COALESCE(excluded.success,       tool_call.success),
+             permission_mode = COALESCE(excluded.permission_mode, tool_call.permission_mode),
              provenance    = tool_call.provenance | :bit",
     )?
     .execute(named_params! {
@@ -133,6 +134,7 @@ pub fn upsert_transcript(conn: &Connection, tool_use_id: &str, f: &TranscriptFac
         ":result_text": f.result_text,
         ":result_size": f.result_size,
         ":success": f.success,
+        ":permission_mode": f.permission_mode,
         ":bit": provenance::TRANSCRIPT,
     })?;
     Ok(())
@@ -152,12 +154,12 @@ pub fn upsert_otel(conn: &Connection, tool_use_id: &str, f: &OtelFacts) -> Resul
         "INSERT INTO tool_call (
              tool_use_id, session_id, prompt_id, message_uuid, tool_name, tool_kind,
              mcp_server, mcp_tool, called_at, duration_ms, error_type, decision,
-             decision_source, permission_mode, success, input_json, input_summary,
+             decision_source, success, input_json, input_summary,
              target_path, provenance)
          VALUES (
              :tool_use_id, :session_id, :prompt_id, :message_uuid, :tool_name, :tool_kind,
              :mcp_server, :mcp_tool, :called_at, :duration_ms, :error_type, :decision,
-             :decision_source, :permission_mode, :success, :attempted_input_json,
+             :decision_source, :success, :attempted_input_json,
              :attempted_input_summary, :attempted_target_path, :bit)
          ON CONFLICT (tool_use_id) DO UPDATE SET
              session_id      = COALESCE(excluded.session_id,      tool_call.session_id),
@@ -172,7 +174,6 @@ pub fn upsert_otel(conn: &Connection, tool_use_id: &str, f: &OtelFacts) -> Resul
              error_type      = COALESCE(excluded.error_type,      tool_call.error_type),
              decision        = COALESCE(excluded.decision,        tool_call.decision),
              decision_source = COALESCE(excluded.decision_source, tool_call.decision_source),
-             permission_mode = COALESCE(excluded.permission_mode, tool_call.permission_mode),
              success         = COALESCE(excluded.success,         tool_call.success),
              -- Existing-wins, the reverse of every field above: a transcript's
              -- untruncated input must never be displaced by OTEL's 512-character
@@ -196,7 +197,6 @@ pub fn upsert_otel(conn: &Connection, tool_use_id: &str, f: &OtelFacts) -> Resul
         ":error_type": f.error_type,
         ":decision": f.decision,
         ":decision_source": f.decision_source,
-        ":permission_mode": f.permission_mode,
         ":success": f.success,
         ":attempted_input_json": f.attempted_input_json,
         ":attempted_input_summary": f.attempted_input_summary,
@@ -327,6 +327,38 @@ pub fn spread_agent_names(conn: &Connection) -> Result<()> {
              WHERE peer.agent_id = tool_call.agent_id AND peer.agent_name IS NOT NULL
              LIMIT 1)
          WHERE agent_id IS NOT NULL AND agent_name IS NULL",
+        [],
+    )?;
+    Ok(())
+}
+
+/// Give calls with no recorded mode the one their session was in.
+///
+/// A subagent's calls live in their own transcript, and that file carries no
+/// `permission-mode` record — 271 of 3,013 calls in the owner's store, all of
+/// them sidechain. The mode is a property of the session the subagent was
+/// spawned inside, so it is filled from the session's own recorded changes.
+///
+/// **This is an inference, and the only one in the projection.** It fills only
+/// nulls, never replaces an observed value, and prefers the latest change at or
+/// before the call — falling back to the session's first known mode for calls
+/// that precede any timestamped change.
+pub fn inherit_permission_modes(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "UPDATE tool_call SET permission_mode = (
+             SELECT c.to_mode FROM permission_mode_change c
+             WHERE c.session_id = tool_call.session_id
+               AND c.ts IS NOT NULL AND c.ts <= tool_call.called_at
+             ORDER BY c.ts DESC, c.id DESC LIMIT 1)
+         WHERE permission_mode IS NULL AND session_id IS NOT NULL AND called_at IS NOT NULL",
+        [],
+    )?;
+    conn.execute(
+        "UPDATE tool_call SET permission_mode = (
+             SELECT c.to_mode FROM permission_mode_change c
+             WHERE c.session_id = tool_call.session_id
+             ORDER BY c.id LIMIT 1)
+         WHERE permission_mode IS NULL AND session_id IS NOT NULL",
         [],
     )?;
     Ok(())

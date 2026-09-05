@@ -85,6 +85,7 @@ The window is TypeScript compiled by Vite and **embedded in the binary**, so it 
 | `toolog doctor [--fix]` | The state of the integration. Read-only unless `--fix` |
 | `toolog backfill` | Import `~/.claude/projects`. Safe to re-run |
 | `toolog verify` | Cross-check the two lanes: gaps, refusals, completeness |
+| `toolog risk` | Evaluate the risk rules: what got approved, and how |
 | `toolog export` | JSON, JSONL, CSV or Markdown, with filters |
 | `toolog agent install` | A login agent so capture survives a restart |
 

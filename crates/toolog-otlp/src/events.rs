@@ -148,7 +148,6 @@ fn tool_result(a: &Attrs<'_>, c: &Common) -> Event {
             // is itself an acceptance.
             decision: Some("accept".into()),
             decision_source: a.string("decision_source"),
-            permission_mode: a.string("permission_mode"),
             success: a.bool("success"),
             ..attempted_input(a)
         }),
@@ -178,7 +177,6 @@ fn tool_decision(a: &Attrs<'_>, c: &Common) -> Event {
             // `source` says *who* decided: config, hook, user_permanent,
             // user_temporary, user_abort or user_reject.
             decision_source: a.string("source").or_else(|| a.string("decision_source")),
-            permission_mode: a.string("permission_mode"),
             // A refused call never ran, so it has no success to report.
             success: (decision.as_deref() == Some("reject")).then_some(false),
             decision,

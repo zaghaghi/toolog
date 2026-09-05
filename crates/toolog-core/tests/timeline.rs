@@ -111,7 +111,6 @@ fn seeded() -> Db {
                 duration_ms: Some(120),
                 decision: Some(decision.to_string()),
                 decision_source: Some(source.to_string()),
-                permission_mode: Some("default".to_string()),
                 ..OtelFacts::default()
             },
         )
@@ -140,6 +139,7 @@ fn call(
             called_at: Some(at),
             success: Some(success),
             is_sidechain: Some(false),
+            permission_mode: Some("default".to_string()),
             ..TranscriptFacts::default()
         },
     )
@@ -292,12 +292,14 @@ fn every_filter_control_narrows_what_it_says_it_does() {
         }),
         1
     );
+    // The mode is a transcript fact, so every main-thread call carries it and
+    // the subagent calls — seeded without one — do not.
     assert_eq!(
         count(TimelineFilter {
             permission_mode: Some("default".to_string()),
             ..TimelineFilter::default()
         }),
-        3
+        5
     );
     assert_eq!(
         count(TimelineFilter {

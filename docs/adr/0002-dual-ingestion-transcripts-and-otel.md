@@ -30,6 +30,18 @@ owner's machine. `assistant` records carry `tool_use` blocks with the complete, 
 the paired `user` record carries `toolUseResult`, including `structuredPatch` diffs for edits.
 Envelopes add `cwd`, `gitBranch`, `version`, `isSidechain` and `promptId`.
 
+> **Corrected in Phase 6, by measurement.** `permission_mode_changed` is not emitted, and no OTEL
+> event carries a `permission_mode` attribute: 987 records across 11 event types on the owner's
+> machine, and the only mode-shaped attribute is `safe_mode`, a boolean. **The permission mode is a
+> transcript fact** — a dedicated `permission-mode` record and a `permissionMode` field on each
+> `user` turn, with real values `default`, `auto`, `plan`, `acceptEdits` and `dontAsk`. The column
+> moved lanes accordingly; see [Phase 6](../phases/06-risk-analytics-live.md).
+>
+> The same pass confirmed the privacy posture rather than assuming it: `prompt` and `response`
+> attributes **are** present on OTLP records, and their value is the literal string `<REDACTED>`,
+> because [ADR-0008](0008-local-only-zero-egress.md) never sets `OTEL_LOG_USER_PROMPTS` or
+> `OTEL_LOG_ASSISTANT_RESPONSES`.
+
 **Where transcripts fall short.** They contain no permission decision, no `duration_ms`, and no cost
 or token data. Most importantly, **a tool call that was denied carries no record of who denied it or
 why** — that exists only as a `claude_code.tool_decision` with `decision=reject`. An audit tool that cannot

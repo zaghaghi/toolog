@@ -21,6 +21,10 @@
 //! from the `decision` column and never from provenance: Phase 4 measured a
 //! real denial and found it in both lanes ([ADR-0009]).
 //!
+//! [`rules`] is the risk layer: rules written as data, compiled to bound SQL
+//! here so a rules file can express a question but never a query. Findings are
+//! computed rather than stored, for the same reason the projections are.
+//!
 //! [ADR-0003]: ../../../docs/adr/0003-sqlite-as-the-embedded-store.md
 //! [ADR-0004]: ../../../docs/adr/0004-store-raw-project-normalized.md
 //! [ADR-0009]: ../../../docs/adr/0009-correlate-on-tool-use-id.md
@@ -35,6 +39,7 @@ pub mod normalize;
 pub mod project;
 pub mod query;
 pub mod raw;
+pub mod rules;
 pub mod writer;
 
 pub use db::Db;

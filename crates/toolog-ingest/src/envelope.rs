@@ -28,6 +28,14 @@ pub struct Envelope {
     pub entrypoint: Option<String>,
     pub slug: Option<String>,
 
+    /// The permission mode in force — `default`, `auto`, `plan`, `dontAsk`.
+    ///
+    /// On a dedicated `permission-mode` record (which carries nothing but this,
+    /// the type and the session id) and on `user` records at each prompt turn.
+    /// **The OTLP lane does not carry this at all**, despite the plan assuming
+    /// it did — see [`crate::projector`].
+    pub permission_mode: Option<String>,
+
     /// Subagent *instance*. Present on every sidechain record and no
     /// main-thread record — the reliable discriminator.
     pub agent_id: Option<String>,

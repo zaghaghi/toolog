@@ -16,7 +16,10 @@ use crate::model::{
 };
 
 /// Every `tool_call` column, in the order [`map_tool_call`] expects.
-const TOOL_CALL_COLUMNS: &str = "
+///
+/// Shared with [`crate::rules`], which selects the same rows for a finding's
+/// drill-through.
+pub(crate) const TOOL_CALL_COLUMNS: &str = "
     tc.tool_use_id, tc.session_id, tc.prompt_id, tc.message_uuid, tc.parent_uuid,
     tc.is_sidechain, tc.agent_id, tc.agent_name, tc.tool_name, tc.tool_kind, tc.mcp_server,
     tc.mcp_tool, tc.called_at, tc.completed_at, tc.input_json, tc.input_summary,
@@ -24,7 +27,7 @@ const TOOL_CALL_COLUMNS: &str = "
     tc.duration_ms, tc.error_type, tc.decision, tc.decision_source,
     tc.permission_mode, tc.provenance";
 
-fn map_tool_call(row: &Row<'_>) -> rusqlite::Result<ToolCall> {
+pub(crate) fn map_tool_call(row: &Row<'_>) -> rusqlite::Result<ToolCall> {
     map_tool_call_offset(row, 0)
 }
 

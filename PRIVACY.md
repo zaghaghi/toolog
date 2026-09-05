@@ -41,6 +41,9 @@ One SQLite file, on your machine:
 
 Readable with any `sqlite3` binary. Deleting it deletes everything toolog holds.
 
+Alongside it, `rules.toml` — if you write one — holds your own risk rules. It is read, never
+written, and is the file to edit to retune or switch off anything `toolog risk` reports.
+
 ## What leaves your machine
 
 Nothing — with one exception, named here rather than buried.
