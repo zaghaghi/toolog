@@ -22,34 +22,43 @@ infrastructure.
   - Network-reaching Bash commands (`curl`, `wget`, `nc`, `ssh`, `scp`)
   - MCP tool usage grouped by server
   - Tool calls during a session where permission mode changed mid-flight
-- [ ] **6.3** Severity ranking, drill-through from finding to the underlying calls, and
+- [x] **6.3** Severity ranking, drill-through from finding to the underlying calls, and
   dismiss-with-note (dismissals stored, never deleting the underlying row).
-- [ ] **6.4** Per-project risk summary — the "posture" glance.
+- [x] **6.4** Per-project risk summary — the "posture" glance.
 
 ## Usage analytics
 
-- [ ] **6.5** Aggregates from `api_request` + `tool_call`: cost and tokens by project / session /
+- [x] **6.5** Aggregates from `api_request` + `tool_call`: cost and tokens by project / session /
   model / day, tool frequency, error rate by tool, p50/p95 duration, cache-hit ratio, sidechain
   share, active time.
-- [ ] **6.6** Charts. **Load the `dataviz` skill before writing any chart code** — palette,
+- [x] **6.6** Charts. **Load the `dataviz` skill before writing any chart code** — palette,
   accessibility and dark-mode behaviour are decided there, not ad hoc.
-- [ ] **6.7** Date-range comparison (this week vs last) and cost-per-project leaderboard.
-- [ ] **6.8** Honest empty states: cost data exists only for sessions captured live by the OTLP lane,
+- [x] **6.7** Date-range comparison (this week vs last) and cost-per-project leaderboard.
+- [x] **6.8** Honest empty states: cost data exists only for sessions captured live by the OTLP lane,
   never for backfilled history. **Say so in the UI** rather than rendering a misleading zero.
 
 ## Live monitoring
 
-- [ ] **6.9** Ingest → Tauri event → UI channel for `live_tool_call`. In-process, no IPC (ADR-0007).
-- [ ] **6.10** Concurrent sessions as parallel lanes, each with a running cost meter and current tool.
-- [ ] **6.11** Idle/active indication per session; auto-scroll with a pause-on-interaction affordance.
-- [ ] **6.12** Native notifications on rejected calls and high-severity rule hits, off by default and
+- [x] **6.9** Ingest → Tauri event → UI channel for `live_tool_call`. In-process, no IPC (ADR-0007).
+- [x] **6.10** Concurrent sessions as parallel lanes, each with a running cost meter and current tool.
+- [x] **6.11** Idle/active indication per session; auto-scroll with a pause-on-interaction affordance.
+- [x] **6.12** Native notifications on rejected calls and high-severity rule hits, off by default and
   individually toggleable.
 
-## Progress
+## Outcome
 
-**Done: the risk engine and its rules (6.1, 6.2), and the correction they rest on.**
+**Done: all twelve tasks.** The three remaining views are built on Phase 5's infrastructure, and
+the backend each of them needs lives in `toolog-core` with the rest of the SQL (ADR-0003):
+`rules` for the risk layer, `analytics` for usage and the live lanes. 249 Rust tests and 122
+frontend tests; `just check` is clean.
+
+Two command-line entry points came with them, so every number in the window can be checked from a
+terminal: `toolog risk` and `toolog usage [--days N] [--project PATH]`.
+
+### The risk engine and its rules (6.1, 6.2)
+
 `toolog-core::rules` compiles a TOML rule into bound SQL; `toolog risk` runs it from the command
-line. 14 tests in `crates/toolog-core/tests/rules.rs`, plus the permission-mode work below.
+line. 17 tests in `crates/toolog-core/tests/rules.rs`, plus the permission-mode work below.
 
 ### `permission_mode` comes from the transcript, not from OTEL
 
@@ -111,9 +120,145 @@ destructive command. Both were bugs in the engine, not in the data:
 - **A session-scoped rule is about the session.** "Permission mode changed mid-session" listed every
   call in every such session: 2,432 rows, true and useless. It now reports the 14 sessions.
 
+### The risk view (6.3, 6.4)
+
+A review has to survive the reader disagreeing with it, which decided two things. **A dismissal
+hides nothing**: the finding keeps its place in the list, greyed, carrying the note; what changes is
+the per-project posture, because that is a claim about what still needs answering. And a dismissal
+**requires a reason** — a dismissal with no reason is just a hidden finding, which is the thing this
+view exists not to have.
+
+The drill-through fetches the rule's own matches (`rules::calls`) rather than translating a rule
+into a `TimelineFilter`. It has to: `outside_cwd` and `first_line` are not columns, so a filter
+would quietly show a *similar* set of calls, which is worse than none. Any one of them opens in the
+timeline, where the evidence is.
+
+### Usage analytics (6.5–6.8)
+
+`toolog-core::analytics` answers each question from the table that can actually answer it, and says
+which that was. `tool_call` is written by both lanes, so call counts, error rates, latency and
+active time cover the whole corpus. `api_request` is OTLP-only, so cost and tokens do not — and
+every aggregate therefore carries a `Coverage`, with `measured` and `complete` as fields rather than
+something the caller has to work out. Task 6.8 is that field reaching the interface: **spend with no
+cost data reads "not captured", never `$0.00`**, and a banner says how many sessions were captured
+live and why the rest never will be.
+
+Definitions worth pinning, because each could reasonably have been something else:
+
+- **Active time** is wall-clock with a tool call at least every five minutes, summed per session. A
+  session where someone read a diff for an hour is two active stretches, not an hour of work: the
+  store cannot see the reading, and counting the gap would invent time nobody observed.
+- **Error rate** divides by calls with a *recorded outcome*, not by all calls. A call only OTEL
+  witnessed has no `success` at all, and counting it as a success flatters the rate.
+- **Cache-hit ratio** counts cache creation as input, because it was billed as input.
+- **Days are the reader's days.** The window carries a UTC offset and the SQL shifts the timestamp
+  before taking the date; bucketing in UTC would put an evening's work on tomorrow's bar for anyone
+  east of Greenwich.
+- **A model breakdown counts requests, not calls.** A tool call is not made by a model; it is made
+  in a turn a model asked for. Its call column is legitimately zero.
+
+### Charts (6.6)
+
+Built to the `dataviz` skill, and the procedure changed the design twice. Every chart plots **one
+measure** — calls and spend are different scales, so they are two charts rather than one with two
+y-axes, which on an audit tool would let a reader see a correlation the data does not contain. And
+because colour's only job here is magnitude, there is **one hue and no legend**; what would have
+been a four-colour outcome breakdown became three stat tiles instead, which is what the skill's own
+heuristic says to do when the story is a number.
+
+The palette is not eyeballed. Four values — a mark and a meter track, in each mode — were run
+through the skill's validator against the real surfaces and pass all six checks: lightness band,
+chroma floor, CVD separation, normal-vision floor, contrast. The dark-mode mark had to move from
+`--clay`'s `#d97757` (L 0.672, just outside the 0.48–0.67 band) to `#d0694b`.
+
+`docs/design/analytics.html` links both real stylesheets, the way the Phase 5 mockup does, so the
+chart CSS can be checked in a browser without driving the application.
+
+### Live monitoring (6.9–6.12)
+
+**6.9 replaced the poll with a real channel.** Phase 4 emitted `live_tool_call` from a 500 ms timer
+over a rowid cursor, with a comment saying Phase 6 would fix it. It now comes from SQLite's update
+hook on the writer's connection: every row either lane writes passes through that one connection, so
+one hook covers both without threading a callback through each projector. Rowids are collected during
+a job and delivered **after** it commits — the hook fires before the commit, and a reader told about
+a row that early would look for one it cannot see yet.
+
+The channel delivers *updates* as well as inserts, which is the point: a call the transcript created
+and OTEL later completed is the same row twice, and the second arrival is where the duration and the
+decision come from. Both the timeline's "new calls" counter and the live feed therefore key on
+`tool_use_id` — the counter used to say "3 new calls" for one command.
+
+**Nothing in the live view says a session ended.** The store has no such record; Claude Code does not
+announce one. A lane goes *idle* after two minutes without a call and drops off after thirty. "Idle"
+is an observation; "finished" would be a guess.
+
+**Notifications are off** (6.12). Both switches default off, are individually toggleable, and live in
+`prefs.json` beside the database so the resident process can act on them and they survive a restart.
+The policy — a refusal wins over a rule hit, and the rules are only consulted when that switch is on
+— is a pure function with its own tests, so it is checkable without a window.
+
+## What running it on real data found
+
+### The Content Security Policy silently discards inline styles
+
+The first build of the usage view drew **thirty-one hairlines under a y-axis that went to 800**. The
+unit tests passed, and the same markup and CSS rendered correctly in Chrome.
+
+The window runs under `style-src 'self'`, so a `style` **attribute** is dropped — silently, with the
+element rendering at its natural size. Phase 5's virtualized list is unaffected because it assigns
+`node.style.top` through the CSSOM, which CSP does not govern; the charts used `setAttribute`. Every
+bar width, column height and meter fill was affected, and nothing anywhere reported an error.
+
+`el` now takes a `style` option that assigns through the CSSOM, and a test asserts every mark
+carries a size. Two wrong diagnoses came first — a percentage height on a flex item, then percentage
+offsets — and both are recorded in the CSS comment, because "correct in Chrome, wrong in the app"
+is the shape of the next bug of this kind too.
+
+### A tenfold change is not a percentage anyone reads
+
+The owner's store has one heavily-captured month and almost nothing before it, so the honest
+comparison against the preceding period was `↑ 9658%`. True and useless. Above tenfold the delta
+now reads as a multiple (`↑ ×98.5`).
+
+### A call captured after a restart had no permission mode
+
+The transcript projector follows the mode as records go by, and on the live path it starts empty —
+so a session that had been running for an hour before the process started had *no* mode for every
+call captured afterwards. The live view showed it as `—` for a session the store could perfectly
+well account for. `project::last_known_mode` recovers it with one indexed lookup, cached per session;
+it is the same inference `inherit_permission_modes` makes at the end of a backfill, available on the
+live path where a whole-table update would be far too heavy.
+
+### The tail tests could not all run at once
+
+Not this phase's code, but this phase's `just check` is what exposed it. The six Phase 2 live-tail
+tests each spin a real filesystem watcher, and six at once contend for FSEvents badly enough that one
+sees *no* events inside its ten-second budget — an empty store and a confusing failure. They pass
+individually, and passed in CI by luck. A process-wide mutex now runs them one at a time: about two
+seconds for all six, and no flake in repeated runs.
+
 ## Exit criteria
 
-- The risk view flags a deliberately auto-approved `rm -rf` in a scratch directory, with drill-through
-  to the exact call.
-- Analytics totals reconcile against `claude_code.api_request` costs for a live session.
-- Two concurrent Claude Code sessions appear as separate live lanes with correct attribution.
+- **The risk view flags a deliberately auto-approved `rm -rf`, with drill-through to the exact
+  call.** Met, and it is the first test in `crates/toolog-core/tests/rules.rs` and the first in
+  `ui/src/risk.test.ts`. On the owner's real store the same rule correctly reports *nothing*: both
+  candidates were heredoc bodies documenting `rm -rf` rather than running it.
+- **Analytics totals reconcile against `claude_code.api_request` costs.** Met, exactly.
+  `toolog usage` reported $76.22 over 420 requests and 113,801,231 tokens; summing `api_request`
+  directly in `sqlite3` gives 76,221,173 micro-dollars over 420 rows and the same token total.
+  (A detail the reconciliation surfaced: five sessions have `api_request` rows but one of them has no
+  tool calls at all, which is why coverage reads "4 of 28 sessions" rather than five.)
+- **Two concurrent Claude Code sessions appear as separate live lanes with correct attribution.**
+  Verified in tests — one over a store with two sessions in `crates/toolog-core/tests/analytics.rs`,
+  one over the rendered view in `ui/src/live.test.ts` — and with **one** real session live in the
+  window, correctly attributed to its project, branch, mode and running cost. Not verified with two
+  real sessions at once: doing that on demand would have meant writing synthetic transcripts into the
+  owner's own store, and fabricating audit records is the one thing this tool must never do.
+
+## Not verified
+
+- **The notification banner itself.** The decision to notify is tested; showing it needs macOS
+  notification permission, which prompts the user, and both switches are off by default so nothing
+  asked for it. Turning one on is what grants it.
+- **Light mode.** The tokens are defined for both modes and the palette passes the validator against
+  both surfaces, but every screenshot in this phase was taken in dark mode.

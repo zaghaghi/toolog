@@ -1,12 +1,12 @@
 # Documentation
 
-**Status: Phases 0–5 complete — this is v0.1.** Capture works end to end, and the timeline is the
-first view over it: virtualized, searchable, filterable, with diffs and evidence export. Phases 6–8
-remain.
+**Status: Phases 0–6 complete — this is v0.1.** Capture works end to end and all four views are
+built: a forensic timeline, a risk review over rules written as data, usage analytics that state
+which sessions the cost lane actually saw, and live session lanes. Phases 7–8 remain.
 
 ## Phases
 
-Nine phases. Each ends in something runnable and checkable. **Phase 5 is the first usable release
+Nine phases. Each ends in something runnable and checkable. **Phase 5 was the first usable release
 (v0.1); Phase 8 is v1.0.**
 
 | Phase | Goal | Milestone |
@@ -17,7 +17,7 @@ Nine phases. Each ends in something runnable and checkable. **Phase 5 is the fir
 | [03 — OTLP collector](phases/03-otlp-collector.md) | Decisions, durations, cost; the decision lane | done |
 | [04 — App shell](phases/04-app-shell.md) | Installs itself, stays resident, frontend can query | done |
 | [05 — Timeline view](phases/05-timeline-view.md) | The forensic view | **v0.1** — done |
-| [06 — Risk, analytics & live](phases/06-risk-analytics-live.md) | The other three surfaces | |
+| [06 — Risk, analytics & live](phases/06-risk-analytics-live.md) | The other three surfaces | done |
 | [07 — Privacy, retention, integrity](phases/07-privacy-retention-integrity.md) | Earn the word "audit" | |
 | [08 — Packaging & distribution](phases/08-packaging-distribution.md) | Dead simple install | **v1.0** |
 
@@ -40,6 +40,9 @@ version moves substantially.
 | `~/.claude/settings.json` supports an `env` block | Install is one file write → [ADR-0006](adr/0006-configure-via-settings-env-block.md) |
 | 271 of 2,334 local tool calls are `isSidechain` | Subagent attribution is not an edge case → [Phase 2](phases/02-transcript-ingestion.md) |
 | Every one of 342 real `structuredPatch` hunks carries the same five keys — and four lines in them are `\ No newline at end of file`, which is a note rather than a line | The diff renderer counts it as neither → [Phase 5](phases/05-timeline-view.md) |
+| 987 OTLP records across 11 event types carry **no** `permission_mode` attribute and no `permission_mode_changed` event; the transcript carries the mode in two shapes | The column belongs to the transcript lane → [Phase 6](phases/06-risk-analytics-live.md) |
+| `prompt` and `response` attributes **are** present on OTLP records, with the literal value `<REDACTED>` | The privacy posture is measured, not assumed → [ADR-0008](adr/0008-local-only-zero-egress.md) |
+| The window's CSP (`style-src 'self'`) silently discards `style` **attributes**; CSSOM assignment is honoured | Chart geometry goes through `element.style` → [Phase 6](phases/06-risk-analytics-live.md) |
 
 ## Backfill numbers to check against
 
@@ -50,3 +53,17 @@ The owner's corpus, as of planning. Phase 2 is done when these reproduce:
 2,334 tool calls   Bash 1,539 · Edit 292 · Read 253 · Write 69
 271 sidechain calls attributed to named agents
 ```
+
+## Design mockups
+
+Static pages that link the application's own stylesheets, so they cannot drift from it and the CSS
+can be looked at in a browser without driving the window.
+
+| Page | What it pins |
+|---|---|
+| [timeline.html](design/timeline.html) | Row anatomy, the detail pane, the states a list can be in (task 5.2) |
+| [analytics.html](design/analytics.html) | Chart forms and mark geometry, at the numbers a real store produces (task 6.6) |
+
+Both are worth opening after a change to `ui/src/styles/`. Neither replaces looking at the
+application: a `file://` page has no Content Security Policy, and the window does — which is how a
+chart came to render correctly in Chrome and not at all in the app.

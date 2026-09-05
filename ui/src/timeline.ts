@@ -47,7 +47,7 @@ export class TimelineView {
   private groups: SessionGroup[] = [];
   private collapsed = new Set<string>();
   private cursor = -1;
-  private pending = 0;
+  private readonly pending = new Set<string>();
   /** Bumped per reload so a slow count for an old filter is ignored. */
   private generation = 0;
 
@@ -89,7 +89,7 @@ export class TimelineView {
     this.viewport.addEventListener("click", (event) => this.onClick(event));
     this.viewport.addEventListener("keydown", (event) => this.onKey(event));
     this.newCalls.addEventListener("click", () => {
-      this.pending = 0;
+      this.pending.clear();
       this.newCalls.hidden = true;
       void this.reload();
     });
@@ -120,14 +120,23 @@ export class TimelineView {
     this.bar.focusSearch();
   }
 
-  /** A call has just been captured (the Phase 4 event stream). */
+  /**
+   * A call has just been stored (the task 6.9 event stream).
+   *
+   * Counted by `tool_use_id`, not by arrivals: the same call reaches here more
+   * than once by design — the transcript creates the row and OTEL completes it
+   * with a duration and a decision — and "3 new calls" for one command would
+   * be a number the list then failed to produce.
+   */
   noteLiveCall(call: ToolCall): void {
     // Only offer to refresh when the new row would actually appear. A filtered
     // view that would not show it should not blink at the user.
     if (isFiltered(this.view.filter) && this.view.filter.query !== null) return;
     if (this.view.filter.tool_name !== null && this.view.filter.tool_name !== call.tool_name) return;
-    this.pending += 1;
-    this.newCalls.textContent = `${count(this.pending)} new ${this.pending === 1 ? "call" : "calls"}`;
+    if (this.pending.has(call.tool_use_id)) return;
+    this.pending.add(call.tool_use_id);
+    const n = this.pending.size;
+    this.newCalls.textContent = `${count(n)} new ${n === 1 ? "call" : "calls"}`;
     this.newCalls.hidden = false;
   }
 
@@ -170,7 +179,7 @@ export class TimelineView {
     const generation = this.generation;
     this.store.clear();
     this.cursor = -1;
-    this.pending = 0;
+    this.pending.clear();
     this.newCalls.hidden = true;
     this.bar.setStatus(0, true);
     this.showState(el("div", { class: "empty", text: "Loading…" }));

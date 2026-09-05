@@ -20,7 +20,7 @@ use rusqlite::{Connection, ToSql, params};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::model::ToolCall;
+use crate::model::{Page, ToolCall};
 use crate::query;
 
 /// The rules shipped with the application.
@@ -508,6 +508,60 @@ fn examples_for(conn: &Connection, compiled: &Compiled) -> Result<Vec<ToolCall>>
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(refs.as_slice(), query::map_tool_call)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// Every call one rule matched, newest first (task 6.3's drill-through).
+///
+/// The eight examples on a [`Finding`] are for reading the finding; this is for
+/// leaving it. It returns the calls themselves rather than a filter, because a
+/// rule's conditions have no equivalent in [`TimelineFilter`] — `outside_cwd`
+/// and `first_line` are not columns — and a drill-through that quietly showed
+/// a *similar* set of calls would be worse than none.
+pub fn calls(conn: &Connection, rule: &Rule, page: Page) -> Result<Vec<ToolCall>> {
+    let compiled = where_for(rule);
+    let sql = format!(
+        "SELECT {}
+         FROM tool_call tc
+         LEFT JOIN session s ON s.session_id = tc.session_id
+         WHERE {}
+         ORDER BY tc.called_at DESC, tc.rowid DESC
+         LIMIT ? OFFSET ?",
+        query::TOOL_CALL_COLUMNS,
+        compiled.where_sql
+    );
+    let mut binds: Vec<&dyn ToSql> = compiled.binds.iter().map(AsRef::as_ref).collect();
+    let (limit, offset) = (i64::from(page.limit), i64::from(page.offset));
+    binds.push(&limit);
+    binds.push(&offset);
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(binds.as_slice(), query::map_tool_call)?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// Whether one call trips one rule (task 6.12's live check).
+///
+/// The same compiled condition as [`evaluate`], narrowed to a single call, so
+/// a notification cannot claim something the review would not. It is one
+/// indexed lookup, which is what makes it affordable on the live path — but
+/// only the high-severity rules are worth asking about there, and the caller
+/// decides that rather than this function.
+///
+/// A session-scoped rule is about the session's first call, so asking it about
+/// a later one correctly answers `false`: the notification for that already
+/// fired when the session started.
+pub fn matches(conn: &Connection, rule: &Rule, tool_use_id: &str) -> Result<bool> {
+    let compiled = where_for(rule);
+    let sql = format!(
+        "SELECT EXISTS (
+             SELECT 1 FROM tool_call tc
+             LEFT JOIN session s ON s.session_id = tc.session_id
+             WHERE ({}) AND tc.tool_use_id = ?)",
+        compiled.where_sql
+    );
+    let mut binds: Vec<&dyn ToSql> = compiled.binds.iter().map(AsRef::as_ref).collect();
+    binds.push(&tool_use_id);
+    Ok(conn.query_row(&sql, binds.as_slice(), |r| r.get(0))?)
 }
 
 /// One project's posture: what its calls tripped, worst first (task 6.4).

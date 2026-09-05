@@ -180,6 +180,24 @@ impl TranscriptProjector {
         )
     }
 
+    /// The mode this session is running under.
+    ///
+    /// Cached after the first answer, so a live tailer that joined a session
+    /// mid-flight pays one query rather than one per call. The store is asked
+    /// because the projector's own map only knows what it has seen: on the
+    /// live path that starts empty, and a session that has been running since
+    /// before the process started has its mode on disk already.
+    fn mode_for(&mut self, conn: &Connection, session_id: &str) -> Result<Option<String>> {
+        if let Some(mode) = self.modes.get(session_id) {
+            return Ok(Some(mode.clone()));
+        }
+        let recovered = project::last_known_mode(conn, session_id)?;
+        if let Some(mode) = &recovered {
+            self.modes.insert(session_id.to_string(), mode.clone());
+        }
+        Ok(recovered)
+    }
+
     fn project_tool_uses(
         &mut self,
         conn: &Connection,
@@ -219,11 +237,10 @@ impl TranscriptProjector {
                     input_json: Some(use_.input.to_string()),
                     input_summary: facts.summary,
                     target_path: facts.target,
-                    permission_mode: e
-                        .session_id
-                        .as_ref()
-                        .and_then(|id| self.modes.get(id))
-                        .cloned(),
+                    permission_mode: match e.session_id.as_deref() {
+                        Some(id) => self.mode_for(conn, id)?,
+                        None => None,
+                    },
                     ..TranscriptFacts::default()
                 },
             )?;

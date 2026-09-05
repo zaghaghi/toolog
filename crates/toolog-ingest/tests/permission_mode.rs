@@ -221,3 +221,35 @@ fn the_mode_is_filterable_from_the_timeline() {
     let facets = query::facets(db.conn()).expect("facets");
     assert_eq!(facets.permission_modes, ["default", "dontAsk"]);
 }
+
+/// The live path: a tailer that starts partway through a running session has an
+/// empty mode map, and the mode is already in the store.
+#[test]
+fn a_projector_that_joined_a_session_late_recovers_its_mode_from_the_store() {
+    let (dir, db) = ingest(&[
+        r#"{"type":"permission-mode","permissionMode":"acceptEdits","sessionId":"s1"}"#,
+        &call("u1", "toolu_1", "2026-09-05T09:00:00.000Z"),
+    ]);
+    assert_eq!(
+        mode_of(db.conn(), "toolu_1").as_deref(),
+        Some("acceptEdits")
+    );
+
+    // A second projector, as a restarted process would have: it never saw the
+    // `permission-mode` record, only the call that follows.
+    let path = dir.path().join("later.jsonl");
+    std::fs::write(
+        &path,
+        format!("{}\n", call("u9", "toolu_late", "2026-09-05T10:00:00.000Z")),
+    )
+    .expect("write");
+
+    let mut fresh = toolog_ingest::TranscriptProjector::new();
+    toolog_ingest::backfill::ingest_and_project(db.conn(), &path, &mut fresh).expect("ingest");
+
+    assert_eq!(
+        mode_of(db.conn(), "toolu_late").as_deref(),
+        Some("acceptEdits"),
+        "a call captured after a restart is not modeless: the store knows"
+    );
+}

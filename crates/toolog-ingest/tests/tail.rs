@@ -1,5 +1,11 @@
 //! Live-tail behaviour: the Phase 2 exit criteria that need a real file being
 //! written while it is read.
+//!
+//! **These run one at a time.** Each spins a real filesystem watcher, and six
+//! of them in one process contend for FSEvents badly enough that one can see
+//! no events at all inside a ten-second budget — which showed up as an
+//! intermittent failure of the first test with an empty store, on a machine
+//! doing other work. Serialised they finish in about two seconds together.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -19,6 +25,17 @@ fn record(n: usize) -> String {
     )
 }
 
+/// Held for the duration of each test, so only one watcher runs at a time.
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+/// Take the lock, ignoring poisoning: a panic in one test must fail that test,
+/// not cascade into every test after it.
+fn exclusive() -> std::sync::MutexGuard<'static, ()> {
+    ONE_AT_A_TIME
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn wait_until(deadline: Duration, mut done: impl FnMut() -> bool) -> bool {
     let start = Instant::now();
     while start.elapsed() < deadline {
@@ -34,6 +51,7 @@ fn wait_until(deadline: Duration, mut done: impl FnMut() -> bool) -> bool {
 /// per tool call.
 #[test]
 fn appending_while_tailing_yields_one_row_per_call() {
+    let _serial = exclusive();
     let dir = tempfile::tempdir().expect("tempdir");
     let db_path = dir.path().join("t.db");
     let watch = dir.path().join("projects");
@@ -119,6 +137,7 @@ fn appending_while_tailing_yields_one_row_per_call() {
 /// duplicates nothing.
 #[test]
 fn interrupting_and_resuming_loses_and_duplicates_nothing() {
+    let _serial = exclusive();
     let dir = tempfile::tempdir().expect("tempdir");
     let transcript = dir.path().join("session.jsonl");
 
@@ -153,6 +172,7 @@ fn interrupting_and_resuming_loses_and_duplicates_nothing() {
 /// rescan from zero and let deduplication absorb the overlap.
 #[test]
 fn a_truncated_file_is_rescanned_from_zero() {
+    let _serial = exclusive();
     let dir = tempfile::tempdir().expect("tempdir");
     let transcript = dir.path().join("session.jsonl");
     let long: String = (0..6).fold(String::new(), |mut acc, n| {
@@ -189,6 +209,7 @@ fn a_truncated_file_is_rescanned_from_zero() {
 /// thing that cannot be half-right.
 #[test]
 fn a_partially_written_record_is_not_stored_until_complete() {
+    let _serial = exclusive();
     let dir = tempfile::tempdir().expect("tempdir");
     let transcript = dir.path().join("session.jsonl");
     let complete = record(1);
@@ -221,6 +242,7 @@ fn a_partially_written_record_is_not_stored_until_complete() {
 /// Bursts are coalesced rather than acted on per event.
 #[test]
 fn a_write_burst_is_debounced_into_one_ingest() {
+    let _serial = exclusive();
     let dir = tempfile::tempdir().expect("tempdir");
     let watch = dir.path().join("projects");
     std::fs::create_dir_all(&watch).expect("mkdir");
@@ -301,6 +323,7 @@ fn a_write_burst_is_debounced_into_one_ingest() {
 /// the watcher could act on.
 #[test]
 fn a_file_finished_after_the_last_event_is_still_collected() {
+    let _serial = exclusive();
     let dir = tempfile::tempdir().expect("tempdir");
     let watch = dir.path().join("projects");
     std::fs::create_dir_all(&watch).expect("mkdir");

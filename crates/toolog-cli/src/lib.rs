@@ -19,4 +19,5 @@ pub mod commands;
 pub mod doctor;
 pub mod launchagent;
 pub mod logging;
+pub mod prefs;
 pub mod settings;

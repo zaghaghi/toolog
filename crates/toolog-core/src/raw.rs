@@ -13,7 +13,12 @@ use crate::error::Result;
 use crate::model::{Lane, NewRawEvent, RawEvent, RawInsert};
 
 /// Milliseconds since the Unix epoch.
-pub(crate) fn now_ms() -> i64 {
+///
+/// Public because "when did this happen" is asked outside the evidence store
+/// too — a dismissal is stamped with it — and one clock reading in the
+/// workspace is one fewer thing to get subtly different.
+#[must_use]
+pub fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

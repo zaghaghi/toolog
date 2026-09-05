@@ -21,6 +21,12 @@
 //! from the `decision` column and never from provenance: Phase 4 measured a
 //! real denial and found it in both lanes ([ADR-0009]).
 //!
+//! [`analytics`] aggregates the same store for the usage view. It splits every
+//! answer by which lane could have supplied it: call counts are complete
+//! because both lanes write them, and cost is not, because only OTLP records
+//! it. That split travels with the numbers as a `Coverage` rather than being
+//! left to the caller to remember.
+//!
 //! [`rules`] is the risk layer: rules written as data, compiled to bound SQL
 //! here so a rules file can express a question but never a query. Findings are
 //! computed rather than stored, for the same reason the projections are.
@@ -29,6 +35,7 @@
 //! [ADR-0004]: ../../../docs/adr/0004-store-raw-project-normalized.md
 //! [ADR-0009]: ../../../docs/adr/0009-correlate-on-tool-use-id.md
 
+pub mod analytics;
 pub mod constants;
 pub mod db;
 pub mod error;

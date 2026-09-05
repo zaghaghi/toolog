@@ -32,6 +32,9 @@ pub(crate) fn map_tool_call(row: &Row<'_>) -> rusqlite::Result<ToolCall> {
 }
 
 /// [`map_tool_call`] when the columns do not start at index 0.
+///
+/// Kept separate from the columns list above so a query that selects something
+/// before them — the `rowid`, a rank — reads the call from the same one mapper.
 fn map_tool_call_offset(row: &Row<'_>, base: usize) -> rusqlite::Result<ToolCall> {
     Ok(ToolCall {
         tool_use_id: row.get(base)?,
@@ -811,39 +814,25 @@ pub fn events_since(conn: &Connection, since_ms: i64) -> Result<i64> {
     )?)
 }
 
-/// Tool calls whose row was created after `after_rowid`, oldest first.
+/// Tool calls by rowid, oldest first.
 ///
-/// The live view's cursor. `rowid` is monotonic for *new* rows, which is what a
-/// stream of "something just happened" needs; a row later completed by the
-/// other lane is an update, not an arrival, and is picked up on the next full
-/// query rather than re-emitted here.
-pub fn tool_calls_after_rowid(
-    conn: &Connection,
-    after_rowid: i64,
-    limit: u32,
-) -> Result<Vec<(i64, ToolCall)>> {
+/// What the writer's change hook hands over (task 6.9). Unlike a cursor over
+/// new rowids, this returns *updates* too — a call the transcript created and
+/// OTEL later completed with a duration and a decision is the same row twice,
+/// and the live view wants the second one. Callers key on `tool_use_id` for
+/// that reason.
+pub fn tool_calls_by_rowid(conn: &Connection, rowids: &[i64]) -> Result<Vec<ToolCall>> {
+    if rowids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let holes = vec!["?"; rowids.len()].join(", ");
     let sql = format!(
-        "SELECT tc.rowid, {TOOL_CALL_COLUMNS}
-         FROM tool_call tc
-         WHERE tc.rowid > ?1
-         ORDER BY tc.rowid
-         LIMIT ?2"
+        "SELECT {TOOL_CALL_COLUMNS} FROM tool_call tc
+         WHERE tc.rowid IN ({holes})
+         ORDER BY tc.rowid"
     );
+    let binds: Vec<&dyn ToSql> = rowids.iter().map(|r| r as &dyn ToSql).collect();
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![after_rowid, limit], |row| {
-        // Column 0 is the rowid; the mapper expects the call to start at 0, so
-        // read it out first and map the rest by shifting the indices.
-        let rowid: i64 = row.get(0)?;
-        Ok((rowid, map_tool_call_offset(row, 1)?))
-    })?;
+    let rows = stmt.query_map(binds.as_slice(), map_tool_call)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-}
-
-/// The highest `tool_call` rowid, for a live cursor's starting point.
-pub fn max_tool_call_rowid(conn: &Connection) -> Result<i64> {
-    Ok(
-        conn.query_row("SELECT COALESCE(max(rowid), 0) FROM tool_call", [], |r| {
-            r.get(0)
-        })?,
-    )
 }

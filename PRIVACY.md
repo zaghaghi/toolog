@@ -44,6 +44,10 @@ Readable with any `sqlite3` binary. Deleting it deletes everything toolog holds.
 Alongside it, `rules.toml` — if you write one — holds your own risk rules. It is read, never
 written, and is the file to edit to retune or switch off anything `toolog risk` reports.
 
+Also alongside it, `prefs.json` holds which notifications you have switched on. It is created the
+first time you turn one on; until then there is no file, because **every notification is off by
+default**. It contains two booleans and nothing else — no history, no identifiers.
+
 ## What leaves your machine
 
 Nothing — with one exception, named here rather than buried.

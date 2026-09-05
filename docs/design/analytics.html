@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>toolog — analytics mockup (task 6.6)</title>
+    <!--
+      Both real stylesheets, so this page cannot drift from the application and
+      the chart geometry can be checked in a browser without driving the app.
+      That is what it is for: the first render of the usage view had every
+      column flattened to its 1px minimum and the y-axis labels clipped by the
+      card, and neither was visible in a unit test.
+
+      Note the difference between this page and the application: the inline
+      styles below are honoured here because a file:// page has no Content
+      Security Policy. The window has one, with no inline styles allowed, so
+      the application sets these same values on `element.style` instead — see
+      `el`'s `style` option in ui/src/dom.ts. Looking at this page proves the
+      CSS; only the application proves the script.
+    -->
+    <link rel="stylesheet" href="../../ui/src/styles/tokens.css" />
+    <link rel="stylesheet" href="../../ui/src/styles/app.css" />
+    <style>
+      body { padding: var(--s6); }
+      h1 { font-size: var(--text-lg); font-weight: 600; margin: 0 0 var(--s6); }
+      .rule { margin: var(--s7) 0 var(--s4); font-size: var(--text-sm); color: var(--ink-soft); }
+    </style>
+  </head>
+  <body>
+    <h1>Usage — the forms, at the numbers a real store produces</h1>
+
+    <p class="rule">
+      Stat tiles: a delta is coloured only where the direction means something,
+      and a tenfold change becomes a multiple rather than an unreadable percentage.
+    </p>
+    <div class="tiles">
+      <div class="tile">
+        <span class="tile-label">Tool calls</span>
+        <span class="tile-value">3,025</span>
+        <span class="tile-delta neutral">↑ ×97 vs the period before</span>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Active time</span>
+        <span class="tile-value">12h 40m</span>
+        <span class="tile-delta neutral">↑ ×57 vs the period before</span>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Spend</span>
+        <span class="tile-value">$82.02</span>
+        <span class="tile-note">4 of 28 sessions priced</span>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Error rate</span>
+        <span class="tile-value">3.5%</span>
+        <span class="tile-delta good">↓ 73% vs the period before</span>
+        <span class="tile-note">107 of 3,024 with a recorded outcome</span>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Refused</span>
+        <span class="tile-value">2</span>
+        <span class="tile-note">denied by a person or a rule</span>
+      </div>
+    </div>
+
+    <p class="banner">
+      <strong>Cost is partly measured.</strong> 4 of 28 sessions in this period
+      were captured live, covering 461 of 3,025 calls. Spend and tokens are
+      recorded by the OTLP lane as a session runs; a transcript records neither,
+      so imported history has no cost and cannot be given one retrospectively.
+    </p>
+
+    <p class="rule">
+      Columns: one measure, one hue, solid hairline grid, a 2px surface gap
+      between bars, and the top gridline is the top of the scale.
+    </p>
+    <figure class="chart">
+      <figcaption class="chart-head">
+        <div class="chart-titles">
+          <span class="chart-title">Tool calls per day</span>
+          <span class="chart-caption">Every call, from both lanes.</span>
+        </div>
+        <button class="chart-toggle" type="button">Table</button>
+      </figcaption>
+      <div class="chart-body" role="img" aria-label="Tool calls per day. Highest 5 Sep at 806.">
+        <div class="chart-plot" style="height: 100.00%">
+          <div class="chart-grid">
+            <div class="chart-gridline"><span class="chart-ytick">1,000</span></div>
+            <div class="chart-gridline"><span class="chart-ytick">750</span></div>
+            <div class="chart-gridline"><span class="chart-ytick">500</span></div>
+            <div class="chart-gridline"><span class="chart-ytick">250</span></div>
+            <div class="chart-gridline"><span class="chart-ytick">0</span></div>
+          </div>
+          <div class="chart-cols">
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 0.00%"></div></div>
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 2.70%"></div></div>
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 0.00%"></div></div>
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 12.16%"></div></div>
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 45.27%"></div></div>
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 0.00%"></div></div>
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 0.00%"></div></div>
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 18.24%"></div></div>
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 62.16%"></div></div>
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 4.73%"></div></div>
+            <div class="chart-col on" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 81.08%"></div></div>
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 29.73%"></div></div>
+          </div>
+          <div class="chart-crosshair" style="left: 62%"></div>
+          <div class="chart-tip flip" style="left: 62%">
+            <span class="tip-value">806</span>
+            <span class="tip-key">2026-09-05</span>
+            <span class="tip-row"><span class="tip-row-label">Failed</span><span class="tip-row-value">31</span></span>
+            <span class="tip-row"><span class="tip-row-label">Spend</span><span class="tip-row-value">$12.40</span></span>
+          </div>
+        </div>
+        <div class="chart-axis">
+          <span class="chart-xtick">25 Aug</span>
+          <span class="chart-xtick"></span>
+          <span class="chart-xtick">27 Aug</span>
+          <span class="chart-xtick"></span>
+          <span class="chart-xtick">29 Aug</span>
+          <span class="chart-xtick"></span>
+          <span class="chart-xtick">31 Aug</span>
+          <span class="chart-xtick"></span>
+          <span class="chart-xtick">2 Sep</span>
+          <span class="chart-xtick"></span>
+          <span class="chart-xtick">4 Sep</span>
+          <span class="chart-xtick"></span>
+        </div>
+      </div>
+    </figure>
+
+    <p class="rule">
+      The same chart at the widest y-labels it will meet: money. The plot
+      reserves the space rather than hanging the labels outside the card.
+    </p>
+    <figure class="chart">
+      <figcaption class="chart-head">
+        <div class="chart-titles">
+          <span class="chart-title">Spend per day</span>
+          <span class="chart-caption">US dollars — for the sessions that were captured live.</span>
+        </div>
+        <button class="chart-toggle" type="button">Table</button>
+      </figcaption>
+      <div class="chart-body" role="img" aria-label="Spend per day. Highest 5 Sep at $42.50.">
+        <div class="chart-plot" style="height: 100.00%">
+          <div class="chart-grid">
+            <div class="chart-gridline"><span class="chart-ytick">$100.00</span></div>
+            <div class="chart-gridline"><span class="chart-ytick">$75.00</span></div>
+            <div class="chart-gridline"><span class="chart-ytick">$50.00</span></div>
+            <div class="chart-gridline"><span class="chart-ytick">$25.00</span></div>
+            <div class="chart-gridline"><span class="chart-ytick">$0.00</span></div>
+          </div>
+          <div class="chart-cols">
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 8.11%"></div></div>
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 22.30%"></div></div>
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 43.24%"></div></div>
+            <div class="chart-col" tabindex="0" style="height: 100.00%"><div class="chart-col-mark" style="height: 100.00%"></div></div>
+          </div>
+        </div>
+        <div class="chart-axis">
+          <span class="chart-xtick">2 Sep</span>
+          <span class="chart-xtick">3 Sep</span>
+          <span class="chart-xtick">4 Sep</span>
+          <span class="chart-xtick">5 Sep</span>
+        </div>
+      </div>
+    </figure>
+
+    <p class="rule">
+      Bars: horizontal, because the categories are named things; the value rides
+      the tip, so nothing is ever clipped by a short bar.
+    </p>
+    <div class="pair">
+      <figure class="chart">
+        <figcaption class="chart-head">
+          <div class="chart-titles">
+            <span class="chart-title">Tools by use</span>
+            <span class="chart-caption">17 distinct tools. Latency is from the OTLP lane.</span>
+          </div>
+          <button class="chart-toggle" type="button">Table</button>
+        </figcaption>
+        <div class="chart-bars" role="img" aria-label="Tools by use. Highest Bash at 2,293.">
+          <div class="chart-bar-row on" tabindex="0">
+            <span class="chart-bar-key">Bash</span>
+            <span class="chart-bar-track"><span class="chart-bar-mark" style="width: 100%"></span></span>
+            <span class="chart-bar-value">2,293</span>
+          </div>
+          <div class="chart-bar-row" tabindex="0">
+            <span class="chart-bar-key">Edit</span>
+            <span class="chart-bar-track"><span class="chart-bar-mark" style="width: 11%"></span></span>
+            <span class="chart-bar-value">258</span>
+          </div>
+          <div class="chart-bar-row" tabindex="0">
+            <span class="chart-bar-key">Read</span>
+            <span class="chart-bar-track"><span class="chart-bar-mark" style="width: 11%"></span></span>
+            <span class="chart-bar-value">248</span>
+          </div>
+          <div class="chart-bar-row" tabindex="0">
+            <span class="chart-bar-key">Write</span>
+            <span class="chart-bar-track"><span class="chart-bar-mark" style="width: 3%"></span></span>
+            <span class="chart-bar-value">72</span>
+          </div>
+          <div class="chart-bar-row" tabindex="0">
+            <span class="chart-bar-key">ToolSearch</span>
+            <span class="chart-bar-track"><span class="chart-bar-mark" style="width: 1%"></span></span>
+            <span class="chart-bar-value">22</span>
+          </div>
+          <div class="chart-bar-row" tabindex="0">
+            <span class="chart-bar-key">Other (9)</span>
+            <span class="chart-bar-track"><span class="chart-bar-mark" style="width: 3%"></span></span>
+            <span class="chart-bar-value">66</span>
+          </div>
+        </div>
+      </figure>
+
+      <div class="chart">
+        <figcaption class="chart-head">
+          <div class="chart-titles">
+            <span class="chart-title">Ratios</span>
+            <span class="chart-caption">Each against what was actually measured.</span>
+          </div>
+        </figcaption>
+        <div class="meter">
+          <div class="meter-head">
+            <span class="meter-label">Prompt cache hits</span>
+            <span class="meter-value">99.3%</span>
+          </div>
+          <div class="meter-track"><div class="meter-fill" style="width: 99.3%"></div></div>
+        </div>
+        <div class="meter">
+          <div class="meter-head">
+            <span class="meter-label">Subagent share of calls</span>
+            <span class="meter-value">9.1%</span>
+          </div>
+          <div class="meter-track"><div class="meter-fill" style="width: 9.1%"></div></div>
+        </div>
+        <div class="meter">
+          <div class="meter-head">
+            <span class="meter-label">Sessions with cost data</span>
+            <span class="meter-value">4 / 28</span>
+          </div>
+          <div class="meter-track"><div class="meter-fill" style="width: 14.3%"></div></div>
+          <p class="meter-note">The unfilled part is imported history, which records no cost.</p>
+        </div>
+        <dl class="kv">
+          <dt>p50</dt><dd>68 ms</dd>
+          <dt>p95</dt><dd>13,996 ms</dd>
+          <dt>Tokens</dt><dd>113.8M</dd>
+        </dl>
+      </div>
+    </div>
+
+    <p class="rule">
+      The honest empty state (task 6.8): a chart with nothing to plot says why,
+      rather than drawing a flat line at zero.
+    </p>
+    <figure class="chart">
+      <figcaption class="chart-head">
+        <div class="chart-titles">
+          <span class="chart-title">Spend per day</span>
+          <span class="chart-caption">US dollars, from the API requests behind these calls.</span>
+        </div>
+      </figcaption>
+      <p class="chart-empty">
+        No priced day in this period. Cost arrives with the OTLP lane while a
+        session runs, so there is nothing to plot for imported history.
+      </p>
+    </figure>
+  </body>
+</html>

@@ -17,8 +17,11 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use toolog_cli::capture;
 use toolog_cli::commands::{self as cli, Format};
+use toolog_cli::prefs::Prefs;
+use toolog_core::analytics::{self, Analytics, Comparison, Period};
 use toolog_core::model::{FileChange, Page, Reconciliation, Session, TimelineFilter, ToolCall};
-use toolog_core::query;
+use toolog_core::rules::{Finding, ProjectRisk};
+use toolog_core::{query, raw, rules};
 use ts_rs::TS;
 
 use crate::state::AppState;
@@ -86,6 +89,51 @@ pub(crate) struct Stats {
     pub(crate) tools: Vec<query::ToolUsage>,
     /// Lane divergence. Not a footnote: OTEL-only calls are refusals.
     pub(crate) reconciliation: Reconciliation,
+}
+
+/// Everything the risk view opens with (tasks 6.3 and 6.4).
+///
+/// The findings and the per-project posture are computed in one pass over one
+/// rule set. Two commands would let the summary describe a different set of
+/// rules from the list below it, which is exactly the disagreement a review
+/// cannot have.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export_to = "unused/")]
+pub(crate) struct RiskReview {
+    /// Worst first, dismissed findings kept in place and marked.
+    pub(crate) findings: Vec<Finding>,
+    pub(crate) projects: Vec<ProjectRisk>,
+    /// Where a user rules file would go, whether or not one is there. The view
+    /// says so, because "rules are data you can edit" is only true if you can
+    /// find the file.
+    pub(crate) rules_path: Option<String>,
+    /// Whether that file exists and was loaded.
+    pub(crate) rules_customized: bool,
+}
+
+fn risk_review(app: &AppState) -> anyhow::Result<RiskReview> {
+    let path = cli::rules_path();
+    let customized = path.as_ref().is_some_and(|p| p.is_file());
+    let rules = cli::rules()?;
+    app.read(|c| {
+        let findings = rules::evaluate(c, &rules)?;
+        Ok(RiskReview {
+            projects: rules::by_project(c, &rules, &findings)?,
+            findings,
+            rules_path: path.map(|p| p.display().to_string()),
+            rules_customized: customized,
+        })
+    })
+}
+
+/// Everything the analytics view opens with (tasks 6.5-6.8).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export_to = "unused/")]
+pub(crate) struct Usage {
+    pub(crate) analytics: Analytics,
+    /// The same window against the period before it. Fetched together because
+    /// a delta the user has to wait for is a delta they read as a number.
+    pub(crate) comparison: Comparison,
 }
 
 /// What the first-run wizard and the Preferences pane show.
@@ -370,6 +418,81 @@ commands! {
         let mut file = std::fs::File::create(&path)?;
         app.read(|c| cli::export(c, &filter, limit, format, &mut file))?;
         Ok(Some(path.display().to_string()))
+    }
+
+    /// The risk review: what the rules found, and each project's posture.
+    risk() -> RiskReview {
+        risk_review(app)
+    }
+
+    /// Every call one rule matched, newest first.
+    ///
+    /// The drill-through of task 6.3. A finding carries eight examples for
+    /// reading; this is for leaving the finding and going through the rest.
+    rule_calls(rule_id: String, page: Page) -> Vec<ToolCall> {
+        let rule = cli::rules()?
+            .into_iter()
+            .find(|r| r.id == rule_id)
+            .ok_or_else(|| anyhow::anyhow!("no rule with id {rule_id}"))?;
+        app.read(|c| rules::calls(c, &rule, page))
+    }
+
+    /// Set a rule aside, with the reason someone had for it.
+    ///
+    /// A dismissal hides nothing: the finding keeps its place in the list and
+    /// carries the note. What it changes is the per-project posture, which is
+    /// a judgement about what still needs answering.
+    dismiss_rule(rule_id: String, note: String) -> RiskReview {
+        app.with_capture(|capture| {
+            capture
+                .writer()
+                .submit_blocking(move |conn| rules::dismiss(conn, &rule_id, &note, raw::now_ms()))
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+                .map_err(anyhow::Error::from)
+        })?;
+        risk_review(app)
+    }
+
+    /// Undo a dismissal. The calls behind it were never touched either way.
+    restore_rule(rule_id: String) -> RiskReview {
+        app.with_capture(|capture| {
+            capture
+                .writer()
+                .submit_blocking(move |conn| rules::restore(conn, &rule_id))
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+                .map_err(anyhow::Error::from)
+        })?;
+        risk_review(app)
+    }
+
+    /// Usage over a window, and the same window against the one before it.
+    usage(window: Period) -> Usage {
+        app.read(|c| {
+            Ok(Usage {
+                analytics: analytics::analytics(c, &window)?,
+                comparison: analytics::compare(c, &window)?,
+            })
+        })
+    }
+
+    /// The sessions with recent activity, and what each is doing.
+    ///
+    /// `withinMs` is how far back counts as recent. The store records no
+    /// session end — Claude Code does not announce one — so "live" is a window
+    /// the caller chooses and can explain, not a flag on a row.
+    live_sessions(within_ms: i64) -> Vec<analytics::LiveSession> {
+        let now = raw::now_ms();
+        app.read(|c| analytics::live_sessions(c, now - within_ms.max(0), now))
+    }
+
+    /// Which notifications are switched on. Both off until someone says so.
+    get_prefs() -> Prefs {
+        Ok(app.prefs())
+    }
+
+    /// Turn a notification on or off, and remember it across restarts.
+    set_prefs(prefs: Prefs) -> Prefs {
+        app.set_prefs(prefs)
     }
 
     /// The state of the Claude Code integration, for the wizard.

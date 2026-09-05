@@ -7,9 +7,10 @@
 //! [ADR-0007]: ../../../docs/adr/0007-single-resident-process.md
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use toolog_cli::capture::Capture;
+use toolog_cli::prefs::Prefs;
 use toolog_core::{Connection, Db};
 
 /// Application state, managed by Tauri and shared with the tray.
@@ -19,6 +20,9 @@ pub(crate) struct AppState {
     capture: Mutex<Option<Capture>>,
     /// A read connection, separate from the writer's.
     reader: Mutex<Connection>,
+    /// The notification switches (task 6.12), shared with the live sink so it
+    /// can read them without touching disk on every arriving call.
+    prefs: Arc<RwLock<Prefs>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -30,13 +34,35 @@ impl std::fmt::Debug for AppState {
 }
 
 impl AppState {
-    pub(crate) fn new(db_path: PathBuf, capture: Capture) -> anyhow::Result<Arc<Self>> {
+    pub(crate) fn new(
+        db_path: PathBuf,
+        capture: Capture,
+        prefs: Arc<RwLock<Prefs>>,
+    ) -> anyhow::Result<Arc<Self>> {
         let reader = Db::open(&db_path)?.into_connection();
         Ok(Arc::new(Self {
             db_path,
             capture: Mutex::new(Some(capture)),
             reader: Mutex::new(reader),
+            prefs,
         }))
+    }
+
+    /// The notification switches as they stand.
+    pub(crate) fn prefs(&self) -> Prefs {
+        self.prefs.read().map(|p| *p).unwrap_or_default()
+    }
+
+    /// Write the switches to disk and to the live sink's copy together, so the
+    /// two cannot disagree about what the user asked for.
+    pub(crate) fn set_prefs(&self, next: Prefs) -> anyhow::Result<Prefs> {
+        toolog_cli::prefs::save(next)?;
+        let mut guard = self
+            .prefs
+            .write()
+            .map_err(|_| anyhow::anyhow!("the preferences lock is poisoned"))?;
+        *guard = next;
+        Ok(next)
     }
 
     /// Run a query against the read connection.

@@ -1,23 +1,43 @@
-//! The window: two views, one URL.
+//! The window: five screens, one URL.
 //!
 //! The address bar is the application's state (task 5.6). Every filter, the
 //! grouping and the open call live in the hash, so a view can be copied out of
 //! the window and pasted back into it — and the back button undoes a filter,
 //! which is the behaviour anyone who has used a browser already expects.
+//!
+//! Each screen is built once and kept. Three of them hold fetched state and
+//! two of them poll, so switching tabs shows what was there rather than
+//! reloading it, and the live view's timer runs only while it is on screen.
+//!
+//! The live event stream reaches both the timeline (which counts what it has
+//! not shown yet) and the live view (which is the stream). A call arrives more
+//! than once by design — the transcript creates the row, OTEL completes it —
+//! so both of them key on `tool_use_id` rather than counting arrivals.
 
 import "./styles/tokens.css";
 import "./styles/app.css";
 
 import { listen } from "@tauri-apps/api/event";
 
+import { AnalyticsView } from "./analytics";
 import type { ToolCall } from "./bindings";
 import { el, fill, span } from "./dom";
+import { LiveView } from "./live";
+import { RiskView } from "./risk";
 import { SetupView } from "./setup";
 import { TimelineView } from "./timeline";
 import type { ViewState } from "./view";
 import { fromHash, toHash } from "./view";
 
-type Screen = "timeline" | "setup";
+type Screen = "timeline" | "risk" | "usage" | "live" | "setup";
+
+const SCREENS: [Screen, string][] = [
+  ["timeline", "Timeline"],
+  ["risk", "Risk"],
+  ["usage", "Usage"],
+  ["live", "Live"],
+  ["setup", "Status"],
+];
 
 const root = document.getElementById("app");
 if (root === null) throw new Error("no #app to mount into");
@@ -38,15 +58,16 @@ function notice(message: string): void {
 
 // ---------------------------------------------------------------- routing
 
-/** `#…&v=setup` selects the screen; everything else is the timeline's filter. */
+/** `#…&v=risk` selects the screen; everything else is the timeline's filter. */
 function screenFromHash(hash: string): Screen {
-  return new URLSearchParams(hash.replace(/^#/, "")).get("v") === "setup" ? "setup" : "timeline";
+  const asked = new URLSearchParams(hash.replace(/^#/, "")).get("v");
+  return SCREENS.some(([id]) => id === asked) ? (asked as Screen) : "timeline";
 }
 
 function hashFor(screen: Screen, view: ViewState): string {
   const hash = toHash(view);
   if (screen === "timeline") return hash;
-  return hash === "" ? "#v=setup" : `${hash}&v=setup`;
+  return hash === "" ? `#v=${screen}` : `${hash}&v=${screen}`;
 }
 
 let screen: Screen = screenFromHash(location.hash);
@@ -84,10 +105,22 @@ const setup = new SetupView({
   },
 });
 
+/** Take the reader to one call, wherever they asked from. */
+function openCall(toolUseId: string): void {
+  view = { ...view, selected: toolUseId };
+  show("timeline");
+  timeline.apply(view, true);
+}
+
+const risk = new RiskView({ onNotice: notice, onOpenCall: openCall });
+const usage = new AnalyticsView({ onNotice: notice });
+const live = new LiveView({ onNotice: notice, onOpenCall: openCall });
+
+const screens: Record<Screen, { node: HTMLElement }> = { timeline, risk, usage, live, setup };
+
 function drawTabs(): void {
   fill(tabs, [
-    tab("Timeline", "timeline"),
-    tab("Status", "setup"),
+    ...SCREENS.map(([id, label]) => tab(label, id)),
     span("grow", ""),
     span("brand", "toolog"),
   ]);
@@ -106,17 +139,20 @@ function tab(label: string, target: Screen): HTMLElement {
 function show(next: Screen): void {
   screen = next;
   drawTabs();
-  fill(body, [next === "timeline" ? timeline.node : setup.node]);
+  fill(body, [screens[next].node]);
+  // The live view polls, so its timer follows the tab rather than the process.
+  if (next !== "live") live.stop();
   if (next === "setup") setup.refresh();
+  if (next === "risk") void risk.refresh();
+  if (next === "usage") void usage.refresh();
+  if (next === "live") live.start();
   writeHash();
 }
 
 window.addEventListener("popstate", () => {
   if (writing) return;
-  screen = screenFromHash(location.hash);
   view = fromHash(location.hash);
-  drawTabs();
-  fill(body, [screen === "timeline" ? timeline.node : setup.node]);
+  show(screenFromHash(location.hash));
   timeline.apply(view, false);
 });
 
@@ -131,8 +167,11 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
-// The Phase 4 event stream: a call has just been stored.
-void listen<ToolCall>("live_tool_call", (event) => timeline.noteLiveCall(event.payload));
+// The event stream (task 6.9): a call has just been committed.
+void listen<ToolCall>("live_tool_call", (event) => {
+  timeline.noteLiveCall(event.payload);
+  live.noteCall(event.payload);
+});
 
 root.className = "";
 fill(root, [tabs, body, toast]);

@@ -474,3 +474,20 @@ describe("selection", () => {
     expect(rowsOf(timeline).some((r) => r.className.includes("sel"))).toBe(false);
   });
 });
+describe("the live stream", () => {
+  test("the same call arriving twice is one new call, not two", async () => {
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount();
+    await settle();
+    const call = store.rows[0]?.call;
+    if (call === undefined) throw new Error("no fixture call");
+
+    // The transcript creates the row; OTEL completes it. One command.
+    timeline.noteLiveCall(call);
+    timeline.noteLiveCall({ ...call, duration_ms: 900, decision: "accept" });
+
+    const pill = timeline.node.querySelector<HTMLElement>(".newpill");
+    expect(pill?.hidden).toBe(false);
+    expect(pill?.textContent).toBe("1 new call");
+  });
+});

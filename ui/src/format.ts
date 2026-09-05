@@ -70,6 +70,33 @@ export function count(n: number): string {
   return n.toLocaleString();
 }
 
+/** A big number at tile size: 1,284 / 12.9K / 4.2M. */
+export function compact(n: number): string {
+  return n < 10_000
+    ? n.toLocaleString()
+    : new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(n);
+}
+
+/**
+ * A stretch of working time, at the precision a day of work is read in.
+ *
+ * [`duration`] is for one call and tops out at minutes; this is for the sum of
+ * a week's, where "512m 30s" is a number nobody converts in their head.
+ */
+export function elapsed(ms: number): string {
+  if (ms <= 0) return "none";
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+}
+
+/** A fraction as a percentage, or a dash when nothing was measured. */
+export function percent(ratio: number | null, digits = 1): string {
+  return ratio === null ? EM_DASH : `${(ratio * 100).toFixed(digits)}%`;
+}
+
 /**
  * A cost in micro-dollars.
  *

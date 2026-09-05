@@ -28,11 +28,14 @@ use toolog_ingest::projector::TranscriptProjector;
 use toolog_ingest::{backfill, discover, tail};
 use toolog_otlp::server::{Collector, CollectorHandle, CounterSnapshot};
 
-/// How often the live view is polled for new rows.
-const LIVE_INTERVAL: Duration = Duration::from_millis(500);
+/// How long the live thread waits before checking whether it should stop.
+///
+/// Not a poll interval: rows arrive on a channel. This is only how often the
+/// thread wakes to notice a shutdown when nothing is happening.
+const LIVE_IDLE_CHECK: Duration = Duration::from_millis(500);
 
-/// Most rows to emit in one live tick, so a backfill cannot flood the UI.
-const LIVE_BATCH: u32 = 200;
+/// Most rows to emit from one committed job, so a backfill cannot flood the UI.
+const LIVE_BATCH: usize = 200;
 
 /// Somewhere to send tool calls as they land.
 pub type LiveSink = Arc<dyn Fn(&ToolCall) + Send + Sync>;
@@ -90,7 +93,22 @@ impl Capture {
         live: Option<LiveSink>,
     ) -> anyhow::Result<Self> {
         let addr = toolog_otlp::port::choose(&preferred.ip().to_string(), preferred.port())?;
-        let writer = writer::spawn(Db::open(&db_path)?)?;
+
+        // The live channel (task 6.9). Both lanes write through one connection,
+        // so one update hook on it reports every row either of them touches —
+        // in-process, no timer, and no callback threaded through each
+        // projector.
+        let (changes, arrivals) = std::sync::mpsc::channel::<Vec<i64>>();
+        let writer = if live.is_some() {
+            let sink: writer::ChangeSink = Arc::new(move |rowids: &[i64]| {
+                // The writer thread must not block on the UI, so a receiver
+                // that has gone away is dropped rather than waited for.
+                let _ = changes.send(rowids.to_vec());
+            });
+            writer::spawn_watching(Db::open(&db_path)?, sink)?
+        } else {
+            writer::spawn(Db::open(&db_path)?)?
+        };
         let paused = Arc::new(AtomicBool::new(false));
         let stop = Arc::new(AtomicBool::new(false));
 
@@ -110,7 +128,7 @@ impl Capture {
         }
 
         if let Some(sink) = live {
-            threads.push(spawn_live(&db_path, sink, Arc::clone(&stop))?);
+            threads.push(spawn_live(&db_path, sink, Arc::clone(&stop), arrivals)?);
         }
 
         Ok(Self {
@@ -263,30 +281,47 @@ fn spawn_tailer(
     })
 }
 
-/// Poll for newly stored tool calls and hand them to the UI.
+/// Turn committed rows into live events for the UI.
 ///
-/// A poll rather than a push because both lanes create rows, from different
-/// threads, and one cursor over the table covers both without threading a
-/// callback through each. Phase 6 replaces it with a real channel.
+/// The writer says which `tool_call` rowids each job touched; this loads them
+/// and hands them to the sink. A row the transcript created and OTEL later
+/// completed arrives twice, which is correct — the second arrival is where the
+/// duration and the decision come from — so the UI keys on `tool_use_id`.
 fn spawn_live(
     db_path: &Path,
     sink: LiveSink,
     stop: Arc<AtomicBool>,
+    arrivals: std::sync::mpsc::Receiver<Vec<i64>>,
 ) -> anyhow::Result<std::thread::JoinHandle<()>> {
     let db = Db::open(db_path)?;
-    let mut cursor = query::max_tool_call_rowid(db.conn())?;
 
     Ok(std::thread::spawn(move || {
         while !stop.load(Ordering::Relaxed) {
-            std::thread::sleep(LIVE_INTERVAL);
-            match query::tool_calls_after_rowid(db.conn(), cursor, LIVE_BATCH) {
-                Ok(rows) => {
-                    for (rowid, call) in rows {
-                        cursor = cursor.max(rowid);
-                        sink(&call);
+            let mut rowids = match arrivals.recv_timeout(LIVE_IDLE_CHECK) {
+                Ok(rowids) => rowids,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                // The writer is gone, so nothing more will arrive.
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+            };
+            // Drain whatever else is already queued: a backfill commits in
+            // batches, and one query for all of them beats one per job.
+            while let Ok(more) = arrivals.try_recv() {
+                rowids.extend(more);
+                if rowids.len() >= LIVE_BATCH {
+                    break;
+                }
+            }
+            rowids.sort_unstable();
+            rowids.dedup();
+            rowids.truncate(LIVE_BATCH);
+
+            match query::tool_calls_by_rowid(db.conn(), &rowids) {
+                Ok(calls) => {
+                    for call in &calls {
+                        sink(call);
                     }
                 }
-                Err(e) => tracing::warn!(error = %e, "live poll failed"),
+                Err(e) => tracing::warn!(error = %e, "live rows could not be read"),
             }
         }
     }))

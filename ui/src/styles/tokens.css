@@ -44,6 +44,24 @@
   --del-bg: #fbe6e3;
   --del-ink: #9c2b1c;
 
+  /* --- charts ----------------------------------------------------------- */
+  /* One hue for every chart mark. Every chart in the analytics view plots a
+     single measure — calls, spend, duration — so magnitude is the only job
+     colour has to do, and one hue light→dark is the form that does it without
+     spending the identity channel on information the bar length already
+     carries. Nothing here is eyeballed: these four values were run through the
+     dataviz validator's six checks (lightness band, chroma floor, CVD
+     separation, normal-vision floor, contrast) against the surfaces below, in
+     both modes. Changing one means re-running it.
+
+     `--chart-track` is the unfilled half of a meter: a lighter step of the same
+     ramp, so state reads across the whole bar rather than stopping at the
+     fill. It clears 2:1 on the surface, which is what makes "the rest" visible
+     rather than absent. */
+  --chart-mark: #b8542f;
+  --chart-track: #d29a80;
+  --chart-grid: var(--line);
+
   /* --- type ------------------------------------------------------------ */
   --font: ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
@@ -114,6 +132,9 @@
     --refused: #b78cff;
     --warn: #d9a441;
     --mark: #6b5320;
+
+    --chart-mark: #d0694b;
+    --chart-track: #7d4835;
 
     --add-bg: #16301f;
     --add-ink: #7fd3a0;

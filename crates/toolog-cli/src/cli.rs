@@ -61,6 +61,15 @@ pub enum Command {
     Export(ExportArgs),
     /// Evaluate the risk rules: what got approved, and how.
     Risk,
+    /// Report usage: what was run, what it cost, and how much of that is known.
+    Usage {
+        /// How many days back. Omit for the whole store.
+        #[arg(long, value_name = "N")]
+        days: Option<u32>,
+        /// One project, by its path.
+        #[arg(long, value_name = "PATH")]
+        project: Option<String>,
+    },
     /// Install or remove the login agent that keeps capture running.
     Agent {
         #[command(subcommand)]
@@ -121,8 +130,17 @@ pub fn run(cli: &Cli) -> anyhow::Result<i32> {
         Command::Verify => run_verify(cli),
         Command::Export(args) => run_export(cli, args),
         Command::Risk => run_risk(cli),
+        Command::Usage { days, project } => run_usage(cli, *days, project.clone()),
         Command::Agent { action } => run_agent(action),
     }
+}
+
+fn run_usage(cli: &Cli, days: Option<u32>, project: Option<String>) -> anyhow::Result<i32> {
+    let db = toolog_core::Db::open(db_path(cli)?)?;
+    let window = commands::usage_window(days, project);
+    let report = commands::usage(&db, &window)?;
+    print!("{}", commands::render_usage(&report));
+    Ok(0)
 }
 
 fn db_path(cli: &Cli) -> anyhow::Result<PathBuf> {

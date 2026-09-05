@@ -21,6 +21,17 @@ interface Attrs {
   hidden?: boolean;
   /** `data-*` and `aria-*` attributes, written through verbatim. */
   attrs?: Record<string, string>;
+  /**
+   * Geometry, applied through the CSSOM rather than as a `style` attribute.
+   *
+   * Not a stylistic preference: the window runs under a Content Security
+   * Policy with `style-src 'self'` and no `unsafe-inline`, so a `style`
+   * *attribute* is discarded — silently, with the element rendering at its
+   * natural size. Assigning properties on `element.style` is not an inline
+   * style in the CSP's sense and is honoured. Everything that is not geometry
+   * belongs in a class.
+   */
+  style?: Record<string, string>;
   on?: Partial<{
     [K in keyof HTMLElementEventMap]: (event: HTMLElementEventMap[K]) => void;
   }>;
@@ -32,7 +43,7 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   children: Child | Child[] = [],
 ): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
-  const { attrs: extra, on, text, ...rest } = attrs;
+  const { attrs: extra, on, text, style, ...rest } = attrs;
 
   for (const [key, value] of Object.entries(rest)) {
     if (value === undefined || value === false) continue;
@@ -43,6 +54,7 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   }
   if (text !== undefined) node.textContent = text;
   for (const [key, value] of Object.entries(extra ?? {})) node.setAttribute(key, value);
+  for (const [key, value] of Object.entries(style ?? {})) node.style.setProperty(key, value);
   for (const [event, handler] of Object.entries(on ?? {})) {
     node.addEventListener(event, handler as EventListener);
   }

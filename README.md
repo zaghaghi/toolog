@@ -1,9 +1,12 @@
 # Toolog
 
-> **Status: v0.1 — Phases 0–5 done.** Capture works end to end, and the timeline is usable: a
-> virtualized list over every tool call, full-text search, filters that live in the URL, diffs for
-> every `Edit`, and export to JSON, CSV or Markdown. Risk review, analytics and the live view arrive
-> in Phase 6. See [docs/](docs/README.md).
+> **Status: v0.1 — Phases 0–6 done.** All four views are built. The timeline is a virtualized list
+> over every tool call with full-text search, filters that live in the URL, diffs for every `Edit`,
+> and export to JSON, CSV or Markdown. The risk review runs rules written as data and drills through
+> to the calls behind each finding. Usage analytics report cost, tokens, latency and active time —
+> and say plainly which sessions the cost lane actually saw. The live view shows concurrent sessions
+> as lanes with a running cost meter, and can notify on refusals and high-severity rule hits, off by
+> default. See [docs/](docs/README.md).
 
 A local audit trail for Claude Code tool calls.
 
@@ -86,6 +89,7 @@ The window is TypeScript compiled by Vite and **embedded in the binary**, so it 
 | `toolog backfill` | Import `~/.claude/projects`. Safe to re-run |
 | `toolog verify` | Cross-check the two lanes: gaps, refusals, completeness |
 | `toolog risk` | Evaluate the risk rules: what got approved, and how |
+| `toolog usage` | What was run, what it cost, and how much of that is known |
 | `toolog export` | JSON, JSONL, CSV or Markdown, with filters |
 | `toolog agent install` | A login agent so capture survives a restart |
 

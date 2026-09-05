@@ -16,7 +16,7 @@
 //! [ADR-0004]: ../../../docs/adr/0004-store-raw-project-normalized.md
 //! [ADR-0009]: ../../../docs/adr/0009-correlate-on-tool-use-id.md
 
-use rusqlite::{Connection, named_params, params};
+use rusqlite::{Connection, OptionalExtension as _, named_params, params};
 
 use crate::error::Result;
 use crate::model::{
@@ -362,6 +362,42 @@ pub fn inherit_permission_modes(conn: &Connection) -> Result<()> {
         [],
     )?;
     Ok(())
+}
+
+/// The mode a session was last known to be in, if any.
+///
+/// For the live path, where the projector starts with an empty map partway
+/// through a session that has been running for an hour: the mode is in the
+/// store from an earlier record, and one indexed lookup recovers it. Without
+/// it, every call captured after a restart carried no mode until the next
+/// prompt turn resynchronised one — which the live view showed as "—" for a
+/// session the store could perfectly well account for.
+pub fn last_known_mode(conn: &Connection, session_id: &str) -> Result<Option<String>> {
+    let from_changes: Option<String> = conn
+        .query_row(
+            "SELECT to_mode FROM permission_mode_change
+             WHERE session_id = ?1 AND to_mode IS NOT NULL
+             ORDER BY ts DESC, id DESC LIMIT 1",
+            params![session_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    if from_changes.is_some() {
+        return Ok(from_changes);
+    }
+    // A session whose changes were deduplicated away can still have the mode
+    // stamped on its calls.
+    Ok(conn
+        .query_row(
+            "SELECT permission_mode FROM tool_call
+             WHERE session_id = ?1 AND permission_mode IS NOT NULL
+             ORDER BY called_at DESC, rowid DESC LIMIT 1",
+            params![session_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten())
 }
 
 /// Turns stored evidence back into projection rows.

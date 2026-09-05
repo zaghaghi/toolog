@@ -15,16 +15,36 @@
 //! An audit tool that quietly drops records is worse than one that admits it
 //! cannot keep up.
 //!
+//! # Telling the rest of the process what changed
+//!
+//! [`spawn_watching`] installs SQLite's update hook on the write connection
+//! and reports, after each committed job, which `tool_call` rows it touched.
+//! That is what turns the live view from a timer into a channel (task 6.9):
+//! every row either lane writes passes through this one connection, so one
+//! hook covers both without threading a callback through each projector.
+//!
+//! The rowids are collected during the job and delivered **after** it returns.
+//! The hook itself fires before the commit, so a reader told about a row that
+//! early would look for one it cannot see yet.
+//!
 //! [ADR-0007]: ../../../docs/adr/0007-single-resident-process.md
 
 use std::sync::mpsc::{SyncSender, TrySendError};
+use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
+use rusqlite::hooks::Action;
 
 use crate::Db;
 
 /// Work for the writer thread.
 type Job = Box<dyn FnOnce(&Connection) + Send + 'static>;
+
+/// Told which `tool_call` rows a committed job created or changed.
+///
+/// Runs on the writer thread, so it must not block: hand the rowids to a
+/// channel and let something else do the reading.
+pub type ChangeSink = Arc<dyn Fn(&[i64]) + Send + Sync>;
 
 /// Why a submission did not reach the writer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -102,14 +122,57 @@ pub fn spawn(db: Db) -> std::io::Result<WriteHandle> {
 
 /// [`spawn`] with an explicit queue depth.
 pub fn spawn_with_depth(db: Db, depth: usize) -> std::io::Result<WriteHandle> {
+    spawn_inner(db, depth, None)
+}
+
+/// [`spawn`], plus a report of which `tool_call` rows each job touched.
+///
+/// The sink is called once per committed job, never for a job that wrote
+/// nothing. See the module docs for why it is after the commit and not inside
+/// the hook.
+pub fn spawn_watching(db: Db, sink: ChangeSink) -> std::io::Result<WriteHandle> {
+    spawn_inner(db, DEFAULT_QUEUE_DEPTH, Some(sink))
+}
+
+fn spawn_inner(db: Db, depth: usize, sink: Option<ChangeSink>) -> std::io::Result<WriteHandle> {
     let (tx, rx) = std::sync::mpsc::sync_channel::<Job>(depth);
 
     std::thread::Builder::new()
         .name("toolog-writer".into())
         .spawn(move || {
             let conn = db.into_connection();
+
+            // Shared with the hook, which SQLite calls from inside this same
+            // thread — the mutex is for the borrow checker, not contention.
+            let touched: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(Vec::new()));
+            if sink.is_some() {
+                let collect = Arc::clone(&touched);
+                // A failure here means no live updates, not a broken writer:
+                // capture must keep storing either way.
+                let installed = conn.update_hook(Some(
+                    move |action: Action, _db: &str, table: &str, rowid: i64| {
+                        if table != "tool_call" || action == Action::SQLITE_DELETE {
+                            return;
+                        }
+                        if let Ok(mut rows) = collect.lock() {
+                            rows.push(rowid);
+                        }
+                    },
+                ));
+                if let Err(e) = installed {
+                    tracing::warn!(error = %e, "no update hook; the live view will not update");
+                }
+            }
+
             while let Ok(job) = rx.recv() {
                 job(&conn);
+                let Some(sink) = &sink else { continue };
+                let rows = touched.lock().map(|mut r| std::mem::take(&mut *r));
+                match rows {
+                    Ok(rows) if !rows.is_empty() => sink(&rows),
+                    Ok(_) => {}
+                    Err(_) => tracing::warn!("change list poisoned; live updates stop here"),
+                }
             }
             tracing::debug!("writer thread finished");
         })?;
@@ -191,6 +254,107 @@ mod tests {
             clone.submit(|_| {}).is_ok(),
             "one dropped handle is not shutdown"
         );
+    }
+
+    /// The live channel of task 6.9, at its narrowest: a committed write to
+    /// `tool_call` is reported, and nothing else is.
+    #[test]
+    fn a_committed_tool_call_is_reported_and_other_tables_are_not() {
+        use crate::model::TranscriptFacts;
+
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<i64>>();
+        let sink: ChangeSink = Arc::new(move |rows: &[i64]| {
+            let _ = tx.send(rows.to_vec());
+        });
+        let handle = spawn_watching(Db::open_in_memory().expect("db"), sink).expect("spawn");
+
+        // A write to another table says nothing.
+        handle
+            .submit_blocking(|conn| {
+                conn.execute(
+                    "INSERT INTO raw_event (lane, source_ref, content_sha256, ingested_at, body)
+                     VALUES ('transcript', 'w', 'h', 0, '{}')",
+                    [],
+                )
+                .expect("insert");
+            })
+            .expect("submit");
+
+        // Then one to `tool_call`, which does.
+        handle
+            .submit_blocking(|conn| {
+                crate::project::upsert_transcript(
+                    conn,
+                    "toolu_1",
+                    &TranscriptFacts {
+                        tool_name: Some("Bash".into()),
+                        called_at: Some(1),
+                        ..TranscriptFacts::default()
+                    },
+                )
+                .expect("upsert");
+            })
+            .expect("submit");
+
+        let reported = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the tool_call write");
+        assert_eq!(reported.len(), 1, "one row, once");
+        assert!(
+            rx.try_recv().is_err(),
+            "the raw_event write reported nothing"
+        );
+    }
+
+    /// The second lane completing a row is an update, and the live view needs
+    /// it: that is where the duration and the decision come from.
+    #[test]
+    fn completing_a_row_is_reported_as_well_as_creating_it() {
+        use crate::model::{OtelFacts, TranscriptFacts};
+
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<i64>>();
+        let sink: ChangeSink = Arc::new(move |rows: &[i64]| {
+            let _ = tx.send(rows.to_vec());
+        });
+        let handle = spawn_watching(Db::open_in_memory().expect("db"), sink).expect("spawn");
+
+        handle
+            .submit_blocking(|conn| {
+                crate::project::upsert_transcript(
+                    conn,
+                    "toolu_1",
+                    &TranscriptFacts {
+                        tool_name: Some("Bash".into()),
+                        called_at: Some(1),
+                        ..TranscriptFacts::default()
+                    },
+                )
+                .expect("upsert");
+            })
+            .expect("submit");
+        let created = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("created");
+
+        handle
+            .submit_blocking(|conn| {
+                crate::project::upsert_otel(
+                    conn,
+                    "toolu_1",
+                    &OtelFacts {
+                        duration_ms: Some(900),
+                        decision: Some("accept".into()),
+                        ..OtelFacts::default()
+                    },
+                )
+                .expect("upsert");
+            })
+            .expect("submit");
+        let completed = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("completed");
+
+        assert_eq!(created, completed, "the same row, reported again");
     }
 
     /// A dead writer must be reported, not silently swallowed: capture has
