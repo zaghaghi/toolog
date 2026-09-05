@@ -55,8 +55,12 @@ pub enum Command {
         #[arg(long)]
         reproject: bool,
     },
-    /// Cross-check the two ingestion lanes.
-    Verify,
+    /// Cross-check the two ingestion lanes, and optionally the integrity chain.
+    Verify {
+        /// Also walk the integrity chain over stored evidence.
+        #[arg(long)]
+        chain: bool,
+    },
     /// Write tool calls to stdout or a file.
     Export(ExportArgs),
     /// Evaluate the risk rules: what got approved, and how.
@@ -127,7 +131,7 @@ pub fn run(cli: &Cli) -> anyhow::Result<i32> {
             quiet,
             reproject,
         } => run_backfill(cli, path.as_deref(), *quiet, *reproject),
-        Command::Verify => run_verify(cli),
+        Command::Verify { chain } => run_verify(cli, *chain),
         Command::Export(args) => run_export(cli, args),
         Command::Risk => run_risk(cli),
         Command::Usage { days, project } => run_usage(cli, *days, project.clone()),
@@ -232,11 +236,17 @@ fn run_backfill(
     Ok(0)
 }
 
-fn run_verify(cli: &Cli) -> anyhow::Result<i32> {
+fn run_verify(cli: &Cli, chain: bool) -> anyhow::Result<i32> {
     let db = toolog_core::Db::open(db_path(cli)?)?;
-    let reconciliation = commands::verify(&db)?;
-    print!("{}", commands::render_verify(&reconciliation));
-    Ok(0)
+    print!("{}", commands::render_verify(&commands::verify(&db)?));
+
+    if !chain {
+        return Ok(0);
+    }
+    let report = commands::verify_chain(&db)?;
+    print!("{}", commands::render_chain(&report));
+    // A broken chain is a failing exit code: this is the check a script runs.
+    Ok(i32::from(!report.intact()))
 }
 
 fn run_risk(cli: &Cli) -> anyhow::Result<i32> {

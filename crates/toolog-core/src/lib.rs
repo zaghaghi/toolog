@@ -27,6 +27,16 @@
 //! it. That split travels with the numbers as a `Coverage` rather than being
 //! left to the caller to remember.
 //!
+//! [`verify`] is the completeness layer: which calls carry both lanes, which
+//! sessions are missing their approval record, and the windows in which nothing
+//! was watching. It is a separate claim from integrity, and the more important
+//! one — a record that was never captured leaves nothing to tamper with.
+//!
+//! [`chain`] is the integrity layer: every stored record is linked to the one
+//! before it, so modifying stored evidence is detectable. It is deliberately a
+//! separate claim from *completeness*, which reconciliation answers — a record
+//! that was never captured leaves nothing to break.
+//!
 //! [`rules`] is the risk layer: rules written as data, compiled to bound SQL
 //! here so a rules file can express a question but never a query. Findings are
 //! computed rather than stored, for the same reason the projections are.
@@ -36,6 +46,7 @@
 //! [ADR-0009]: ../../../docs/adr/0009-correlate-on-tool-use-id.md
 
 pub mod analytics;
+pub mod chain;
 pub mod constants;
 pub mod db;
 pub mod error;
@@ -47,6 +58,7 @@ pub mod project;
 pub mod query;
 pub mod raw;
 pub mod rules;
+pub mod verify;
 pub mod writer;
 
 pub use db::Db;

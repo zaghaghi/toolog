@@ -42,8 +42,21 @@ pub fn probe(addr: SocketAddr) -> Health {
 }
 
 /// [`probe`] with an explicit timeout.
+///
+/// **Refuses any address that is not loopback.** This is the one outbound
+/// connection the workspace makes, so it is the one that has to be unable to
+/// leave the machine ([ADR-0008]). The receiver only ever binds loopback, so a
+/// non-loopback address here is a configuration mistake or a caller that should
+/// not be trusted — and answering it would be egress, however local the intent.
+///
+/// [ADR-0008]: ../../../docs/adr/0008-local-only-zero-egress.md
 #[must_use]
 pub fn probe_with_timeout(addr: SocketAddr, timeout: Duration) -> Health {
+    if !addr.ip().is_loopback() {
+        return Health::Foreign(format!(
+            "refused to probe {addr}: health checks only speak to loopback"
+        ));
+    }
     let Ok(mut stream) = TcpStream::connect_timeout(&addr, timeout) else {
         return Health::Down;
     };
@@ -97,6 +110,25 @@ mod tests {
     /// any ephemeral range.
     fn nothing_can_listen_here() -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1)
+    }
+
+    /// The one outbound connection in the workspace cannot leave the machine
+    /// (ADR-0008). Asserted here rather than allow-listed in the egress test,
+    /// so it is a property of the code and not of a comment.
+    #[test]
+    fn a_non_loopback_address_is_refused_without_connecting() {
+        let elsewhere = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 47318);
+        let started = std::time::Instant::now();
+        let health = probe_with_timeout(elsewhere, Duration::from_secs(5));
+
+        match health {
+            Health::Foreign(why) => assert!(why.contains("loopback"), "{why}"),
+            other => panic!("a non-loopback probe must be refused, got {other:?}"),
+        }
+        assert!(
+            started.elapsed() < Duration::from_millis(200),
+            "refused before connecting, so it cannot have waited on a network"
+        );
     }
 
     #[test]

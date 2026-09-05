@@ -79,14 +79,15 @@ pub fn reproject_all(conn: &Connection) -> Result<project::ReprojectStats> {
 /// anything missing?".
 ///
 /// [ADR-0009]: ../../../docs/adr/0009-correlate-on-tool-use-id.md
-pub fn verify(db: &Db) -> Result<toolog_core::model::Reconciliation> {
-    query::reconcile(db.conn())
+pub fn verify(db: &Db) -> Result<toolog_core::verify::Completeness> {
+    toolog_core::verify::completeness(db.conn())
 }
 
 /// Render a reconciliation the way an auditor reads it.
 #[must_use]
-pub fn render_verify(r: &toolog_core::model::Reconciliation) -> String {
+pub fn render_verify(c: &toolog_core::verify::Completeness) -> String {
     use std::fmt::Write as _;
+    let r = &c.lanes;
     let mut out = String::new();
 
     let _ = writeln!(out, "Lane reconciliation");
@@ -97,7 +98,7 @@ pub fn render_verify(r: &toolog_core::model::Reconciliation) -> String {
     );
     let _ = writeln!(
         out,
-        "  transcript only {:>8}   no decision, duration or cost — a collection gap",
+        "  transcript only {:>8}   what ran, but not who approved it",
         r.transcript_only
     );
     let _ = writeln!(
@@ -111,21 +112,167 @@ pub fn render_verify(r: &toolog_core::model::Reconciliation) -> String {
         r.rejected
     );
 
-    let total = r.total();
-    if total > 0 {
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "a percentage for display, not a computation anything depends on"
-        )]
-        let pct = r.both as f64 * 100.0 / total as f64;
-        let _ = writeln!(out, "\n  {pct:.1}% of calls were witnessed by both lanes.");
+    if let Some(ratio) = c.decided_ratio() {
+        let _ = writeln!(
+            out,
+            "\n  {:.1}% of {} calls have their approval on record.",
+            ratio * 100.0,
+            r.total()
+        );
     }
+
+    out.push_str(&render_gaps(c));
+    out.push_str(&render_sessions(c));
+
     let _ = writeln!(
         out,
         "\nTranscript-only calls are expected for history imported from before toolog ran.\n\
          Refusals are counted from the decision the OTLP lane carries, not from a missing\n\
          transcript: a denied call does leave a transcript record, but nothing in it says\n\
          who denied it or why."
+    );
+    out
+}
+
+/// The windows in which nothing was watching.
+fn render_gaps(c: &toolog_core::verify::Completeness) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    if c.gaps.is_empty() {
+        return out;
+    }
+
+    let _ = writeln!(
+        out,
+        "\nWindows with no decision layer ({}, largest first)",
+        plural(i64::try_from(c.gaps.len()).unwrap_or(i64::MAX), "window"),
+    );
+    for gap in &c.gaps {
+        let _ = writeln!(
+            out,
+            "  {} → {}   {:>6} {:<8} in {:<12} ({})",
+            stamp(Some(gap.from_ms)),
+            stamp(Some(gap.to_ms)),
+            gap.calls,
+            if gap.calls == 1 { "call" } else { "calls" },
+            plural(gap.sessions, "session"),
+            span(gap.duration_ms()),
+        );
+    }
+    out
+}
+
+/// Sessions whose approval layer is incomplete, worst first.
+fn render_sessions(c: &toolog_core::verify::Completeness) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let incomplete: Vec<_> = c.sessions.iter().filter(|s| s.decided < s.calls).collect();
+    if incomplete.is_empty() {
+        return out;
+    }
+
+    let shown = incomplete.len();
+    let _ = writeln!(
+        out,
+        "\nSessions missing part of their approval record — {} of {}{}, least complete first",
+        c.sessions_incomplete,
+        plural(c.sessions_total, "session"),
+        if i64::try_from(shown).unwrap_or(i64::MAX) < c.sessions_incomplete {
+            format!(" ({shown} shown)")
+        } else {
+            String::new()
+        },
+    );
+    for session in incomplete {
+        let _ = writeln!(
+            out,
+            "  {:<38} {:>5}/{:<5} {:>6}   {}",
+            session.session_id,
+            session.decided,
+            session.calls,
+            session
+                .decided_ratio()
+                .map_or_else(|| "—".to_string(), |r| format!("{:.0}%", r * 100.0)),
+            session
+                .project_path
+                .as_deref()
+                .unwrap_or("(unknown project)"),
+        );
+    }
+    out
+}
+
+/// `1 call` / `2 calls`, for the many places one number needs a noun.
+fn plural(n: i64, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
+}
+
+/// A duration in the words a gap is described in.
+fn span(ms: i64) -> String {
+    let minutes = ms / 60_000;
+    if minutes < 1 {
+        return "under a minute".to_string();
+    }
+    if minutes < 60 {
+        return format!("{minutes}m");
+    }
+    let hours = minutes / 60;
+    if hours < 24 {
+        return format!("{hours}h {:02}m", minutes % 60);
+    }
+    format!("{}d {:02}h", hours / 24, hours % 24)
+}
+
+/// Walk the integrity chain and report it (task 7.6).
+pub fn verify_chain(db: &Db) -> Result<toolog_core::chain::ChainReport> {
+    toolog_core::chain::verify(db.conn())
+}
+
+/// Render a chain report, ending with the head worth recording elsewhere.
+#[must_use]
+pub fn render_chain(report: &toolog_core::chain::ChainReport) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+
+    let _ = writeln!(out, "\nIntegrity chain");
+    let _ = writeln!(out, "  records checked {:>8}", report.checked);
+    if report.unsealed > 0 {
+        let _ = writeln!(
+            out,
+            "  not yet sealed  {:>8}   stored before this version; run a backfill or start \
+             the app to seal them",
+            report.unsealed
+        );
+    }
+
+    if report.checked == 0 {
+        // "Intact" over nothing is true and misleading.
+        let _ = writeln!(
+            out,
+            "  intact          {:>8}   nothing is sealed yet",
+            "n/a"
+        );
+    } else if report.intact() {
+        let _ = writeln!(out, "  intact          {:>8}", "yes");
+    } else {
+        let _ = writeln!(out, "  intact          {:>8}", "NO");
+        // Every break, not a summary: one is an edited row, thousands is a
+        // chain rewritten from some point onward, and the difference matters.
+        for b in report.breaks.iter().take(20) {
+            let _ = writeln!(out, "    raw_event {:<10} {}", b.id, b.what);
+        }
+        if report.breaks.len() > 20 {
+            let _ = writeln!(out, "    … and {} more", report.breaks.len() - 20);
+        }
+    }
+
+    let _ = writeln!(out, "\n  head  {}", report.head);
+    let _ = writeln!(
+        out,
+        "\nThe head covers every record before it. Keep it somewhere outside this database —\n\
+         a note, a commit, a message to yourself — and a later run that reports a different\n\
+         head for the same records is the only way to catch a chain that was rewritten\n\
+         wholesale. Walking detects everything short of that."
     );
     out
 }
@@ -475,7 +622,6 @@ pub fn render_usage(report: &UsageReport) -> String {
             format!("{}h {:02}m", minutes / 60, minutes % 60)
         }
     };
-    let plural = |n: i64, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
 
     let _ = writeln!(
         out,

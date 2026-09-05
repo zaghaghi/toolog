@@ -104,6 +104,11 @@ impl<'a> Backfill<'a> {
             }
         }
 
+        // Anything written before the integrity chain existed is linked in
+        // here, so a store imported by the CLI is sealed without needing the
+        // application to have been run (task 7.6).
+        toolog_core::chain::seal(self.conn)?;
+
         report.stats = projector.stats().clone();
         Ok(report)
     }

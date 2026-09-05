@@ -39,12 +39,30 @@ pub fn content_hash(body: &str) -> String {
 /// Returns [`RawInsert::Duplicate`] if an identical body is already held. That
 /// is a normal outcome, not an error: it is what lets the Phase 2 tailer
 /// recover from a truncated file by rescanning from zero.
+///
+/// The record is linked into the integrity chain in the same statement that
+/// creates it ([`crate::chain`]), so there is no window in which a stored
+/// record is outside the chain. Ordering is safe because one process holds one
+/// write connection ([ADR-0007]) — the chain head cannot move between reading
+/// it and using it.
+///
+/// [ADR-0007]: ../../../docs/adr/0007-single-resident-process.md
 pub fn insert(conn: &Connection, event: &NewRawEvent<'_>) -> Result<RawInsert> {
     let hash = content_hash(event.body);
+    let at = now_ms();
+    let digest = crate::chain::row_digest(
+        event.lane.as_str(),
+        event.source_ref,
+        event.source_offset,
+        at,
+        &hash,
+    );
+    let chained = crate::chain::link(&crate::chain::head(conn)?, &digest);
 
     let mut stmt = conn.prepare_cached(
-        "INSERT INTO raw_event (lane, source_ref, source_offset, content_sha256, ingested_at, body)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO raw_event
+             (lane, source_ref, source_offset, content_sha256, ingested_at, body, chain_sha256)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT (content_sha256) DO NOTHING
          RETURNING id",
     )?;
@@ -56,8 +74,9 @@ pub fn insert(conn: &Connection, event: &NewRawEvent<'_>) -> Result<RawInsert> {
                 event.source_ref,
                 event.source_offset,
                 hash,
-                now_ms(),
+                at,
                 event.body,
+                chained,
             ],
             |row| row.get::<_, i64>(0),
         )

@@ -21,8 +21,12 @@ session monitoring.
 ## Nothing leaves your machine
 
 The OTLP receiver binds `127.0.0.1` only. There is no analytics, no crash reporting, no remote
-config, no account. A CI test asserts that no non-loopback socket is ever opened — the guarantee is
-a build failure when broken, not a promise in a readme.
+config, no account.
+
+**A CI test runs a full ingest and every query the window issues, then asks the operating system
+which sockets the process holds** — any address that is not loopback fails the build. A second test
+proves that check can fail, by opening a socket pointed off the machine and asserting the census
+sees it. The guarantee is a build failure when broken, not a promise in a readme.
 
 The one exception, named plainly: an **opt-in, off-by-default** update check against GitHub
 Releases, which sends no user data. See [ADR-0008](docs/adr/0008-local-only-zero-egress.md) and
@@ -88,6 +92,7 @@ The window is TypeScript compiled by Vite and **embedded in the binary**, so it 
 | `toolog doctor [--fix]` | The state of the integration. Read-only unless `--fix` |
 | `toolog backfill` | Import `~/.claude/projects`. Safe to re-run |
 | `toolog verify` | Cross-check the two lanes: gaps, refusals, completeness |
+| `toolog verify --chain` | Walk the integrity chain over stored evidence, and print its head |
 | `toolog risk` | Evaluate the risk rules: what got approved, and how |
 | `toolog usage` | What was run, what it cost, and how much of that is known |
 | `toolog export` | JSON, JSONL, CSV or Markdown, with filters |

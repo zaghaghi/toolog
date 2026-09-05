@@ -36,6 +36,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "rule_dismissals",
         sql: include_str!("migrations/003_rule_dismissals.sql"),
     },
+    Migration {
+        version: 4,
+        name: "integrity_chain",
+        sql: include_str!("migrations/004_integrity_chain.sql"),
+    },
 ];
 
 /// The schema version this build knows how to produce.
@@ -139,7 +144,9 @@ mod tests {
             .expect("rewind");
         db.conn()
             .execute_batch(
-                "DROP TABLE rule_dismissal;
+                "DROP INDEX raw_event_unchained;
+                 ALTER TABLE raw_event DROP COLUMN chain_sha256;
+                 DROP TABLE rule_dismissal;
                  DROP INDEX tool_call_agent_id;
                  ALTER TABLE tool_call DROP COLUMN agent_id;
                  ALTER TABLE session DROP COLUMN slug;",

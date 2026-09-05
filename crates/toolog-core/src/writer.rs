@@ -142,6 +142,21 @@ fn spawn_inner(db: Db, depth: usize, sink: Option<ChangeSink>) -> std::io::Resul
         .spawn(move || {
             let conn = db.into_connection();
 
+            // Records written before the integrity chain existed are linked in
+            // now (task 7.6). Here because this thread owns the only write
+            // connection, once per process, and it costs one indexed count when
+            // there is nothing to do.
+            match crate::chain::seal(&conn) {
+                Ok(sealed) if sealed.rows > 0 => {
+                    tracing::info!(
+                        rows = sealed.rows,
+                        "sealed records into the integrity chain"
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "could not seal the integrity chain"),
+            }
+
             // Shared with the hook, which SQLite calls from inside this same
             // thread — the mutex is for the borrow checker, not contention.
             let touched: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(Vec::new()));
