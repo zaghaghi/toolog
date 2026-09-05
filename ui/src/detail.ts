@@ -10,7 +10,7 @@
 import type { FileChange, SourceView, TimelineFilter, ToolCallDetail } from "./bindings";
 import { getSource, getToolCall, revealTranscript } from "./bindings";
 import { append, el, fill, orDash, span } from "./dom";
-import { bytes, count, duration, EM_DASH, fullStamp, lanes, shortPath } from "./format";
+import { bytes, count, duration, EM_DASH, fullStamp, isByReference, lanes, shortPath } from "./format";
 import { renderDiff } from "./diff";
 
 /** How much of a result is shown before the pane offers the rest. */
@@ -222,7 +222,20 @@ function render(detail: ToolCallDetail, onFilter: Narrow): HTMLElement {
     box.append(heading("Input"), well(pretty(call.input_json)));
   }
 
-  if (call.result_text !== null && call.result_text !== "") {
+  if (call.result_json !== null && isByReference(call.result_json)) {
+    // Task 7.5: the projection stopped keeping a second copy of a body this
+    // large. Say where it is rather than showing the marker.
+    box.append(
+      heading("Result"),
+      el("p", { class: "note" }, [
+        `This result was ${bytes(call.result_size)} — too large to keep a second copy of. `,
+        "The record is in the evidence store exactly as it arrived; open the source below to read it.",
+      ]),
+    );
+    if (call.result_text !== null && call.result_text !== "") {
+      box.append(heading("Result text"), well(call.result_text));
+    }
+  } else if (call.result_text !== null && call.result_text !== "") {
     box.append(heading("Result"), well(call.result_text));
   } else if (call.result_json !== null) {
     box.append(heading("Result"), well(pretty(call.result_json)));

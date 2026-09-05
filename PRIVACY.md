@@ -1,10 +1,9 @@
 # Privacy
 
-> **Skeleton.** The posture below is settled ([ADR-0008]) and is being built against.
-> Sections marked *Phase 7* describe controls not yet implemented. This file is
-> completed in [Phase 7](docs/phases/07-privacy-retention-integrity.md), task 7.10 —
-> and it is written first deliberately, so the guarantees are stated before the code
-> that must honour them.
+> Every control described here is built and tested. It was written before the code, so the
+> guarantees were stated before anything had to honour them; where a claim is enforced by a
+> test, this says which. The one thing still ahead is uninstall, in
+> [Phase 8](docs/phases/08-packaging-distribution.md).
 
 ## The short version
 
@@ -87,9 +86,15 @@ Nothing — with one exception, named here rather than buried.
 - The OTLP receiver binds `127.0.0.1` only. It is not reachable from your network.
 - There is no analytics, no crash reporting, no remote configuration, no account, no
   license check.
-- **A CI test asserts that no non-loopback socket is opened during a full ingest and
-  query run.** The guarantee is a build failure when broken, not a promise in a
-  document. *(Phase 7, task 7.7.)*
+- **A CI test runs a full ingest and every query the window issues, then asks the operating
+  system which sockets this process holds.** Any address that is not loopback fails the
+  build. Two further tests close what a census cannot see: nothing in this workspace asks
+  for an HTTP client, and no source file opens a connection on `std::net`. A fourth test
+  proves the census can fail, by opening a socket pointed off the machine and asserting it
+  is seen — a check that cannot fail is decoration.
+- The one place that does connect is the health probe that asks *our own* receiver whether
+  it is running, and it **refuses any address that is not loopback**, with a test asserting
+  it refuses before connecting.
 
 **Exports go where you point them.** The timeline's export opens a native save panel, and toolog
 writes the file you choose and nothing else. What it contains is the same sensitive data the store
@@ -99,17 +104,75 @@ holds — commands, paths, results — so where you put it is the decision that 
 **opt-in at first run**, and **sends no user data** — it fetches a version manifest.
 *(Phase 8, task 8.5.)*
 
-## Your controls — *Phase 7*
+## Your controls
 
-- Pause and resume capture from the menu bar
-- Per-project exclusion
-- Retention limits by age and size, with a preview of exactly what a purge deletes
-- Delete a session, removing raw and derived records together
-- Secret redaction — API keys, tokens, private keys, `.env` values
-- A documented choice about whether redaction also rewrites the raw evidence store,
-  since redacting evidence is irreversible and that trade-off is yours to make
+| Control | Where |
+|---|---|
+| Pause and resume capture | The menu bar |
+| Never capture a project | `excluded_projects` in `prefs.json` — its transcript is never opened |
+| Remove history by age or size | `toolog purge --older-than N` / `--max-size MB` |
+| Remove one session, or one project | `toolog purge --session ID` / `--project PATH` |
+| Redact the evidence store as well as the projection | Status → Privacy |
+| Notifications on refusals and high-severity rule hits | The Live tab. Off by default |
+| Add or retune redaction patterns | `redaction.toml`, beside the database |
+| Add or retune risk rules | `rules.toml`, beside the database |
+
+**`toolog purge` deletes nothing without `--apply`.** It first prints the sessions it would
+remove — named, with their project, size and last activity — because "I ran it to see what it
+would do" must not be how an audit trail is lost.
+
+**Excluding a project means never capturing it**, not hiding it. The transcript is never
+opened, so nothing from it is stored and there is nothing to purge later.
+
+## What you can check for yourself
+
+The point of a local audit trail is that you do not have to take its word for anything.
+
+```
+toolog verify            # what the record is missing, and when nothing was watching
+toolog verify --chain    # whether stored evidence has been altered since it was written
+```
+
+**Completeness.** Every stored record is reconciled across the two sources. `toolog verify`
+reports how much of the *approval* layer survives, per session, and names the windows in
+which nothing was watching — the periods when the OTLP lane was not running. A store
+imported from history before toolog existed will honestly say most of it has no approval
+record, because it does not.
+
+**Integrity.** Every record carries a hash of itself linked to the record before it, written
+in the same statement that stores it. `toolog verify --chain` recomputes the whole chain and
+reports where it first stops being true, and prints a **head** — one string covering every
+record before it.
+
+Two honest limits, stated because they matter:
+
+- Walking the chain catches any edit that leaves the rest of it alone: a changed body, a
+  changed source, a deleted or reordered record. It **cannot** catch a rewrite that re-seals
+  everything after the edit, because such a chain is consistent with itself. That is what the
+  head is for — **keep it somewhere outside the database** and a later run reporting a
+  different head for the same records gives the rewrite away.
+- Deleting a record from the *middle* leaves the head untouched. So keeping the head is not a
+  substitute for walking, and walking is not a substitute for keeping the head.
+- A purge breaks the chain **on purpose**, and records what it removed. `verify --chain`
+  reports such a break as accounted for and exits zero; a break nothing accounts for is the
+  one to look at, and exits non-zero.
+
+## Encryption at rest
+
+**The database is not encrypted, and the honest advice is to turn on FileVault.**
+
+SQLCipher was evaluated in Phase 7 and declined for v1. The reasoning is recorded in full as an
+addendum to [ADR-0008]; the short version is that the key would have to live on this machine, so
+it would defend a stolen disk or a copied backup and not the logged-in session — and macOS
+already does the first, better, for the whole disk. Encrypting this file while Claude Code's own
+transcripts sit in plaintext beside it, holding everything this file holds and more, would be
+theatre.
+
+It also costs something worth keeping: `sqlite3 toolog.db` works today, and that is what lets
+you check every claim on this page without trusting this program.
 
 ## Uninstalling — *Phase 8*
+
 
 Uninstall removes the LaunchAgent, restores `~/.claude/settings.json` from the backup
 taken before toolog modified it, and asks before deleting the database — defaulting to

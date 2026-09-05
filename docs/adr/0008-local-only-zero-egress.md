@@ -71,3 +71,46 @@ changes. It needs to be a property the build enforces.
 | Crash reporting via Sentry or similar | Stack traces from this app can carry file paths and command fragments. Not worth the exception. |
 | Trust the code review, skip the CI egress test | The guarantee then depends on nobody making a mistake later. The test is cheap and makes it durable. |
 | Bind `0.0.0.0` for convenience | Exposes the receiver to the local network, allowing anyone on it to inject fabricated audit events. |
+
+## Addendum — encryption at rest, evaluated and declined for v1 (task 7.9)
+
+**Decision: no SQLCipher for v1.** The database stays a plain SQLite file. Revisit if a
+"shared or managed machine" story appears, where the threat model changes.
+
+The evaluation, since the decision only means something with the reasoning attached.
+
+**What it would defend.** SQLCipher encrypts pages with AES-256, so a database file taken
+*away* from the running machine is unreadable: a stolen laptop with FileVault off, a backup
+copied to a drive or a cloud folder, a disk sent for repair. Those are real cases.
+
+**What it would not.** The key has to live on the same machine, because nothing else is
+allowed to (this ADR). Wherever it lives — a file beside the database, the login keychain,
+a passphrase the user types — anything running as that user while they are logged in can
+reach it, and the tool itself must reach it on every launch to work at all. So it defends
+the disk, not the session; and the session is where the risk actually is, because the thing
+being protected is a record of what an agent did *on that machine as that user*.
+
+**What it would cost.**
+
+| | |
+|---|---|
+| Dependency | `libsqlite3-sys` with the `bundled-sqlcipher` feature, replacing the plain bundled build. A second C library in the build, on both platforms. |
+| Key handling | A new decision with no good default: a keychain entry the user never sees, or a passphrase they must type at every launch, for a menu-bar app that is meant to start at login and be forgotten. |
+| Recoverability | A lost key is a lost database. The evidence store exists so the projection can be rebuilt; encryption adds a way to lose both at once. |
+| Operability | `sqlite3 toolog.db` stops working. PRIVACY.md's "readable with any sqlite3 binary" is a feature, not an accident — it is what lets a user check the claims here without trusting this program. |
+| Performance | Measured elsewhere at roughly 5–15% on read-heavy work. Not decisive, and not free. |
+
+**Why the balance falls where it does.** macOS ships FileVault, and it is on by default on
+current hardware. It encrypts the whole disk with a key held in the Secure Enclave, which is
+strictly better than what this application could arrange for one file — it covers the
+transcripts in `~/.claude/projects` too, and those hold everything this database holds and
+more. Encrypting our copy while Claude Code's originals sit in plaintext beside it would be
+security theatre: the same content, one copy locked, one not.
+
+**So the honest advice, which PRIVACY.md now gives, is to turn on FileVault.** That is a
+better answer than SQLCipher for the case SQLCipher would cover, and it is one line to say.
+
+**What would change the decision.** A shared or managed machine, where "any user on this
+machine with filesystem access" stops being the same person as the user being recorded. That
+is a different product with a different threat model, and it would need its own ADR — along
+with the key-handling decision this one declines to make.

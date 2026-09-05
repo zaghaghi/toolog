@@ -142,3 +142,81 @@ fn an_ordinary_command_is_stored_exactly_as_it_ran() {
     let (_dir, db) = ingest(command);
     assert_eq!(summary_of(db.conn(), "toolu_1"), command);
 }
+
+// ---------------------------------------------------------------------------
+// Oversized results (task 7.5)
+// ---------------------------------------------------------------------------
+
+/// A transcript whose one call returns `bytes` of output.
+fn ingest_result(bytes: usize) -> (tempfile::TempDir, Db) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("session.jsonl");
+    let mut file = std::fs::File::create(&path).expect("create");
+
+    let call = r#"{"type":"assistant","uuid":"u1","sessionId":"s1","timestamp":"2026-09-05T09:00:00.000Z","cwd":"/work","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"cat big.log"}}]}}"#;
+    // Not a single run of base64-alphabet characters: `elide_binary` replaces
+    // those, and this test is about size, not about that.
+    let payload = "log line with words ".repeat(bytes / 20 + 1);
+    let result = format!(
+        r#"{{"type":"user","uuid":"u2","parentUuid":"u1","sessionId":"s1","timestamp":"2026-09-05T09:00:01.000Z","cwd":"/work","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}}]}},"toolUseResult":{{"stdout":{}}}}}"#,
+        serde_json::to_string(&payload).expect("json")
+    );
+    writeln!(file, "{call}").expect("write");
+    writeln!(file, "{result}").expect("write");
+    drop(file);
+
+    let db = Db::open_in_memory().expect("open");
+    Backfill::new(db.conn()).run(dir.path()).expect("backfill");
+    (dir, db)
+}
+
+#[test]
+fn an_ordinary_result_is_stored_in_the_projection() {
+    let (_dir, db) = ingest_result(1024);
+    let call = query::tool_call_detail(db.conn(), "toolu_1")
+        .expect("detail")
+        .expect("the call");
+
+    let stored = call.result_json.unwrap_or_default();
+    assert!(stored.contains("stdout"), "the body itself is kept");
+    assert!(!stored.contains("$evidence"));
+}
+
+/// Task 7.5: past the threshold the projection keeps a reference, and the
+/// evidence keeps the body.
+#[test]
+fn an_oversized_result_is_kept_by_reference_and_the_evidence_still_has_it() {
+    let big = toolog_core::normalize::RESULT_BODY_LIMIT + 10_000;
+    let (_dir, db) = ingest_result(big);
+
+    let call = query::tool_call_detail(db.conn(), "toolu_1")
+        .expect("detail")
+        .expect("the call");
+    let stored = call.result_json.unwrap_or_default();
+
+    assert!(
+        toolog_core::normalize::is_by_reference(&stored),
+        "expected a reference, got {} bytes",
+        stored.len()
+    );
+    assert!(stored.len() < 200, "a reference is small: {stored}");
+    assert!(
+        call.result_size.unwrap_or(0) > i64::try_from(big).unwrap_or(0),
+        "the size reported should be the body's, not the marker's; got {:?}",
+        call.result_size
+    );
+
+    // The body is still in the evidence store, which is the whole point.
+    let evidence_len: i64 = db
+        .conn()
+        .query_row("SELECT max(length(body)) FROM raw_event", [], |r| r.get(0))
+        .expect("evidence");
+    assert!(evidence_len > i64::try_from(big).unwrap_or(0));
+}
+
+#[test]
+fn an_oversized_result_is_still_searchable_by_its_text() {
+    let (_dir, db) = ingest_result(toolog_core::normalize::RESULT_BODY_LIMIT + 10_000);
+    let hits = query::search(db.conn(), "cat", Page::default()).expect("search");
+    assert_eq!(hits.len(), 1, "the command is still indexed");
+}

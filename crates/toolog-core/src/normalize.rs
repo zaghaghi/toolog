@@ -29,6 +29,38 @@ const SUMMARY_LIMIT: usize = 500;
 /// `raw_event` keeps them.
 const INLINE_BINARY_LIMIT: usize = 1024;
 
+/// Beyond this, a result body is kept by reference rather than copied into the
+/// projection (task 7.5).
+///
+/// Set from measurement, as the task asked. Phase 1.9 found `raw_event` is
+/// 63.6% of the database and the projection 29%. Measured again on the owner's
+/// store at 3,506 results: `result_json` is 18 MB of the projection's 31 MB,
+/// and **48 rows — 1.4% of them — hold 11 MB of that**, the largest a single
+/// 610 KB body. So the tail is the cost, and 64 KiB is where the tail starts.
+///
+/// Nothing is lost. The body is in `raw_event` either way; what changes is that
+/// the projection stops keeping a second copy of the ones big enough to matter,
+/// and the detail pane offers the source record instead.
+pub const RESULT_BODY_LIMIT: usize = 64 * 1024;
+
+/// The marker a by-reference result carries in place of its body.
+///
+/// A JSON object rather than a sentinel string, so anything reading
+/// `result_json` as JSON — an export, a future reader — sees structure rather
+/// than a body it cannot parse. `bytes` is the size the body actually was.
+#[must_use]
+pub fn by_reference(bytes: usize) -> String {
+    format!(
+        r#"{{"$evidence":{{"bytes":{bytes},"reason":"larger than {RESULT_BODY_LIMIT} bytes"}}}}"#
+    )
+}
+
+/// Whether a stored `result_json` is a reference rather than a body.
+#[must_use]
+pub fn is_by_reference(result_json: &str) -> bool {
+    result_json.starts_with(r#"{"$evidence":"#)
+}
+
 /// What a tool call was asked to do.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InputFacts {

@@ -118,6 +118,18 @@ export function bytes(n: number | null): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
+/**
+ * Whether a stored result body is a reference rather than the body (task 7.5).
+ *
+ * Past a threshold the projection stops keeping a second copy of a large
+ * result — the evidence store already has it — and leaves this marker in its
+ * place. Mirrors `normalize::is_by_reference`; the shape is a stored format,
+ * so the two must agree.
+ */
+export function isByReference(resultJson: string): boolean {
+  return resultJson.startsWith('{"$evidence":');
+}
+
 /** The last segment of a path — what a project or a file is called. */
 export function basename(path: string | null): string {
   if (!path) return EM_DASH;

@@ -1,8 +1,9 @@
 # Documentation
 
-**Status: Phases 0–6 complete — this is v0.1.** Capture works end to end and all four views are
-built: a forensic timeline, a risk review over rules written as data, usage analytics that state
-which sessions the cost lane actually saw, and live session lanes. Phases 7–8 remain.
+**Status: Phases 0–7 complete — this is v0.1.** Capture works end to end, all four views are built,
+and the record now earns the word "audit": it says what it is missing, proves it has not been
+altered, keeps secrets out of what it shows, bounds itself, and fails the build if anything tries
+to leave the machine. Phase 8, packaging, remains.
 
 ## Phases
 
@@ -18,7 +19,7 @@ Nine phases. Each ends in something runnable and checkable. **Phase 5 was the fi
 | [04 — App shell](phases/04-app-shell.md) | Installs itself, stays resident, frontend can query | done |
 | [05 — Timeline view](phases/05-timeline-view.md) | The forensic view | **v0.1** — done |
 | [06 — Risk, analytics & live](phases/06-risk-analytics-live.md) | The other three surfaces | done |
-| [07 — Privacy, retention, integrity](phases/07-privacy-retention-integrity.md) | Earn the word "audit" | |
+| [07 — Privacy, retention, integrity](phases/07-privacy-retention-integrity.md) | Earn the word "audit" | done |
 | [08 — Packaging & distribution](phases/08-packaging-distribution.md) | Dead simple install | **v1.0** |
 
 ## Decisions
@@ -43,6 +44,8 @@ version moves substantially.
 | 987 OTLP records across 11 event types carry **no** `permission_mode` attribute and no `permission_mode_changed` event; the transcript carries the mode in two shapes | The column belongs to the transcript lane → [Phase 6](phases/06-risk-analytics-live.md) |
 | `prompt` and `response` attributes **are** present on OTLP records, with the literal value `<REDACTED>` | The privacy posture is measured, not assumed → [ADR-0008](adr/0008-local-only-zero-egress.md) |
 | The window's CSP (`style-src 'self'`) silently discards `style` **attributes**; CSSOM assignment is honoured | Chart geometry goes through `element.style` → [Phase 6](phases/06-risk-analytics-live.md) |
+| 48 of 3,506 stored results — 1.4% — hold 11 MB of the projection's 18 MB of result bodies | Bodies over 64 KiB are kept by reference → [Phase 7](phases/07-privacy-retention-integrity.md) |
+| `session.transcript_path` is the only link between a projection row and its evidence | Retention removes whole sessions, both halves together → [Phase 7](phases/07-privacy-retention-integrity.md) |
 
 ## Backfill numbers to check against
 

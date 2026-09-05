@@ -25,7 +25,7 @@ trusted, bounded and defended.
   trade-off stated — not a silent default.
 - [x] **7.4** Retention policy: age cap and size cap, with a **purge preview showing exactly what
   would be deleted** before anything is. `VACUUM` after purge.
-- [ ] **7.5** Oversized result bodies stored by reference beyond a threshold, using the Phase 1.9
+- [x] **7.5** Oversized result bodies stored by reference beyond a threshold, using the Phase 1.9
   measurements to set it.
 - [x] **7.6** **Integrity hash-chain** over `raw_event`: each row hashes its predecessor, making
   post-hoc tampering detectable. `toolog verify --chain` walks and reports.
@@ -37,18 +37,17 @@ trusted, bounded and defended.
 - [x] **7.8** Pause/resume capture from the tray; per-project exclusion list; delete-a-session
   removing raw and projected rows together (and breaking the hash chain visibly rather than
   silently re-chaining).
-- [ ] **7.9** Evaluate **SQLCipher** for encryption at rest; decide and record as an ADR addendum.
+- [x] **7.9** Evaluate **SQLCipher** for encryption at rest; decide and record as an ADR addendum.
   State the honest trade-off: the key must live locally, so this mainly defends the stolen-disk and
   backup cases, not a compromised logged-in machine.
-- [ ] **7.10** Complete `PRIVACY.md`: exactly what is stored, where, what never leaves, and the one
+- [x] **7.10** Complete `PRIVACY.md`: exactly what is stored, where, what never leaves, and the one
   named exception (the opt-in update check, Phase 8).
 
 ## Progress
 
-**Done: 7.1, 7.2, 7.3, 7.4, 7.6, 7.7, 7.8.** The record can now say what it is missing, show that it
-has not been altered, keep secrets out of what it shows, bound itself, and fail the build if
-anything tries to leave the machine. Oversized bodies (7.5), the SQLCipher decision (7.9) and
-finishing PRIVACY.md (7.10) remain.
+**Done: all ten tasks.** The record can say what it is missing, show that it has not been altered,
+keep secrets out of what it shows, bound itself, and fail the build if anything tries to leave the
+machine. 312 Rust tests and 123 frontend tests; `just check` clean.
 
 ### Completeness and integrity are different claims
 
@@ -182,6 +181,39 @@ Two things fell out of writing it:
   connection in the workspace, and it took whatever `SocketAddr` it was handed. It now refuses
   anything that is not loopback, with its own test asserting it refuses *without connecting* — so
   the egress test can skip that file on a property rather than on trust.
+
+### Oversized results, sized by measurement (7.5)
+
+Phase 1.9 said measure before designing this, so it was measured twice. Phase 1 found `raw_event`
+is 63.6% of the database and the projection 29%. Measured again on the owner's store at 3,506
+results: `result_json` is **18 MB of the projection's 31 MB**, and **48 rows — 1.4% of them — hold
+11 MB of it**, the largest a single 610 KB body.
+
+So the tail is the whole cost, and the threshold is where the tail starts: **64 KiB**. Past it the
+projection stores a small `{"$evidence": …}` marker instead of a second copy, and `result_size`
+keeps reporting what the body actually was rather than the marker's length. Nothing is lost — the
+body is in `raw_event` either way — and the detail pane says so and offers the source record
+instead of showing a marker.
+
+### Encryption at rest: evaluated, declined, recorded (7.9)
+
+Written up as an addendum to [ADR-0008](../adr/0008-local-only-zero-egress.md). SQLCipher would
+defend a stolen disk or a copied backup and not the logged-in session, because the key has to live
+on the same machine. macOS already does the first, better, for the whole disk — and encrypting this
+file while Claude Code's own transcripts sit in plaintext beside it, holding everything this file
+holds and more, would be theatre. It would also cost `sqlite3 toolog.db`, which is what lets a user
+check PRIVACY.md's claims without trusting this program. **The honest advice is FileVault**, and
+PRIVACY.md now gives it.
+
+Revisit if a shared or managed machine story appears: that is a different threat model, and it
+needs its own ADR along with the key-handling decision this one declines to make.
+
+### PRIVACY.md is finished (7.10)
+
+Every control is built, and the document now says which test enforces which claim, what a user can
+check for themselves (`toolog verify`, `toolog verify --chain`), and the two limits of the chain in
+plain words — including that keeping the head and walking the chain each catch what the other
+cannot.
 
 ## Exit criteria
 

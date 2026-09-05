@@ -1,12 +1,15 @@
 # Toolog
 
-> **Status: v0.1 — Phases 0–6 done.** All four views are built. The timeline is a virtualized list
+> **Status: v0.1 — Phases 0–7 done.** All four views are built. The timeline is a virtualized list
 > over every tool call with full-text search, filters that live in the URL, diffs for every `Edit`,
 > and export to JSON, CSV or Markdown. The risk review runs rules written as data and drills through
 > to the calls behind each finding. Usage analytics report cost, tokens, latency and active time —
 > and say plainly which sessions the cost lane actually saw. The live view shows concurrent sessions
 > as lanes with a running cost meter, and can notify on refusals and high-severity rule hits, off by
-> default. See [docs/](docs/README.md).
+> default. And the record earns its name: `toolog verify` says what it is missing and when nothing
+> was watching, `toolog verify --chain` shows it has not been altered, secrets are stripped from
+> everything the views show, and `toolog purge` bounds the store without deleting anything you have
+> not seen listed first. See [docs/](docs/README.md).
 
 A local audit trail for Claude Code tool calls.
 

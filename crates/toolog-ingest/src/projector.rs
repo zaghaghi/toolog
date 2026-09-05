@@ -274,9 +274,17 @@ impl TranscriptProjector {
         }
 
         let facts = normalize::result(result, is_error);
-        let stored = toolog_core::redact::active()
+        let body = toolog_core::redact::active()
             .json(&normalize::elide_binary(result))
             .to_string();
+        // Past the threshold the projection keeps a reference instead of a
+        // second copy; the body is already in `raw_event` (task 7.5).
+        let size = body.len();
+        let stored = if size > normalize::RESULT_BODY_LIMIT {
+            normalize::by_reference(size)
+        } else {
+            body
+        };
 
         project::upsert_transcript(
             conn,
@@ -285,7 +293,9 @@ impl TranscriptProjector {
                 session_id: e.session_id.clone(),
                 agent_id: e.agent_id.clone(),
                 completed_at: ts,
-                result_size: Some(i64::try_from(stored.len()).unwrap_or(i64::MAX)),
+                // The size the body *was*, not the size of what is stored: a
+                // reference reporting its own length would report nothing.
+                result_size: Some(i64::try_from(size).unwrap_or(i64::MAX)),
                 result_json: Some(stored),
                 result_text: Some(facts.text),
                 success: facts.success,
