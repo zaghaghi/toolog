@@ -192,8 +192,13 @@ impl Tail {
     }
 }
 
+/// Whether a changed file is one we capture.
+///
+/// Exclusion is checked here as well as in discovery: the sweep goes through
+/// `discover::transcripts`, but an event names a path directly, and an excluded
+/// project's writes would otherwise be ingested the moment it was touched.
 fn is_transcript(path: &Path) -> bool {
-    path.extension().is_some_and(|e| e == "jsonl")
+    path.extension().is_some_and(|e| e == "jsonl") && !crate::discover::is_excluded(path)
 }
 
 fn watch_error(e: &notify::Error) -> toolog_core::Error {

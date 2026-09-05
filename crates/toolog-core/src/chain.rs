@@ -34,6 +34,8 @@
 //! substitute for walking, and walking is not a substitute for keeping the
 //! head.
 
+use std::collections::HashMap;
+
 use rusqlite::{Connection, OptionalExtension as _, params};
 use sha2::{Digest, Sha256};
 
@@ -167,13 +169,20 @@ pub fn seal(conn: &Connection) -> Result<Sealed> {
     })
 }
 
-/// Where the chain first stops being true.
+/// Where the chain stops being true.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Break {
     /// The `raw_event` row that does not check out.
     pub id: i64,
     /// Which of the two checks failed, in words.
     pub what: String,
+    /// The purge that accounts for it, if one does.
+    ///
+    /// Removing records breaks the chain, and it should — something changed.
+    /// A purge records what it removed and the chain value it removed it
+    /// after ([`crate::retention`]), so a break at the far side of that hole is
+    /// explained rather than alarming. `None` is the one worth looking at.
+    pub explained_by: Option<String>,
 }
 
 /// The result of walking the whole chain.
@@ -196,6 +205,26 @@ impl ChainReport {
     pub fn intact(&self) -> bool {
         self.breaks.is_empty()
     }
+
+    /// Whether every break is accounted for by a recorded purge.
+    ///
+    /// The question a script should ask, rather than [`ChainReport::intact`]:
+    /// a store with a retention policy breaks its own chain on purpose, and
+    /// treating that as tampering would make the check unusable on any store
+    /// that bounds itself.
+    #[must_use]
+    pub fn accounted_for(&self) -> bool {
+        self.breaks.iter().all(|b| b.explained_by.is_some())
+    }
+
+    /// The breaks nothing explains.
+    #[must_use]
+    pub fn unexplained(&self) -> Vec<&Break> {
+        self.breaks
+            .iter()
+            .filter(|b| b.explained_by.is_none())
+            .collect()
+    }
 }
 
 /// Walk the chain, recomputing both hashes for every sealed record.
@@ -214,6 +243,13 @@ pub fn verify(conn: &Connection) -> Result<ChainReport> {
         "SELECT id, lane, source_ref, source_offset, ingested_at, content_sha256, chain_sha256, body
          FROM raw_event WHERE chain_sha256 IS NOT NULL ORDER BY id",
     )?;
+
+    // What each recorded purge removed records *after*, so a break at the far
+    // side of one of those holes can be named rather than merely reported.
+    let holes: HashMap<String, String> = crate::retention::deletions(conn)?
+        .into_iter()
+        .filter_map(|d| d.chain_before.map(|c| (c, d.detail)))
+        .collect();
 
     let mut previous = GENESIS.to_string();
     let mut report = ChainReport {
@@ -238,6 +274,9 @@ pub fn verify(conn: &Connection) -> Result<ChainReport> {
             report.breaks.push(Break {
                 id,
                 what: "the body does not match its content hash".to_string(),
+                // A purge removes records; it never edits one. So this kind of
+                // break is never explained by a deletion.
+                explained_by: None,
             });
         }
 
@@ -253,6 +292,7 @@ pub fn verify(conn: &Connection) -> Result<ChainReport> {
             report.breaks.push(Break {
                 id,
                 what: "the chain value does not follow from the record before it".to_string(),
+                explained_by: holes.get(&previous).cloned(),
             });
         }
 

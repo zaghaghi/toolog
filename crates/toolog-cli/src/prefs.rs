@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 /// The switches, all of them off until someone says otherwise.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(default)]
 #[ts(export_to = "unused/")]
 pub struct Prefs {
@@ -32,12 +32,19 @@ pub struct Prefs {
     /// them at all and makes that irreversible. It is forward-only either way:
     /// turning it on does not reach back into records already stored.
     pub redact_evidence: bool,
+    /// Projects never to capture, by path (task 7.8).
+    ///
+    /// Enforced at discovery, so an excluded project's transcript is never
+    /// opened and nothing from it is ever stored — which is a different and
+    /// stronger thing than filtering it out of a view.
+    #[serde(default)]
+    pub excluded_projects: Vec<String>,
 }
 
 impl Prefs {
     /// Whether any notification needs watching for.
     #[must_use]
-    pub fn any(self) -> bool {
+    pub fn any(&self) -> bool {
         self.notify_refusals || self.notify_high_risk
     }
 
@@ -46,8 +53,9 @@ impl Prefs {
     /// Redaction of the evidence store is read on the write path, far from
     /// anything that knows what a preference is, so the preference has to be
     /// handed over rather than looked up.
-    pub fn apply(self) {
+    pub fn apply(&self) {
         toolog_core::redact::set_evidence_redaction(self.redact_evidence);
+        toolog_ingest::discover::set_excluded(self.excluded_projects.clone());
     }
 }
 
@@ -75,13 +83,13 @@ pub fn load() -> Prefs {
 }
 
 /// Write the preferences. The only file this process owns outside the store.
-pub fn save(prefs: Prefs) -> anyhow::Result<()> {
+pub fn save(prefs: &Prefs) -> anyhow::Result<()> {
     let path =
         path().ok_or_else(|| anyhow::anyhow!("no data directory to write preferences to"))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(&path, serde_json::to_string_pretty(&prefs)?)?;
+    std::fs::write(&path, serde_json::to_string_pretty(prefs)?)?;
     Ok(())
 }
 
@@ -95,6 +103,7 @@ mod tests {
         assert!(!prefs.notify_refusals);
         assert!(!prefs.notify_high_risk);
         assert!(!prefs.redact_evidence);
+        assert!(prefs.excluded_projects.is_empty());
         assert!(!prefs.any());
     }
 

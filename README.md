@@ -93,6 +93,7 @@ The window is TypeScript compiled by Vite and **embedded in the binary**, so it 
 | `toolog backfill` | Import `~/.claude/projects`. Safe to re-run |
 | `toolog verify` | Cross-check the two lanes: gaps, refusals, completeness |
 | `toolog verify --chain` | Walk the integrity chain over stored evidence, and print its head |
+| `toolog purge` | Show what retention would remove. `--apply` to remove it |
 | `toolog risk` | Evaluate the risk rules: what got approved, and how |
 | `toolog usage` | What was run, what it cost, and how much of that is known |
 | `toolog export` | JSON, JSONL, CSV or Markdown, with filters |

@@ -50,19 +50,19 @@ impl AppState {
 
     /// The notification switches as they stand.
     pub(crate) fn prefs(&self) -> Prefs {
-        self.prefs.read().map(|p| *p).unwrap_or_default()
+        self.prefs.read().map(|p| p.clone()).unwrap_or_default()
     }
 
     /// Write the switches to disk and to the live sink's copy together, so the
     /// two cannot disagree about what the user asked for.
     pub(crate) fn set_prefs(&self, next: Prefs) -> anyhow::Result<Prefs> {
-        toolog_cli::prefs::save(next)?;
+        toolog_cli::prefs::save(&next)?;
         next.apply();
         let mut guard = self
             .prefs
             .write()
             .map_err(|_| anyhow::anyhow!("the preferences lock is poisoned"))?;
-        *guard = next;
+        *guard = next.clone();
         Ok(next)
     }
 

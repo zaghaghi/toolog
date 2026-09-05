@@ -15,6 +15,7 @@ const state = {
     notify_refusals: false,
     notify_high_risk: false,
     redact_evidence: false,
+    excluded_projects: [],
   } as Prefs,
   saved: [] as Prefs[],
 };
@@ -93,7 +94,12 @@ async function mount(sessions: LiveSession[] = [session()]) {
 
 beforeEach(() => {
   state.sessions = [];
-  state.prefs = { notify_refusals: false, notify_high_risk: false, redact_evidence: false };
+  state.prefs = {
+    notify_refusals: false,
+    notify_high_risk: false,
+    redact_evidence: false,
+    excluded_projects: [],
+  };
   state.saved = [];
 });
 
@@ -226,7 +232,12 @@ describe("notifications", () => {
     await Promise.resolve();
 
     expect(state.saved).toEqual([
-      { notify_refusals: true, notify_high_risk: false, redact_evidence: false },
+      {
+        notify_refusals: true,
+        notify_high_risk: false,
+        redact_evidence: false,
+        excluded_projects: [],
+      },
     ]);
   });
 });

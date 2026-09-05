@@ -23,7 +23,7 @@ trusted, bounded and defended.
   evidence store is defensible but lossy and irreversible; leaving it intact is defensible but
   keeps secrets on disk. This is the user's call, surfaced explicitly in Preferences with the
   trade-off stated — not a silent default.
-- [ ] **7.4** Retention policy: age cap and size cap, with a **purge preview showing exactly what
+- [x] **7.4** Retention policy: age cap and size cap, with a **purge preview showing exactly what
   would be deleted** before anything is. `VACUUM` after purge.
 - [ ] **7.5** Oversized result bodies stored by reference beyond a threshold, using the Phase 1.9
   measurements to set it.
@@ -34,7 +34,7 @@ trusted, bounded and defended.
 - [x] **7.7** **CI egress test** (ADR-0008): assert **no non-loopback socket is opened** during a
   full ingest plus UI-query run. The privacy guarantee must be a build failure when broken, not a
   convention.
-- [ ] **7.8** Pause/resume capture from the tray; per-project exclusion list; delete-a-session
+- [x] **7.8** Pause/resume capture from the tray; per-project exclusion list; delete-a-session
   removing raw and projected rows together (and breaking the hash chain visibly rather than
   silently re-chaining).
 - [ ] **7.9** Evaluate **SQLCipher** for encryption at rest; decide and record as an ADR addendum.
@@ -45,9 +45,10 @@ trusted, bounded and defended.
 
 ## Progress
 
-**Done: 7.1, 7.2, 7.3, 7.6, 7.7.** The record can now say what it is missing, show that it has not
-been altered, keep secrets out of what it shows, and fail the build if anything tries to leave the
-machine. Retention, oversized bodies, session deletion and the SQLCipher decision are next.
+**Done: 7.1, 7.2, 7.3, 7.4, 7.6, 7.7, 7.8.** The record can now say what it is missing, show that it
+has not been altered, keep secrets out of what it shows, bound itself, and fail the build if
+anything tries to leave the machine. Oversized bodies (7.5), the SQLCipher decision (7.9) and
+finishing PRIVACY.md (7.10) remain.
 
 ### Completeness and integrity are different claims
 
@@ -125,6 +126,39 @@ STS access key in `aws sts` output — both exactly what this is for.
 A detail that says something about doing this on your own machine: several remaining "hits" turned
 out to be the measurement's *own previous output*, stored in the timeline because running it is a
 tool call like any other. The corpus contains the tool's development.
+
+### Retention, deletion, and exclusion (7.4, 7.8)
+
+**Nothing is deleted without a preview.** `toolog purge` shows exactly which sessions would go —
+named, with their project, size and last activity — and removes nothing without `--apply`. "I ran
+the retention command to see what it would do" must not be how an audit trail loses a year.
+
+**A session is the unit**, because it is the only thing evidence and projection share. A `tool_call`
+does not record which `raw_event` produced it; what they have in common is
+`session.transcript_path`, which names the file the records came from. Removing whole sessions is
+the only way to avoid the two bad states: evidence whose projection is gone, which a re-projection
+would silently bring back, and projections whose evidence is gone, which can never be rebuilt.
+
+**A purge breaks the integrity chain, and that is correct.** What it must not do is leave the break
+unexplained, so every purge writes a `deletion` row first — what went, why, and the chain value of
+the last surviving record before the hole. `toolog verify --chain` matches breaks against those
+records and reports each as accounted for or not, and exits non-zero only for the second kind. A
+check that called a retention policy "tampering" would be switched off within a week. The accounting
+cannot launder an edit: a purge explains a *missing* record, never a changed one, and there is a
+test for exactly that.
+
+Tried on a copy of the owner's store: `--older-than 60` removed 4 of 40 sessions, 191 calls and 797
+records, reclaimed 6.2 MiB, and left one chain break which `verify --chain` names as *sessions last
+active before 2026-07-07 13:51 UTC*.
+
+**Exclusion is enforced at discovery** (7.8). An excluded project's transcript is never opened, so
+nothing from it is ever stored and there is no evidence to purge later — a stronger claim than
+filtering it out of a view. It matches Claude Code's own directory encoding rather than a decoded
+path, because decoding is lossy in exactly the way that matters here: `claude-code-tools-log` and
+`claude/code/tools/log` encode identically, and excluding by decoded path would exclude the wrong
+project. Both are asserted.
+
+Pause and resume from the tray were already built in Phase 4.
 
 ### Zero egress is now a build failure (7.7)
 

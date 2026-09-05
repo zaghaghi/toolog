@@ -245,6 +245,7 @@ pub fn render_chain(report: &toolog_core::chain::ChainReport) -> String {
         );
     }
 
+    let unexplained = report.unexplained().len();
     if report.checked == 0 {
         // "Intact" over nothing is true and misleading.
         let _ = writeln!(
@@ -254,16 +255,41 @@ pub fn render_chain(report: &toolog_core::chain::ChainReport) -> String {
         );
     } else if report.intact() {
         let _ = writeln!(out, "  intact          {:>8}", "yes");
+    } else if unexplained == 0 {
+        // A store that bounds itself breaks its own chain on purpose. Calling
+        // that tampering would have this check switched off within a week.
+        let _ = writeln!(
+            out,
+            "  intact          {:>8}   {}, {} this store recorded",
+            "accounted for",
+            plural(
+                i64::try_from(report.breaks.len()).unwrap_or(i64::MAX),
+                "break"
+            ),
+            if report.breaks.len() == 1 {
+                "a hole"
+            } else {
+                "all of them holes"
+            },
+        );
     } else {
         let _ = writeln!(out, "  intact          {:>8}", "NO");
-        // Every break, not a summary: one is an edited row, thousands is a
-        // chain rewritten from some point onward, and the difference matters.
-        for b in report.breaks.iter().take(20) {
-            let _ = writeln!(out, "    raw_event {:<10} {}", b.id, b.what);
+    }
+
+    // Every break, not a summary: one is an edited row, a hundred is a chain
+    // rewritten from some point onward, and the difference matters.
+    for b in report.breaks.iter().take(20) {
+        match &b.explained_by {
+            Some(why) => {
+                let _ = writeln!(out, "    raw_event {:<10} {} — {why}", b.id, b.what);
+            }
+            None => {
+                let _ = writeln!(out, "    raw_event {:<10} {}  ← unexplained", b.id, b.what);
+            }
         }
-        if report.breaks.len() > 20 {
-            let _ = writeln!(out, "    … and {} more", report.breaks.len() - 20);
-        }
+    }
+    if report.breaks.len() > 20 {
+        let _ = writeln!(out, "    … and {} more", report.breaks.len() - 20);
     }
 
     let _ = writeln!(out, "\n  head  {}", report.head);
@@ -273,6 +299,33 @@ pub fn render_chain(report: &toolog_core::chain::ChainReport) -> String {
          a note, a commit, a message to yourself — and a later run that reports a different\n\
          head for the same records is the only way to catch a chain that was rewritten\n\
          wholesale. Walking detects everything short of that."
+    );
+
+    let purges = deletions_line(report);
+    if !purges.is_empty() {
+        let _ = write!(out, "{purges}");
+    }
+    out
+}
+
+/// The purges a chain report's breaks were matched against.
+fn deletions_line(report: &toolog_core::chain::ChainReport) -> String {
+    use std::fmt::Write as _;
+    let explained = report
+        .breaks
+        .iter()
+        .filter(|b| b.explained_by.is_some())
+        .count();
+    if explained == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "\n{} above {} a hole left by `toolog purge`, matched to the record that purge\n\
+         wrote. A hole nothing accounts for is the one to look at.",
+        plural(i64::try_from(explained).unwrap_or(i64::MAX), "break"),
+        if explained == 1 { "is" } else { "are" },
     );
     out
 }
@@ -746,6 +799,93 @@ fn render_breakdowns(a: &analytics::Analytics) -> String {
     out
 }
 
+// ---------------------------------------------------------------------------
+// Retention (tasks 7.4 and 7.8)
+// ---------------------------------------------------------------------------
+
+/// A size in the units a person reads.
+#[must_use]
+pub fn bytes(n: i64) -> String {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a size for display; a store this large would be terabytes"
+    )]
+    let value = n as f64;
+    if n < 1024 {
+        return format!("{n} B");
+    }
+    if n < 1024 * 1024 {
+        return format!("{:.1} KiB", value / 1024.0);
+    }
+    if n < 1024 * 1024 * 1024 {
+        return format!("{:.1} MiB", value / (1024.0 * 1024.0));
+    }
+    format!("{:.2} GiB", value / (1024.0 * 1024.0 * 1024.0))
+}
+
+/// Show exactly what a purge would remove, before it removes it.
+///
+/// The whole point of task 7.4: not a count, but the sessions themselves, so
+/// the answer to "is this the right thing to delete?" is on the screen rather
+/// than inferred from a number.
+#[must_use]
+pub fn render_purge(plan: &toolog_core::retention::Preview, applying: bool) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+
+    if plan.is_empty() {
+        let _ = writeln!(out, "Nothing to remove: {}.", plan.description);
+        return out;
+    }
+
+    let _ = writeln!(
+        out,
+        "{} would remove {} of {} sessions, {} of {} tool calls, and {} stored records ({}).",
+        if applying {
+            "This"
+        } else {
+            "This is a preview. It"
+        },
+        plan.sessions.len(),
+        plan.total_sessions,
+        plan.tool_calls,
+        plan.total_tool_calls,
+        plan.raw_events,
+        bytes(plan.bytes),
+    );
+    if plan.otlp_records > 0 {
+        let _ = writeln!(
+            out,
+            "  {} of those are OTLP records, which belong to no transcript and go by the cutoff.",
+            plan.otlp_records
+        );
+    }
+
+    let _ = writeln!(out, "\nSessions, oldest first");
+    for session in &plan.sessions {
+        let _ = writeln!(
+            out,
+            "  {:<38} {:>6} calls  {:>10}  {}  {}",
+            session.session_id,
+            session.tool_calls,
+            bytes(session.bytes),
+            stamp(session.last_seen),
+            session
+                .project_path
+                .as_deref()
+                .unwrap_or("(unknown project)"),
+        );
+    }
+
+    if !applying {
+        let _ = writeln!(
+            out,
+            "\nNothing has been deleted. Run the same command with --apply to remove it."
+        );
+    }
+    out
+}
+
 /// A default file name for an export: `toolog-2026-09-05`.
 ///
 /// Dated rather than timestamped: an evidence bundle is usually re-exported a
@@ -1054,5 +1194,56 @@ mod tests {
             all.since.is_none() && all.until.is_none(),
             "the whole store has no bounds, so it has nothing to compare with"
         );
+    }
+
+    /// Task 7.4's whole point: the preview names what would go, and nothing
+    /// about running it removes anything.
+    #[test]
+    fn a_purge_preview_names_the_sessions_and_says_nothing_was_deleted() {
+        use toolog_core::model::Session;
+        use toolog_core::retention::{self, Scope};
+
+        let db = Db::open_in_memory().expect("db");
+        project::upsert_session(
+            db.conn(),
+            &Session {
+                session_id: "s1".into(),
+                project_path: Some("/work/app".into()),
+                transcript_path: Some("/t/s1.jsonl".into()),
+                last_seen: Some(1_000),
+                ..Session::default()
+            },
+        )
+        .expect("session");
+
+        let plan =
+            retention::preview(db.conn(), &Scope::Before { cutoff_ms: 2_000 }).expect("preview");
+        let text = render_purge(&plan, false);
+
+        assert!(text.contains("s1"), "{text}");
+        assert!(text.contains("/work/app"), "{text}");
+        assert!(text.contains("This is a preview"), "{text}");
+        assert!(text.contains("--apply"), "{text}");
+        assert!(!text.contains("would remove 0 of"), "{text}");
+    }
+
+    #[test]
+    fn a_purge_that_would_remove_nothing_says_so_rather_than_printing_a_table() {
+        use toolog_core::retention::{self, Scope};
+
+        let db = Db::open_in_memory().expect("db");
+        let plan = retention::preview(db.conn(), &Scope::Before { cutoff_ms: 1 }).expect("preview");
+        let text = render_purge(&plan, false);
+
+        assert!(text.starts_with("Nothing to remove"), "{text}");
+        assert!(!text.contains("--apply"), "an offer to apply nothing");
+    }
+
+    #[test]
+    fn sizes_are_reported_in_units_a_person_reads() {
+        assert_eq!(bytes(512), "512 B");
+        assert_eq!(bytes(2048), "2.0 KiB");
+        assert_eq!(bytes(3 * 1024 * 1024), "3.0 MiB");
+        assert_eq!(bytes(5 * 1024 * 1024 * 1024), "5.00 GiB");
     }
 }

@@ -110,9 +110,9 @@ fn start_capture(
         if let Err(e) = emitter.emit("live_tool_call", call) {
             tracing::debug!(error = %e, "live event not delivered");
         }
-        let switches = prefs.read().map(|p| *p).unwrap_or_default();
+        let switches = prefs.read().map(|p| p.clone()).unwrap_or_default();
         if switches.any() {
-            notify_about(&notifier, &watch_db, call, switches);
+            notify_about(&notifier, &watch_db, call, &switches);
         }
     });
 
@@ -124,7 +124,7 @@ fn start_capture(
 ///
 /// Runs on the live thread, so it does the cheap test first: a refusal is a
 /// column, and only a call that is not already a refusal is put to the rules.
-fn notify_about(handle: &AppHandle, db_path: &std::path::Path, call: &ToolCall, prefs: Prefs) {
+fn notify_about(handle: &AppHandle, db_path: &std::path::Path, call: &ToolCall, prefs: &Prefs) {
     use tauri_plugin_notification::NotificationExt as _;
 
     // The rules are only consulted when that switch is on *and* the cheaper
@@ -158,7 +158,7 @@ fn notify_about(handle: &AppHandle, db_path: &std::path::Path, call: &ToolCall, 
 /// the answer.
 fn notification_for(
     call: &ToolCall,
-    prefs: Prefs,
+    prefs: &Prefs,
     rule: impl FnOnce() -> Option<String>,
 ) -> Option<(String, String)> {
     if !prefs.any() {
@@ -288,8 +288,8 @@ mod tests {
     #[test]
     fn nothing_is_notified_until_a_switch_is_on() {
         let prefs = Prefs::default();
-        assert!(notification_for(&call(), prefs, || Some("a rule".into())).is_none());
-        assert!(notification_for(&refused(), prefs, || None).is_none());
+        assert!(notification_for(&call(), &prefs, || Some("a rule".into())).is_none());
+        assert!(notification_for(&refused(), &prefs, || None).is_none());
     }
 
     #[test]
@@ -298,11 +298,11 @@ mod tests {
             notify_refusals: true,
             ..Prefs::default()
         };
-        let (title, body) = notification_for(&refused(), refusals, || None).expect("a refusal");
+        let (title, body) = notification_for(&refused(), &refusals, || None).expect("a refusal");
         assert_eq!(title, "Bash was refused");
         assert_eq!(body, "cat .env", "the command's first line, not its body");
         assert!(
-            notification_for(&call(), refusals, || Some("a rule".into())).is_none(),
+            notification_for(&call(), &refusals, || Some("a rule".into())).is_none(),
             "a rule hit is not this switch's business"
         );
 
@@ -311,11 +311,11 @@ mod tests {
             ..Prefs::default()
         };
         let (title, body) =
-            notification_for(&call(), risk, || Some("Credentials read".into())).expect("a hit");
+            notification_for(&call(), &risk, || Some("Credentials read".into())).expect("a hit");
         assert_eq!(title, "Credentials read");
         assert_eq!(body, "Bash: cat .env");
         assert!(
-            notification_for(&call(), risk, || None).is_none(),
+            notification_for(&call(), &risk, || None).is_none(),
             "a call that trips nothing says nothing"
         );
     }
@@ -328,7 +328,7 @@ mod tests {
             ..Prefs::default()
         };
         let (title, _) =
-            notification_for(&refused(), both, || Some("Credentials read".into())).expect("one");
+            notification_for(&refused(), &both, || Some("Credentials read".into())).expect("one");
         assert_eq!(title, "Bash was refused");
     }
 

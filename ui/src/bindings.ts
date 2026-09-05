@@ -358,7 +358,15 @@ notify_high_risk: boolean,
  * them at all and makes that irreversible. It is forward-only either way:
  * turning it on does not reach back into records already stored.
  */
-redact_evidence: boolean, };
+redact_evidence: boolean, 
+/**
+ * Projects never to capture, by path (task 7.8).
+ *
+ * Enforced at discovery, so an excluded project's transcript is never
+ * opened and nothing from it is ever stored — which is a different and
+ * stronger thing than filtering it out of a view.
+ */
+excluded_projects: Array<string>, };
 
 export type CounterSnapshot = { batches: number, records: number, dropped: number, rejected_bodies: number, paused_drops: number, };
 

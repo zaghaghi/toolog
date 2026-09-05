@@ -58,6 +58,7 @@ pub mod project;
 pub mod query;
 pub mod raw;
 pub mod redact;
+pub mod retention;
 pub mod rules;
 pub mod verify;
 pub mod writer;

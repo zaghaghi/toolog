@@ -23,8 +23,10 @@ directories.workspace = true
 sha2.workspace = true
 hex.workspace = true
 tracing.workspace = true
+# A deletion record is read back years later by whoever is asking why the chain
+# has a hole, so the cutoff it names is a date rather than a count of
+# milliseconds (Phase 7.4).
+jiff.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-# Only for the storage measurement example (Phase 1.9).
-jiff.workspace = true

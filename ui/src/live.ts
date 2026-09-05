@@ -70,6 +70,7 @@ export class LiveView {
     notify_refusals: false,
     notify_high_risk: false,
     redact_evidence: false,
+    excluded_projects: [],
   };
   private stuck = true;
   private timer = 0;
@@ -316,7 +317,13 @@ export class LiveView {
     ]);
   }
 
-  private toggle(key: keyof Prefs, label: string, why: string): HTMLElement {
+  /** The switches this view owns. Narrowed so a non-boolean field cannot be
+   * passed to a checkbox. */
+  private toggle(
+    key: "notify_refusals" | "notify_high_risk",
+    label: string,
+    why: string,
+  ): HTMLElement {
     const box = el("input", { type: "checkbox", attrs: { id: `pref-${key}` } });
     box.checked = this.prefs[key];
     box.addEventListener("change", () => {

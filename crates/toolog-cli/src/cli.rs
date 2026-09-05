@@ -65,6 +65,27 @@ pub enum Command {
     Export(ExportArgs),
     /// Evaluate the risk rules: what got approved, and how.
     Risk,
+    /// Remove history. Shows what would go; needs `--apply` to do it.
+    Purge {
+        /// Sessions last active more than this many days ago.
+        #[arg(long, value_name = "N", group = "what")]
+        older_than: Option<u32>,
+        /// Keep the store under this many megabytes, oldest sessions first.
+        #[arg(long, value_name = "MB", group = "what")]
+        max_size: Option<u64>,
+        /// One session, by id.
+        #[arg(long, value_name = "ID", group = "what")]
+        session: Option<String>,
+        /// Every session of one project, by path.
+        #[arg(long, value_name = "PATH", group = "what")]
+        project: Option<String>,
+        /// Actually remove it. Without this, nothing is deleted.
+        #[arg(long)]
+        apply: bool,
+        /// Reclaim the freed space afterwards. Rewrites the whole file.
+        #[arg(long)]
+        vacuum: bool,
+    },
     /// Report usage: what was run, what it cost, and how much of that is known.
     Usage {
         /// How many days back. Omit for the whole store.
@@ -135,6 +156,24 @@ pub fn run(cli: &Cli) -> anyhow::Result<i32> {
         Command::Export(args) => run_export(cli, args),
         Command::Risk => run_risk(cli),
         Command::Usage { days, project } => run_usage(cli, *days, project.clone()),
+        Command::Purge {
+            older_than,
+            max_size,
+            session,
+            project,
+            apply,
+            vacuum,
+        } => run_purge(
+            cli,
+            &PurgeArgs {
+                older_than: *older_than,
+                max_size: *max_size,
+                session: session.clone(),
+                project: project.clone(),
+                apply: *apply,
+                vacuum: *vacuum,
+            },
+        ),
         Command::Agent { action } => run_agent(action),
     }
 }
@@ -144,6 +183,66 @@ fn run_usage(cli: &Cli, days: Option<u32>, project: Option<String>) -> anyhow::R
     let window = commands::usage_window(days, project);
     let report = commands::usage(&db, &window)?;
     print!("{}", commands::render_usage(&report));
+    Ok(0)
+}
+
+/// What `toolog purge` was asked to do.
+struct PurgeArgs {
+    older_than: Option<u32>,
+    max_size: Option<u64>,
+    session: Option<String>,
+    project: Option<String>,
+    apply: bool,
+    vacuum: bool,
+}
+
+fn run_purge(cli: &Cli, args: &PurgeArgs) -> anyhow::Result<i32> {
+    use toolog_core::retention::{self, Scope};
+
+    let scope = match (args.older_than, args.max_size, &args.session, &args.project) {
+        (Some(days), ..) => Scope::Before {
+            cutoff_ms: toolog_core::raw::now_ms() - i64::from(days) * 86_400_000,
+        },
+        (_, Some(mb), ..) => Scope::ToFit {
+            max_bytes: i64::try_from(mb)
+                .unwrap_or(i64::MAX)
+                .saturating_mul(1_048_576),
+        },
+        (_, _, Some(id), _) => Scope::Session {
+            session_id: id.clone(),
+        },
+        (_, _, _, Some(path)) => Scope::Project {
+            project_path: path.clone(),
+        },
+        _ => {
+            anyhow::bail!("nothing to purge: pass --older-than, --max-size, --session or --project")
+        }
+    };
+
+    let db = toolog_core::Db::open(db_path(cli)?)?;
+    let plan = retention::preview(db.conn(), &scope)?;
+    print!("{}", commands::render_purge(&plan, args.apply));
+
+    if !args.apply || plan.is_empty() {
+        return Ok(0);
+    }
+
+    let done = retention::purge(db.conn(), &scope)?;
+    println!(
+        "\nRemoved {} sessions, {} calls and {} stored records.",
+        done.sessions, done.tool_calls, done.raw_events
+    );
+    println!(
+        "The integrity chain over the remaining records now has a hole where these were.\n\
+         It is recorded, and `toolog verify --chain` reports it as accounted for."
+    );
+
+    if args.vacuum {
+        let freed = retention::vacuum(db.conn())?;
+        println!("Reclaimed {}.", commands::bytes(freed));
+    } else {
+        println!("Run again with --vacuum to reclaim the space on disk.");
+    }
     Ok(0)
 }
 
@@ -245,8 +344,10 @@ fn run_verify(cli: &Cli, chain: bool) -> anyhow::Result<i32> {
     }
     let report = commands::verify_chain(&db)?;
     print!("{}", commands::render_chain(&report));
-    // A broken chain is a failing exit code: this is the check a script runs.
-    Ok(i32::from(!report.intact()))
+    // A failing exit code for a break nothing accounts for. A store with a
+    // retention policy breaks its own chain on purpose, and a check that
+    // called that tampering would be turned off within a week.
+    Ok(i32::from(!report.accounted_for()))
 }
 
 fn run_risk(cli: &Cli) -> anyhow::Result<i32> {
