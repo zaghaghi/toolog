@@ -81,7 +81,7 @@ It reads, reports and writes nothing.
 
 ## What leaves your machine
 
-Nothing — with one exception, named here rather than buried.
+Nothing. Not conditionally, not by default, not unless you turn something on.
 
 - The OTLP receiver binds `127.0.0.1` only. It is not reachable from your network.
 - There is no analytics, no crash reporting, no remote configuration, no account, no
@@ -100,9 +100,17 @@ Nothing — with one exception, named here rather than buried.
 writes the file you choose and nothing else. What it contains is the same sensitive data the store
 holds — commands, paths, results — so where you put it is the decision that matters.
 
-**The exception:** an update check against GitHub Releases. It is **off by default**,
-**opt-in at first run**, and **sends no user data** — it fetches a version manifest.
-*(Phase 8, task 8.5.)*
+**There is no exception.** An earlier draft of this file reserved one — an opt-in update
+check against GitHub Releases, which ADR-0008 had permitted. Phase 8 evaluated it and
+declined: `tauri-plugin-updater` would compile an HTTP client and a TLS stack into every
+binary whether the switch was on or off, turning a compile-time guarantee into a runtime
+flag, and a Homebrew cask whose app updates itself has to opt out of `brew upgrade`
+managing it at all.
+
+So **the shipped application makes no network call of any kind.** `brew upgrade --cask
+toolog` is the update path, and `tauri-plugin-updater` is named in the same test that
+rejects `reqwest`, so restoring the exception means arguing with a failing build. See the
+addendum to [ADR-0008](docs/adr/0008-local-only-zero-egress.md).
 
 ## Your controls
 
@@ -116,6 +124,8 @@ holds — commands, paths, results — so where you put it is the decision that 
 | Notifications on refusals and high-severity rule hits | The Live tab. Off by default |
 | Add or retune redaction patterns | `redaction.toml`, beside the database |
 | Add or retune risk rules | `rules.toml`, beside the database |
+| Remove toolog and put `settings.json` back | `toolog uninstall`, or Status → Remove toolog |
+| Delete everything it recorded | `toolog uninstall --delete-data`, or `brew uninstall --zap` |
 
 **`toolog purge` deletes nothing without `--apply`.** It first prints the sessions it would
 remove — named, with their project, size and last activity — because "I ran it to see what it

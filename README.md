@@ -1,6 +1,6 @@
 # Toolog
 
-> **Status: v0.1 — Phases 0–7 done.** All four views are built. The timeline is a virtualized list
+> **Status: v1.0 — all nine phases done.** All four views are built. The timeline is a virtualized list
 > over every tool call with full-text search, filters that live in the URL, diffs for every `Edit`,
 > and export to JSON, CSV or Markdown. The risk review runs rules written as data and drills through
 > to the calls behind each finding. Usage analytics report cost, tokens, latency and active time —
@@ -9,7 +9,9 @@
 > default. And the record earns its name: `toolog verify` says what it is missing and when nothing
 > was watching, `toolog verify --chain` shows it has not been altered, secrets are stripped from
 > everything the views show, and `toolog purge` bounds the store without deleting anything you have
-> not seen listed first. See [docs/](docs/README.md).
+> not seen listed first. It ships as one signed, notarized universal artifact, and removes itself
+> as carefully as it installs: `toolog uninstall` puts `~/.claude/settings.json` back byte for
+> byte and keeps your history unless you say otherwise. See [docs/](docs/README.md).
 
 A local audit trail for Claude Code tool calls.
 
@@ -31,9 +33,11 @@ which sockets the process holds** — any address that is not loopback fails the
 proves that check can fail, by opening a socket pointed off the machine and asserting the census
 sees it. The guarantee is a build failure when broken, not a promise in a readme.
 
-The one exception, named plainly: an **opt-in, off-by-default** update check against GitHub
-Releases, which sends no user data. See [ADR-0008](docs/adr/0008-local-only-zero-egress.md) and
-[PRIVACY.md](PRIVACY.md).
+**There is no exception.** ADR-0008 had reserved one — an opt-in update check — and Phase 8
+declined to take it: an updater compiles an HTTP client into the binary whether its switch is on
+or off, which would demote a compile-time guarantee to a runtime flag. `brew upgrade --cask
+toolog` is the update path instead, and the updater plugin is named in the same test that rejects
+`reqwest`. See [ADR-0008](docs/adr/0008-local-only-zero-egress.md) and [PRIVACY.md](PRIVACY.md).
 
 ## How it works
 
@@ -71,21 +75,55 @@ See [ADR-0002](docs/adr/0002-dual-ingestion-transcripts-and-otel.md) for the ful
 
 ## Install
 
-No packaged build yet — see [Phase 8](docs/phases/08-packaging-distribution.md). From a checkout:
+```
+brew install --cask zaghaghi/tap/toolog
+```
+
+Or download the `.dmg` from [Releases](https://github.com/zaghaghi/toolog/releases). It is a
+universal build signed with a Developer ID and notarized by Apple, so it opens without a
+Gatekeeper warning. Verify what you got:
 
 ```
-npm --prefix ui ci           # the window's dependencies, once
-just release                 # bundles the window, then builds one binary: the app and the CLI
-toolog doctor                # what is configured, what is running, what is missing
+shasum -a 256 -c SHA256SUMS
+spctl --assess --type execute --verbose=2 /Applications/toolog.app
+```
+
+Then, from a terminal — the same binary is both the app and the CLI:
+
+```
 toolog doctor --fix          # configures Claude Code telemetry, merged, with a backup
 toolog backfill              # imports your existing history
 toolog                       # starts the menu-bar app and the receiver
 ```
 
-The window is TypeScript compiled by Vite and **embedded in the binary**, so it is built first;
-`just build`, `just release` and `just run` all do that for you.
+Measured on the author's machine: a 50-file, 66 MB transcript corpus mounts, copies, configures,
+imports and answers its first query in about **17 seconds** of machine time — 14 s of that is
+`hdiutil` verifying the disk image. The import itself is 2.0 s for 3,729 tool calls across 41
+sessions.
 
-`brew install --cask toolog` is the Phase 8 target.
+### Uninstall
+
+```
+toolog uninstall             # show what would change
+toolog uninstall --apply     # do it
+```
+
+It removes the login agent and puts `~/.claude/settings.json` **back byte for byte** from the
+backup taken before toolog first wrote to it — or, if you have edited that file since, removes
+only toolog's own six keys and says why it did not restore. Your recorded history is kept unless
+you add `--delete-data`. `brew uninstall --cask toolog` runs the same thing; add `--zap` to
+delete the history too. There is also a "Remove toolog" section on the Status page.
+
+### From a checkout
+
+```
+npm --prefix ui ci           # the window's dependencies, once
+just release                 # bundles the window, then builds one binary: the app and the CLI
+just bundle                  # the distributable universal .app and .dmg
+```
+
+The window is TypeScript compiled by Vite and **embedded in the binary**, so it is built first;
+`just build`, `just release`, `just run` and `just bundle` all do that for you.
 
 ## Commands
 
@@ -101,11 +139,38 @@ The window is TypeScript compiled by Vite and **embedded in the binary**, so it 
 | `toolog usage` | What was run, what it cost, and how much of that is known |
 | `toolog export` | JSON, JSONL, CSV or Markdown, with filters |
 | `toolog agent install` | A login agent so capture survives a restart |
+| `toolog uninstall` | Undo the install. Restores `settings.json`; keeps your history |
 
 `doctor --fix` writes only to `~/.claude/settings.json`, merges rather than overwrites, keeps a
 timestamped backup, and refuses outright if a non-loopback OTEL endpoint is already configured —
 your existing telemetry pipeline is not ours to redirect. See
 [ADR-0006](docs/adr/0006-configure-via-settings-env-block.md).
+
+## Limitations, stated rather than discovered
+
+- **macOS only.** Linux `.AppImage`/`.deb` was a Phase 8 stretch goal and was cut, not
+  attempted. Nothing in the code assumes macOS except the LaunchAgent, so the port is open —
+  it would need a systemd user unit for both the install and the uninstall path.
+- **Cost, tokens and latency exist only for sessions captured live.** They arrive on the OTEL
+  lane, which is not replayable: a session that ran while toolog was not listening has its
+  commands and results, from the transcript, and no decision or cost layer ever. `toolog
+  verify` reports exactly which sessions those are and over what windows, rather than
+  averaging across a gap as if it were not there.
+- **Quitting from the menu bar stops capture**, and it is meant to — the LaunchAgent restarts a
+  crash but respects a deliberate exit. Anything Claude Code runs while toolog is quit is
+  recoverable from transcripts by a later `toolog backfill`, minus the decision layer above.
+- **No update notification.** `brew upgrade --cask toolog` covers Homebrew installs; if you
+  downloaded the `.dmg` directly, nothing will tell you a new version exists. That is the
+  cost of shipping an application that makes no network calls, and it was chosen with the
+  cost known — see the addendum to [ADR-0008](docs/adr/0008-local-only-zero-egress.md).
+- **A project directory name cannot always be decoded back to a path.** Claude Code encodes
+  `/` as `-`, so `/a/b/my-app` and `/a/b/my/app` name the same directory. Project attribution
+  therefore comes from `cwd` in the records; only per-project *exclusion* matches on the
+  encoded name, where it is exact.
+- **Anyone who can read your disk can read the database.** It is a plain SQLite file, on
+  purpose — that is what lets you check the claims in `PRIVACY.md` without trusting this
+  program. Encryption at rest was evaluated in Phase 7 and declined in favour of FileVault,
+  with the reasoning in ADR-0008.
 
 ## Documentation
 

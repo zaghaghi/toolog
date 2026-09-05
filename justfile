@@ -169,6 +169,23 @@ checksums:
     echo
     echo "wrote $(pwd)/SHA256SUMS"
 
+# Regenerate the Homebrew cask from the built .dmg (task 8.3).
+cask:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The version and the checksum are read off the artifact rather than typed,
+    # because a cask that names the wrong sha256 fails at install time on
+    # someone else's machine and nowhere earlier.
+    dmg=$(ls target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -1)
+    version=$(basename "$dmg" | sed -E 's/^toolog_(.+)_universal\.dmg$/\1/')
+    sha=$(shasum -a 256 "$dmg" | awk '{print $1}')
+    file=packaging/homebrew/toolog.rb
+    /usr/bin/sed -i '' -E "s/^  version \".*\"$/  version \"$version\"/" "$file"
+    /usr/bin/sed -i '' -E "s/^  sha256 \".*\"$/  sha256 \"$sha\"/" "$file"
+    grep -E '^  (version|sha256) ' "$file"
+    echo
+    echo "To publish: copy $file to Casks/toolog.rb in zaghaghi/homebrew-tap."
+
 # Remove build artifacts.
 clean:
     cargo clean

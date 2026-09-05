@@ -1,9 +1,11 @@
 # Documentation
 
-**Status: Phases 0–7 complete — this is v0.1.** Capture works end to end, all four views are built,
-and the record now earns the word "audit": it says what it is missing, proves it has not been
+**Status: all nine phases complete — this is v1.0.** Capture works end to end, all four views are
+built, and the record earns the word "audit": it says what it is missing, proves it has not been
 altered, keeps secrets out of what it shows, bounds itself, and fails the build if anything tries
-to leave the machine. Phase 8, packaging, remains.
+to leave the machine. It now also installs and uninstalls as one signed, notarized universal
+artifact — and ships with **no network call at all**, the update check ADR-0008 had reserved
+having been evaluated in Phase 8 and declined.
 
 ## Phases
 
@@ -20,7 +22,7 @@ Nine phases. Each ends in something runnable and checkable. **Phase 5 was the fi
 | [05 — Timeline view](phases/05-timeline-view.md) | The forensic view | **v0.1** — done |
 | [06 — Risk, analytics & live](phases/06-risk-analytics-live.md) | The other three surfaces | done |
 | [07 — Privacy, retention, integrity](phases/07-privacy-retention-integrity.md) | Earn the word "audit" | done |
-| [08 — Packaging & distribution](phases/08-packaging-distribution.md) | Dead simple install | **v1.0** |
+| [08 — Packaging & distribution](phases/08-packaging-distribution.md) | Dead simple install | **v1.0** — done |
 
 ## Decisions
 
@@ -46,6 +48,8 @@ version moves substantially.
 | The window's CSP (`style-src 'self'`) silently discards `style` **attributes**; CSSOM assignment is honoured | Chart geometry goes through `element.style` → [Phase 6](phases/06-risk-analytics-live.md) |
 | 48 of 3,506 stored results — 1.4% — hold 11 MB of the projection's 18 MB of result bodies | Bodies over 64 KiB are kept by reference → [Phase 7](phases/07-privacy-retention-integrity.md) |
 | `session.transcript_path` is the only link between a projection row and its evidence | Retention removes whole sessions, both halves together → [Phase 7](phases/07-privacy-retention-integrity.md) |
+| `plutil -lint` accepts an entitlements file that `codesign` rejects: XML forbids `--` inside a comment, and AMFI then signs the app **without** the entitlements rather than stopping | The plists are asserted by a test, not by a linter → [Phase 8](phases/08-packaging-distribution.md) |
+| Tauri notarizes and staples the `.app` but only *signs* the `.dmg` around it | The `.dmg` is notarized in its own right, or the first double-click is a Gatekeeper warning → [Phase 8](phases/08-packaging-distribution.md) |
 
 ## Backfill numbers to check against
 

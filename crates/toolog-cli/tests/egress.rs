@@ -111,6 +111,14 @@ fn a_full_ingest_and_query_run_opens_no_non_loopback_socket() {
 /// Not an exhaustive list of every HTTP client ever published — it is the set
 /// anyone would actually reach for, and adding one to this workspace is exactly
 /// the change that should have to argue with a failing test first.
+///
+/// `tauri-plugin-updater` is here because of what Phase 8 decided. ADR-0008
+/// had reserved an update check as the one permitted exception; the phase
+/// declined to take it, so there is now **no** exception, and this list says
+/// so in the only place that can enforce it. The plugin would compile
+/// `reqwest` and a TLS stack into every binary whether the switch were on or
+/// off, which turns a structural guarantee into a runtime one — see the
+/// addendum to ADR-0008.
 const OUTBOUND_CLIENTS: &[&str] = &[
     "reqwest",
     "ureq",
@@ -123,6 +131,8 @@ const OUTBOUND_CLIENTS: &[&str] = &[
     "native-tls",
     "rustls",
     "openssl",
+    "tauri-plugin-updater",
+    "self_update",
 ];
 
 /// No crate in this workspace asks for the ability to make outbound requests.
@@ -179,9 +189,10 @@ fn no_manifest_in_the_workspace_asks_for_an_outbound_client() {
     assert!(
         offenders.is_empty(),
         "ADR-0008 rules out egress, and these manifests ask for a client that performs it:\n{}\n\
-         Phase 8's update check is the one named exception, and it is opt-in, off by \
-         default, and not built yet — when it lands it will need this list and this \
-         comment revisited, deliberately.",
+         There is no exception left to appeal to. The update check ADR-0008 had \
+         reserved was evaluated in Phase 8 and declined, so v1.0 ships with no \
+         network call of any kind; `brew upgrade` is the update path. Reversing \
+         that means amending the ADR and the README's front page, not this list.",
         offenders.join("\n")
     );
 }
