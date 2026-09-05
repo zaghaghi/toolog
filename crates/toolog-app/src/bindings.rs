@@ -105,6 +105,8 @@ pub(crate) fn generate() -> String {
         crate::commands::RiskReview,
         crate::commands::Usage,
         crate::commands::Setup,
+        crate::commands::UninstallPlan,
+        crate::commands::UninstallOutcome,
     ));
 
     for sig in crate::commands::signatures(cfg) {

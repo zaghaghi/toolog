@@ -163,6 +163,39 @@ pub(crate) struct Setup {
     pub(crate) report: String,
 }
 
+/// What removing toolog would do, for the window (task 8.6).
+///
+/// `report` is the same text `toolog uninstall` prints. The window shows it
+/// verbatim rather than rebuilding the explanation in TypeScript, because the
+/// two must not be able to describe the same irreversible action differently.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export_to = "unused/")]
+pub(crate) struct UninstallPlan {
+    pub(crate) report: String,
+    /// Whether applying it would change anything at all.
+    pub(crate) any_changes: bool,
+    /// Recorded history, in bytes, so the button can name what it would delete.
+    pub(crate) data_bytes: i64,
+    /// Where that history lives.
+    pub(crate) data_dir: String,
+    /// The settings file goes back byte for byte, rather than being edited.
+    pub(crate) restores_backup: bool,
+}
+
+/// What an applied uninstall did, step by step.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export_to = "unused/")]
+pub(crate) struct UninstallOutcome {
+    pub(crate) done: Vec<String>,
+    pub(crate) failed: Vec<String>,
+}
+
+fn uninstall_plan(delete_data: bool) -> toolog_cli::uninstall::Plan {
+    let home = toolog_cli::settings::home_dir();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
+    toolog_cli::uninstall::plan(&home, &cwd, delete_data)
+}
+
 fn setup_now() -> anyhow::Result<Setup> {
     let paths = toolog_cli::doctor::Paths::detect()?;
     let report = toolog_cli::doctor::report(&paths);
@@ -522,6 +555,36 @@ commands! {
             toolog_cli::launchagent::uninstall(&home)?;
         }
         setup_now()
+    }
+
+    /// What removing toolog would do. Reads only; changes nothing.
+    uninstall_preview(delete_data: bool) -> UninstallPlan {
+        let plan = uninstall_plan(delete_data);
+        Ok(UninstallPlan {
+            report: toolog_cli::commands::render_uninstall(&plan, false),
+            any_changes: !plan.is_empty(),
+            data_bytes: i64::try_from(plan.data_bytes()).unwrap_or(i64::MAX),
+            data_dir: plan.data_dir.as_deref().unwrap_or(std::path::Path::new("")).display().to_string(),
+            restores_backup: matches!(
+                plan.settings,
+                toolog_cli::uninstall::SettingsRevert::RestoreBackup { .. }
+            ),
+            })
+    }
+
+    /// Carry out the uninstall the preview described.
+    ///
+    /// The plan is recomputed rather than passed in from the window: what the
+    /// WebView holds is a description of a moment that has passed, and the
+    /// only safe thing to act on is the state of the disk right now.
+    uninstall_run(delete_data: bool) -> UninstallOutcome {
+        let home = toolog_cli::settings::home_dir();
+        let plan = uninstall_plan(delete_data);
+        let outcome = toolog_cli::uninstall::apply(&home, &plan);
+        Ok(UninstallOutcome {
+            done: outcome.done,
+            failed: outcome.failed,
+        })
     }
 
     /// Show the log directory in the file manager.

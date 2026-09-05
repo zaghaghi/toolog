@@ -512,7 +512,7 @@ pub fn backups_of(path: &Path) -> Vec<PathBuf> {
 ///
 /// A rename within one filesystem is atomic, so a reader either sees the old
 /// file or the new one — never a half-written config.
-fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), FixError> {
+pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), FixError> {
     let io = |path: &Path| {
         let path = path.to_path_buf();
         move |source| FixError::Io { path, source }

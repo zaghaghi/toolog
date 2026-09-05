@@ -10,6 +10,8 @@
 //!   finding: OTEL-only calls were rejected, transcript-only calls are gaps in
 //!   collection.
 //! - `export` — evidence bundles (Phase 5).
+//! - `uninstall` — the reverse of the install, put back rather than deleted
+//!   (Phase 8).
 //!
 //! [ADR-0007]: ../../../docs/adr/0007-single-resident-process.md
 
@@ -21,3 +23,4 @@ pub mod launchagent;
 pub mod logging;
 pub mod prefs;
 pub mod settings;
+pub mod uninstall;

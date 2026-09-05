@@ -16,9 +16,11 @@ import {
   setLoginAgent,
   setPaused,
   setPrefs,
+  uninstallPreview,
+  uninstallRun,
 } from "./bindings";
 import { el, fill, span } from "./dom";
-import { count } from "./format";
+import { bytes, count } from "./format";
 
 export interface SetupOptions {
   onNotice: (message: string) => void;
@@ -215,7 +217,106 @@ export class SetupView {
       el("h2", { text: "Diagnostics" }),
       el("pre", { class: "report", text: setup.report }),
     );
+
+    view.append(el("h2", { text: "Remove toolog" }), this.uninstall());
     return view;
+  }
+
+  /**
+   * Task 8.6's UI half, and the same operation `toolog uninstall` performs.
+   *
+   * Built as a preview that has to be opened, read and then confirmed, because
+   * two of the three things it touches are not ours: `~/.claude/settings.json`
+   * belongs to Claude Code, and the recorded history belongs to the user. The
+   * preview text comes from Rust verbatim rather than being rebuilt here — the
+   * window and the terminal must not be able to describe the same irreversible
+   * action differently.
+   *
+   * Deleting history is a separate, unticked box. Removing the tool and
+   * destroying the record it collected are different decisions, and defaulting
+   * the second to the first is how audit trails disappear by accident.
+   */
+  private uninstall(): HTMLElement {
+    const details = el("details", { class: "card uninstall" });
+    const body = el("div", { class: "uninstall-body" });
+    const report = el("pre", { class: "report", text: "Loading…" });
+    const box = el("input", { type: "checkbox", attrs: { id: "uninstall-delete-data" } });
+    const label = el("label", {
+      attrs: { for: "uninstall-delete-data" },
+      class: "switch-label",
+      text: "Also delete my recorded history",
+    });
+    const why = span("switch-why", "");
+    const go = el("button", { class: "danger", text: "Remove toolog" });
+    const status = el("div", { class: "note" });
+
+    const refresh = (): Promise<void> =>
+      uninstallPreview(box.checked)
+        .then((plan) => {
+          report.textContent = plan.report;
+          go.disabled = !plan.any_changes;
+          why.textContent =
+            plan.data_bytes === 0
+              ? "Nothing has been recorded yet."
+              : `${bytes(plan.data_bytes)} in ${plan.data_dir}. Kept unless you tick this.`;
+        })
+        .catch((error: unknown) => {
+          report.textContent = String(error);
+        });
+
+    // Only ask the backend once the section is actually opened: this walks the
+    // settings stack and stats the store, and the status page should not pay
+    // for it on every render.
+    let loaded = false;
+    details.addEventListener("toggle", () => {
+      if (details.open && !loaded) {
+        loaded = true;
+        void refresh();
+      }
+    });
+    box.addEventListener("change", () => void refresh());
+
+    go.addEventListener("click", () => {
+      go.disabled = true;
+      go.textContent = "Removing…";
+      void uninstallRun(box.checked)
+        .then((outcome) => {
+          go.textContent = "Remove toolog";
+          fill(
+            status,
+            [
+              ...outcome.done.map((line) => el("div", { text: line })),
+              ...outcome.failed.map((line) => el("div", { class: "problem", text: line })),
+            ].concat(
+              outcome.done.length === 0 && outcome.failed.length === 0
+                ? [el("div", { text: "Nothing to do." })]
+                : [],
+            ),
+          );
+          this.options.onChanged();
+          return refresh();
+        })
+        .catch((error: unknown) => {
+          go.disabled = false;
+          go.textContent = "Remove toolog";
+          fill(status, [el("div", { class: "problem", text: String(error) })]);
+        });
+    });
+
+    body.append(
+      el("p", { class: "note" }, [
+        "This undoes the install: the login agent, and the six variables toolog added to ",
+        "Claude Code's settings. Where a backup was taken before the first write, the file ",
+        el("strong", { text: "goes back byte for byte" }),
+        " rather than having keys deleted out of it.",
+      ]),
+      report,
+      el("div", { class: "switch" }, [box, el("div", {}, [label, why])]),
+      el("div", { class: "actions" }, [go]),
+      status,
+    );
+    details.append(el("summary", { text: "What removing toolog would do" }), body);
+    return details;
   }
 
   /**

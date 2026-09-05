@@ -886,6 +886,182 @@ pub fn render_purge(plan: &toolog_core::retention::Preview, applying: bool) -> S
     out
 }
 
+// ---------------------------------------------------------------------------
+// Uninstall (task 8.6)
+// ---------------------------------------------------------------------------
+
+/// Show exactly what an uninstall would do, before it does it.
+///
+/// Three things earn their space here. **Which way the settings file goes
+/// back** — a byte-identical restore or a key removal — because those have
+/// different consequences and the user is the one who knows which is right.
+/// **That history is kept by default**, said before it can be assumed
+/// otherwise. And **the `.app` itself**, which this process cannot delete while
+/// running inside it, so pretending otherwise would leave the job half done
+/// with no sign of it.
+#[must_use]
+pub fn render_uninstall(plan: &crate::uninstall::Plan, applying: bool) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "{}\n",
+        if applying {
+            "Uninstalling toolog."
+        } else {
+            "This is a preview. Nothing below has happened yet."
+        }
+    );
+
+    let _ = writeln!(out, "Login agent");
+    match &plan.agent {
+        Some(path) => {
+            let _ = writeln!(out, "  remove   {}", path.display());
+            let _ = writeln!(out, "           capture will not start at login again");
+        }
+        None => {
+            let _ = writeln!(out, "  --       not installed");
+        }
+    }
+
+    out.push_str(&render_uninstall_settings(plan));
+    out.push_str(&render_uninstall_data(plan));
+    out.push_str(&render_uninstall_footer(plan, applying));
+    out
+}
+
+/// How `~/.claude/settings.json` goes back, and why that way.
+fn render_uninstall_settings(plan: &crate::uninstall::Plan) -> String {
+    use crate::uninstall::SettingsRevert;
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let _ = writeln!(out, "\nClaude Code configuration");
+    let _ = writeln!(out, "  file:    {}", plan.settings_path.display());
+    match &plan.settings {
+        SettingsRevert::Clean => {
+            let _ = writeln!(out, "  --       none of our keys are in it");
+        }
+        SettingsRevert::RestoreBackup { backup, keys } => {
+            let _ = writeln!(
+                out,
+                "  restore  from {}\n           {} keys go, and the file returns byte for byte to \
+                 what it was\n           before toolog first wrote to it",
+                backup.display(),
+                keys.len()
+            );
+        }
+        SettingsRevert::RemoveKeys { keys, reason } => {
+            let _ = writeln!(
+                out,
+                "  edit     remove {} keys, keep everything else",
+                keys.len()
+            );
+            let _ = writeln!(out, "           not a byte-identical restore, because");
+            let _ = writeln!(out, "           {reason}");
+        }
+        SettingsRevert::RemoveFile { keys } => {
+            let _ = writeln!(
+                out,
+                "  delete   the file holds nothing but our {} keys, and did not exist\n           \
+                 before the install",
+                keys.len()
+            );
+        }
+        SettingsRevert::BeyondOurReach { scopes } => {
+            let _ = writeln!(
+                out,
+                "  --       set by {}, which toolog never writes and will not edit",
+                scopes
+                    .iter()
+                    .map(|s| s.label())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        SettingsRevert::Unreadable { message } => {
+            let _ = writeln!(out, "  !        {message}; not editing it");
+        }
+    }
+    out
+}
+
+/// What happens to the record itself. Kept unless asked otherwise.
+fn render_uninstall_data(plan: &crate::uninstall::Plan) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let _ = writeln!(out, "\nYour recorded history");
+    if plan.data.is_empty() {
+        let _ = writeln!(out, "  --       nothing stored");
+    } else if plan.delete_data {
+        for item in &plan.data {
+            let _ = writeln!(
+                out,
+                "  delete   {:>10}  {}\n           {}",
+                bytes(i64::try_from(item.bytes).unwrap_or(i64::MAX)),
+                item.path.display(),
+                item.what
+            );
+        }
+        let _ = writeln!(
+            out,
+            "\n  {} in total, and it is not recoverable.",
+            bytes(i64::try_from(plan.data_bytes()).unwrap_or(i64::MAX))
+        );
+    } else {
+        let _ = writeln!(
+            out,
+            "  keep     {} in {}",
+            bytes(i64::try_from(plan.data_bytes()).unwrap_or(i64::MAX)),
+            plan.data_dir.as_deref().map_or_else(
+                || "the data directory".to_string(),
+                |d| d.display().to_string()
+            )
+        );
+        let _ = writeln!(
+            out,
+            "           Kept on purpose: an audit trail outlives the tool that\n           \
+             collected it. Pass --delete-data to remove it as well."
+        );
+    }
+
+    out
+}
+
+/// The two things this command cannot do for you, and the way out.
+fn render_uninstall_footer(plan: &crate::uninstall::Plan, applying: bool) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    if plan.running {
+        let _ = writeln!(
+            out,
+            "\nNote: toolog is running. Quit it from the menu bar afterwards, or the\n\
+             receiver stays up until you log out."
+        );
+    }
+    if let Some(app) = &plan.app_bundle {
+        let _ = writeln!(
+            out,
+            "\nThe application itself is not removed by this command — a running app\n\
+             cannot delete itself. Afterwards:\n\
+             \x20 brew uninstall --cask toolog\n\
+             or move {} to the Trash.",
+            app.display()
+        );
+    }
+
+    if !applying {
+        let _ = writeln!(
+            out,
+            "\nNothing has changed. Run the same command with --apply to do it."
+        );
+    }
+    out
+}
+
 /// A default file name for an export: `toolog-2026-09-05`.
 ///
 /// Dated rather than timestamped: an evidence bundle is usually re-exported a

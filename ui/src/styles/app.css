@@ -1936,6 +1936,54 @@ pre.report {
   max-width: 72ch;
 }
 
+/* --- uninstall (task 8.6) ----------------------------------------------- */
+/*
+ * Folded away by default and opened deliberately. The one destructive control
+ * in the window, so it is the one button that does not borrow the accent
+ * colour: `--clay` means "the primary action here", and removing the tool is
+ * never that.
+ */
+
+details.uninstall {
+  padding: 0;
+}
+
+details.uninstall > summary {
+  cursor: pointer;
+  padding: var(--s5) var(--s6);
+  font-weight: 600;
+  border-radius: var(--r-lg);
+}
+
+details.uninstall > summary:hover {
+  color: var(--clay);
+}
+
+details.uninstall[open] > summary {
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+
+.uninstall-body {
+  padding: var(--s5) var(--s6) var(--s6);
+}
+
+.uninstall-body > .note {
+  max-width: 72ch;
+  margin: 0 0 var(--s5);
+}
+
+.actions button.danger {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.actions button.danger:hover:not(:disabled) {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #fff;
+}
+
 /* ----------------------------------------------------------------- toast */
 
 .toast {

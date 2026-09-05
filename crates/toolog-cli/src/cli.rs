@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 use crate::commands::{self, Format};
-use crate::{doctor, launchagent, logging, settings};
+use crate::{doctor, launchagent, logging, settings, uninstall};
 
 /// A local audit trail for Claude Code tool calls.
 #[derive(Debug, Parser)]
@@ -100,6 +100,18 @@ pub enum Command {
         #[command(subcommand)]
         action: AgentAction,
     },
+    /// Undo the install: the login agent, and the telemetry configuration.
+    ///
+    /// Shows what would change; needs `--apply` to do it. Your recorded
+    /// history is kept unless you also pass `--delete-data`.
+    Uninstall {
+        /// Also delete the database, preferences, rules and logs.
+        #[arg(long)]
+        delete_data: bool,
+        /// Actually do it. Without this, nothing changes.
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 /// Filters and output options for `toolog export`.
@@ -175,7 +187,38 @@ pub fn run(cli: &Cli) -> anyhow::Result<i32> {
             },
         ),
         Command::Agent { action } => run_agent(action),
+        Command::Uninstall { delete_data, apply } => run_uninstall(*delete_data, *apply),
     }
+}
+
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "every arm of `run` returns the same type; an uninstall that reports \
+              rather than aborts is the point, so nothing here produces an Err"
+)]
+fn run_uninstall(delete_data: bool, apply: bool) -> anyhow::Result<i32> {
+    let home = settings::home_dir();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
+    let plan = uninstall::plan(&home, &cwd, delete_data);
+
+    print!("{}", commands::render_uninstall(&plan, apply));
+    if !apply {
+        return Ok(0);
+    }
+
+    let outcome = uninstall::apply(&home, &plan);
+    println!();
+    for line in &outcome.done {
+        println!("  {line}");
+    }
+    for line in &outcome.failed {
+        eprintln!("  ! {line}");
+    }
+    if outcome.done.is_empty() && outcome.failed.is_empty() {
+        println!("  Nothing to do.");
+    }
+    // A partial uninstall must not look like a clean one.
+    Ok(i32::from(!outcome.failed.is_empty()))
 }
 
 fn run_usage(cli: &Cli, days: Option<u32>, project: Option<String>) -> anyhow::Result<i32> {

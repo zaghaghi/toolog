@@ -456,6 +456,26 @@ export type Setup = { configured: boolean, listening: boolean, endpoint: string,
  */
 report: string, };
 
+export type UninstallPlan = { report: string, 
+/**
+ * Whether applying it would change anything at all.
+ */
+any_changes: boolean, 
+/**
+ * Recorded history, in bytes, so the button can name what it would delete.
+ */
+data_bytes: number, 
+/**
+ * Where that history lives.
+ */
+data_dir: string, 
+/**
+ * The settings file goes back byte for byte, rather than being edited.
+ */
+restores_backup: boolean, };
+
+export type UninstallOutcome = { done: Array<string>, failed: Array<string>, };
+
 export function queryTimeline(filter: TimelineFilter, page: Page): Promise<Array<TimelineRow>> {
   return invoke("query_timeline", { filter, page });
 }
@@ -550,6 +570,14 @@ export function applyDoctorFix(): Promise<Setup> {
 
 export function setLoginAgent(install: boolean): Promise<Setup> {
   return invoke("set_login_agent", { install });
+}
+
+export function uninstallPreview(deleteData: boolean): Promise<UninstallPlan> {
+  return invoke("uninstall_preview", { deleteData });
+}
+
+export function uninstallRun(deleteData: boolean): Promise<UninstallOutcome> {
+  return invoke("uninstall_run", { deleteData });
 }
 
 export function revealLogs(): Promise<null> {
