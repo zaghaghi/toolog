@@ -99,7 +99,7 @@ by a failed install.
 
 - The 77% is examined rather than merely counted, and the intent summary makes a list of 3,618
   commands skimmable — likely the half worth keeping even where the score is not.
-- `@intent:` and `@llm-risk:>=4` make "when did the agent start doing network things" a chart, for
+- `@intent:` and `@model-risk:>=4` make "when did the agent start doing network things" a chart, for
   free, exactly as `@risk:high` did in [ADR-0012](0012-store-sightings-not-findings.md).
 - The zero-egress guarantee is now asserted against the *artifact* and not only the manifests, which
   is strictly stronger than it was before this phase.

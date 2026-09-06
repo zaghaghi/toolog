@@ -574,8 +574,10 @@ describe("the second opinion (task 13.16)", () => {
     const section = (await mount(review())).querySelector(".llm");
 
     expect(section).not.toBeNull();
-    expect(section!.textContent).toContain("Not a rule");
-    expect(section!.textContent).toContain("advisory");
+    // The claim that has to survive any trim of this section's prose.
+    expect(section!.textContent).toContain("not a rule");
+    expect(section!.textContent).toContain("Advisory");
+    expect(section!.textContent).toContain("wrong sometimes");
     // A number whose author cannot be named is not evidence (task 13.14).
     expect(section!.textContent).toContain("3646b4c147cd / 734b5913bf03");
     expect(section!.textContent).toContain("412 examined");
@@ -627,7 +629,7 @@ describe("the second opinion (task 13.16)", () => {
     );
 
     open!.click();
-    expect(state.openedQuery).toEqual(["@llm-risk:>=4"]);
+    expect(state.openedQuery).toEqual(["@model-risk:>=4"]);
   });
 
   test("says so plainly when it examined things and flagged none of them", async () => {

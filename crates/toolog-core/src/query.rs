@@ -99,7 +99,7 @@ pub struct Lens<'a> {
     filter: &'a TimelineFilter,
     rules: &'a [crate::rules::Rule],
     dismissed: Option<&'a std::collections::HashMap<String, crate::rules::Dismissal>>,
-    /// Which model and which prompt `intent` and `llm_risk` are asking about
+    /// Which model and which prompt `intent` and `model_risk` are asking about
     /// (task 13.15).
     ///
     /// The same argument as `rules`, one phase later: a verdict is an answer to
@@ -137,7 +137,7 @@ impl<'a> Lens<'a> {
         }
     }
 
-    /// Name the model and prompt whose verdicts `@intent` and `@llm-risk` mean.
+    /// Name the model and prompt whose verdicts `@intent` and `@model-risk` mean.
     ///
     /// A builder rather than a fourth constructor: a filter can narrow by rule
     /// *and* by verdict at once — "the high-risk calls the model also called
@@ -274,7 +274,7 @@ fn selection(lens: Lens<'_>) -> Result<Selection> {
     })
 }
 
-/// The `WHERE` fragments for `@intent` and `@llm-risk` (task 13.15).
+/// The `WHERE` fragments for `@intent` and `@model-risk` (task 13.15).
 ///
 /// Its own function because `selection` was already at the length where a
 /// reader stops holding the whole thing in their head, and this is a
@@ -286,7 +286,7 @@ fn verdict_clauses(
     binds: &mut Vec<Box<dyn ToSql>>,
 ) -> Result<()> {
     let f = lens.filter;
-    if f.intent.is_none() && f.llm_risk.is_none() {
+    if f.intent.is_none() && f.model_risk.is_none() {
         return Ok(());
     }
 
@@ -316,7 +316,7 @@ fn verdict_clauses(
         binds.push(Box::new(pair.prompt.clone()));
     }
 
-    if let Some(score) = f.llm_risk.as_deref() {
+    if let Some(score) = f.model_risk.as_deref() {
         let parsed = crate::llm::ScoreFilter::parse(score).ok_or_else(|| {
             Error::Rules(format!(
                 "`{score}` is not a score comparison. Write a number 1 to 5, \
@@ -370,6 +370,31 @@ pub struct TimelineRow {
     /// is the one row in this list that says nothing about what it did.
     pub lines_added: Option<i64>,
     pub lines_removed: Option<i64>,
+    /// What a local model scored this call, when one has looked at it.
+    ///
+    /// `None` for a call the pair has no accepted verdict for — and for every
+    /// call when the lens names no pair, because then the columns are not in
+    /// the query at all. **Never rendered as a severity**: the row draws it in
+    /// the second opinion's own colour, and the rules' four words are not
+    /// available to it (ADR-0013).
+    pub model_score: Option<i64>,
+    /// The one sentence the model wrote about it.
+    ///
+    /// Carried beside the score because a number with no reading of the command
+    /// behind it is the thing this phase set out not to produce. The row shows
+    /// it on hover; the detail pane shows it outright.
+    pub model_intent: Option<String>,
+    /// The worst live rule severity that matches this call.
+    ///
+    /// Evaluated against the rules in force, not read from `rule_sighting` — a
+    /// reader looking at a row wants what is true now. `None` when no rule
+    /// matches, and for every row when the lens carries no rules.
+    ///
+    /// This is the deterministic half, and it is the one the audit trail
+    /// asserts. `model_score` sits beside it and never in it.
+    pub risk: Option<crate::rules::Severity>,
+    /// The titles of the rules that matched, worst first, for the row's tooltip.
+    pub rule_titles: Vec<String>,
 }
 
 fn map_timeline_row(row: &Row<'_>) -> rusqlite::Result<TimelineRow> {
@@ -381,8 +406,34 @@ fn map_timeline_row(row: &Row<'_>) -> rusqlite::Result<TimelineRow> {
         snippet: row.get(N + 2)?,
         lines_added: row.get(N + 3)?,
         lines_removed: row.get(N + 4)?,
+        model_score: row.get(N + 5)?,
+        model_intent: row.get(N + 6)?,
+        // Filled in by `timeline_rows`, from the rules the lens carries: a
+        // severity is not a column in the store and never has been.
+        risk: None,
+        rule_titles: Vec::new(),
     })
 }
+
+/// What the model said about a row, by indexed lookup, and only when a pair is
+/// named.
+///
+/// Two scalar subqueries rather than a join, for the reason
+/// [`DIFF_SIZE_COLUMNS`] gives and one more: `llm_verdict`'s key is three text
+/// columns, and a join whose `ON` clause forgot one of the fingerprints would
+/// silently multiply rows by however many models had ever been tried. A
+/// subquery cannot return two rows here — the primary key says so — and it
+/// reads as the lookup it is.
+///
+/// The columns are absent entirely with no model configured, so a store that
+/// has never had one pays nothing for this.
+const VERDICT_COLUMNS: &str = "
+    (SELECT v.risk_score FROM llm_verdict v
+      WHERE v.tool_use_id = tc.tool_use_id
+        AND v.model_fingerprint = ? AND v.prompt_fingerprint = ? AND v.status = 'ok'),
+    (SELECT v.intent_summary FROM llm_verdict v
+      WHERE v.tool_use_id = tc.tool_use_id
+        AND v.model_fingerprint = ? AND v.prompt_fingerprint = ? AND v.status = 'ok')";
 
 /// The diff size of a row, by indexed lookup rather than a joined aggregate.
 ///
@@ -406,7 +457,11 @@ pub fn timeline_rows<'a>(
     lens: impl Into<Lens<'a>>,
     page: Page,
 ) -> Result<Vec<TimelineRow>> {
-    let sel = selection(lens.into())?;
+    let lens = lens.into();
+    // Read before the lens is consumed. `Option<&Pair>` is `Copy`, so this is a
+    // look rather than a move.
+    let pair = lens.verdicts;
+    let sel = selection(lens)?;
 
     // `snippet()` needs the FTS table joined *and* matched in the same query as
     // the rows it annotates, so the outer query repeats the match. FTS5 will
@@ -422,9 +477,19 @@ pub fn timeline_rows<'a>(
         ("NULL", "", "")
     };
 
+    // Two more columns when a model has answered for this store, and none when
+    // one never has — the row is drawn the same either way, it just has nothing
+    // to draw.
+    let verdict = if pair.is_some() {
+        VERDICT_COLUMNS
+    } else {
+        "NULL, NULL"
+    };
+
     let sql = format!(
         "{}SELECT {TOOL_CALL_COLUMNS}, s.project_path, s.git_branch, {snippet},
-                {DIFF_SIZE_COLUMNS}
+                {DIFF_SIZE_COLUMNS},
+                {verdict}
          FROM tool_call tc
          LEFT JOIN session s ON s.session_id = tc.session_id
          {outer_join}
@@ -438,12 +503,24 @@ pub fn timeline_rows<'a>(
         sel.with_sql, sel.from, sel.where_sql
     );
 
-    // SQLite numbers parameters left to right: the snippet delimiters and the
-    // outer match come before anything the subquery binds.
+    // SQLite numbers parameters left to right, so these go in the order the SQL
+    // *text* mentions them, which is not the order they are interesting in: the
+    // snippet delimiters and the verdict columns sit in the select list, the
+    // outer match in the `WHERE` after them, and everything the paging subquery
+    // binds after that.
     let mut all: Vec<Box<dyn ToSql>> = Vec::new();
     if sel.searching {
         all.push(Box::new(MATCH_OPEN));
         all.push(Box::new(MATCH_CLOSE));
+    }
+    if let Some(pair) = pair {
+        // Once for each of the two subqueries in `VERDICT_COLUMNS`.
+        for _ in 0..2 {
+            all.push(Box::new(pair.model.clone()));
+            all.push(Box::new(pair.prompt.clone()));
+        }
+    }
+    if sel.searching {
         all.push(Box::new(sel.fts.clone().unwrap_or_default()));
     }
     all.extend(sel.binds);
@@ -453,7 +530,45 @@ pub fn timeline_rows<'a>(
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(refs.as_slice(), map_timeline_row)?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    annotate_risk(conn, lens, &mut rows)?;
+    Ok(rows)
+}
+
+/// Fill each row's severity from the rules the lens carries (Phase 14).
+///
+/// A second statement rather than more columns on the first, because a
+/// severity is not in the store: it is the rules file applied to a call, and
+/// the rules file is not something the timeline's SQL should have to be shaped
+/// by. The cost is bounded by the page — one screen of ids, never the table.
+///
+/// A lens with no rules leaves every row's `risk` as `None`, which is what the
+/// `toolog export` path wants: a severity that would change with a file the
+/// export does not carry has no business in one.
+fn annotate_risk(conn: &Connection, lens: Lens<'_>, rows: &mut [TimelineRow]) -> Result<()> {
+    let (Some(dismissed), false) = (lens.dismissed, lens.rules.is_empty()) else {
+        return Ok(());
+    };
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let ids: Vec<String> = rows.iter().map(|r| r.call.tool_use_id.clone()).collect();
+    let matched = crate::rules::matched_rules(conn, lens.rules, dismissed, &ids)?;
+    for row in rows.iter_mut() {
+        let Some(ids) = matched.get(&row.call.tool_use_id) else {
+            continue;
+        };
+        row.risk = crate::rules::worst_severity(lens.rules, ids);
+        let mut titles: Vec<(crate::rules::Severity, String)> = ids
+            .iter()
+            .filter_map(|id| lens.rules.iter().find(|r| &r.id == id))
+            .map(|r| (r.severity, r.title.clone()))
+            .collect();
+        titles.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        row.rule_titles = titles.into_iter().map(|(_, t)| t).collect();
+    }
+    Ok(())
 }
 
 /// One page of the timeline, newest first.

@@ -39,7 +39,7 @@ describe("the URL hash (task 5.6)", () => {
       risk: "high",
       rule_id: "auto-approved-destructive-bash",
       intent: "deletes a directory",
-      llm_risk: ">=4",
+      model_risk: ">=4",
     };
     const view = { filter, selected: "toolu_7" };
 
@@ -140,7 +140,7 @@ describe("a v1.0 link still restores its view (task 10.7)", () => {
       // A link written before Phase 13 carries no verdict filter, and restores
       // as one that names none — which is the point of the test above it.
       intent: null,
-      llm_risk: null,
+      model_risk: null,
     });
     expect(view.selected).toBe("toolu_7");
   });

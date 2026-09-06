@@ -85,10 +85,11 @@ pub(crate) fn generate() -> String {
         toolog_core::rules::ProjectRisk,
         toolog_core::rules::SeverityTally,
         toolog_cli::prefs::Prefs,
-        // Phase 13: the second opinion. `llm::Verdict` and `llm::Record` are
-        // deliberately absent — nothing crosses the boundary as either, and
-        // `Record` would shadow TypeScript's own `Record<K, V>` in every file
-        // that imported it.
+        // Phase 13: the second opinion. `llm::Record` is deliberately absent —
+        // it would shadow TypeScript's own `Record<K, V>` in every file that
+        // imported it, and `commands::SecondOpinion` is the shape the detail
+        // pane actually needs anyway.
+        toolog_core::llm::Verdict,
         toolog_core::llm::Progress,
         toolog_core::llm::ScoreTally,
         toolog_core::llm::Scored,
@@ -100,6 +101,8 @@ pub(crate) fn generate() -> String {
         toolog_cli::capture::Status,
         toolog_cli::commands::Summary,
         toolog_cli::commands::Format,
+        crate::commands::MatchedRule,
+        crate::commands::SecondOpinion,
         crate::commands::ToolCallDetail,
         crate::commands::SourceView,
         crate::commands::RiskReview,

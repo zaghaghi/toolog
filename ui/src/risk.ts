@@ -50,6 +50,13 @@ const FIRST_PAGE = 8;
 /** Worst first, which is the order a review is read in. */
 const SEVERITIES: Severity[] = ["high", "medium", "low", "info"];
 
+/**
+ * What each severity is asking of the reader.
+ *
+ * A tooltip rather than a line under every number. Four captions under four
+ * cards is a paragraph the reader has to skip past to reach the numbers, and it
+ * says the same thing every time they look.
+ */
 const SEVERITY_WORDS: Record<Severity, string> = {
   high: "Worth answering for",
   medium: "Worth explaining",
@@ -189,10 +196,14 @@ export class RiskView {
 
     const head = el("div", { class: "llm-head" }, [
       el("h2", { text: "A second opinion" }),
+      // The claim that has to survive any trimming: not a rule, and wrong
+      // sometimes (ADR-0013). Everything else it used to say — what the model
+      // was pointed at, that nothing here moves the numbers above — is either
+      // visible in the line below or true of the whole section.
       el("p", { class: "llm-caveat" }, [
-        "Not a rule. A local model read the ",
+        "A local model on the ",
         el("strong", { text: count(progress.eligible) }),
-        " Bash commands no rule has ever matched and said what each was doing. It is advisory, it is not reproducible, and it is wrong sometimes — nothing here changes the numbers above.",
+        " commands no rule matched. Advisory, not a rule, and wrong sometimes.",
       ]),
     ]);
 
@@ -211,12 +222,14 @@ export class RiskView {
       llm.analysis?.paused === true ? " · paused" : "",
     ]);
 
-    const provenance = el("p", { class: "llm-provenance" }, [
+    const provenance = el("p", {
+      class: "llm-provenance",
+      title: "Change the model or the prompt and these answers are kept — a fresh set starts",
+    }, [
       "model ",
       el("code", { text: llm.pair ?? "unknown" }),
       " · prompt ",
       el("code", { text: llm.prompt_fingerprint }),
-      ". Change either and these answers are kept, and a fresh set starts.",
     ]);
 
     const body: HTMLElement[] = [head, bar, state, provenance];
@@ -272,7 +285,7 @@ export class RiskView {
       attrs: { type: "button" },
     });
     open.addEventListener("click", () => {
-      this.opts.onOpenQuery("@llm-risk:>=4");
+      this.opts.onOpenQuery("@model-risk:>=4");
     });
     return el("div", { class: "rules-note" }, [open]);
   }
@@ -299,7 +312,7 @@ export class RiskView {
       .filter((f) => f.severity === tally.severity && f.dismissed === null)
       .reduce((sum, f) => sum + f.new_calls, 0);
 
-    return el("div", { class: `risk-count ${tally.severity}` }, [
+    const card = el("div", { class: `risk-count ${tally.severity}` }, [
       el("span", { class: "risk-count-n", text: count(tally.calls) }),
       el("span", { class: "risk-count-label", text: tally.severity }),
       fresh === 0
@@ -315,8 +328,9 @@ export class RiskView {
         class: "risk-count-rules",
         text: `${count(tally.rules)} ${tally.rules === 1 ? "rule" : "rules"}, ${count(tally.calls)} ${tally.calls === 1 ? "call" : "calls"}`,
       }),
-      el("span", { class: "risk-count-note", text: SEVERITY_WORDS[tally.severity] }),
     ]);
+    card.title = SEVERITY_WORDS[tally.severity];
+    return card;
   }
 
   /** Task 6.4: the posture glance, one row per project. */
@@ -324,10 +338,14 @@ export class RiskView {
     if (projects.length === 0) return null;
     return el("div", { class: "card" }, [
       el("div", { class: "chart-titles" }, [
-        el("span", { class: "chart-title", text: "By project" }),
         el("span", {
-          class: "chart-caption",
-          text: "Distinct calls flagged, so each column adds up to the number above it. Live findings only — a rule set aside stops counting against the project that tripped it.",
+          class: "chart-title",
+          text: "By project",
+          // How the columns add up is worth being able to find and not worth
+          // two lines above the table every time it is read.
+          title:
+            "Distinct calls flagged, so each column adds up to the number above it. " +
+            "Live findings only — a rule set aside stops counting against the project that tripped it.",
         }),
       ]),
       el("table", { class: "chart-table risk-projects" }, [

@@ -277,11 +277,15 @@ export class SetupView {
       card.append(
         el("p", { class: "muted" }, [
           llm.model.path === null
-            ? "No model. The calls no rule matched are reported as unexamined, which is what they are."
+            ? "No model. The calls no rule matched are reported as unexamined."
             : `That path is not a usable model: ${llm.model.problem ?? "unreadable"}`,
         ]),
-        el("p", { class: "muted", text: `The model this is written for: ${llm.model.suggested}` }),
-        el("p", { class: "muted", text: "Fetch it yourself — toolog has no network capability:" }),
+        // One line, not three: the command below is self-evidently a download,
+        // and that toolog will not run it is the Zero egress card's claim.
+        el("p", {
+          class: "muted",
+          text: `Fetch it yourself — toolog has no network capability. ${llm.model.suggested}`,
+        }),
         el("pre", { class: "report", text: llm.model.fetch_command }),
       );
     } else {

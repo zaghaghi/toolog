@@ -69,6 +69,18 @@ than making the old ones wrong. It is **advisory throughout** — never a rule, 
 never a number in the summary — which is both an honesty requirement and the injection mitigation
 that holds when the grammar and the schema do not.
 
+It shows up in three places and is separated from the rules in all of them: a section of the risk
+view, a block in the detail pane that also says **not examined yet** where that is the fact, and a
+column in the timeline — a digit in the model's own hue, beside the column carrying the rules'
+severity in red and amber, never the same cell. `@intent:<text>` and `@model-risk:>=4` narrow the
+timeline by what the model said; the token names the model rather than the method, and claims
+nothing about the quality of the answer.
+
+The rules got the same treatment at the same time: a **severity column** on every row and the
+**matched rules** in the detail pane, each a way into every other call that rule caught. Both are
+evaluated against the rules in force rather than read from `rule_sighting` — a sighting is what the
+last review found, and a reader looking at a row wants what is true now.
+
 The macOS floor moved 10.15 → 11.0 with it, for llama.cpp's `std::filesystem`.
 
 **The model, and the one command that fetches it.** Written out here rather than left to a link, so

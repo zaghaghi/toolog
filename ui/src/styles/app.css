@@ -21,6 +21,62 @@ body {
   overflow: hidden;
 }
 
+/* ---------------------------------------------------------------------------
+   This is an application window, not a web page.
+
+   A WebView brings a browser's habits with it: every label is selectable, every
+   run of text can be picked up and dragged, and a double-click in the wrong
+   place highlights a column heading. In a document that is correct behaviour.
+   Here it made the whole window feel like a page that had been styled to look
+   like an app — chrome that smears blue when a click lands slightly wrong.
+
+   So selection is off by default and switched back **on** for the one thing
+   this application exists to show: the evidence. A command, a result body, a
+   path, a diff, an id, a transcript line — anything a reader might need to copy
+   into a shell, a ticket or a message stays selectable, because an audit trail
+   nobody can quote out of is not much of one. Labels, buttons, tabs, headings
+   and column headers are not.
+
+   `-webkit-user-drag` is separate from selection and needs saying separately:
+   without it a link or an image can still be picked up and dragged around the
+   window, which no application does.
+   --------------------------------------------------------------------------- */
+body {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+a,
+img,
+button {
+  -webkit-user-drag: none;
+}
+
+.mono,
+.wrap,
+.well,
+.report,
+.sum,
+.dtarget,
+.kv dd,
+.diff,
+.source,
+.dllm-intent {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: auto;
+}
+
+/* Except inside a button. A label you can both drag-select and click is a
+   control that fights itself, and every one of these opens something. */
+button .sum,
+button .mono {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: pointer;
+}
+
 #app {
   display: flex;
   flex-direction: column;
@@ -104,11 +160,24 @@ button {
 }
 
 .brand {
+  display: flex;
+  gap: var(--s3);
+  align-items: baseline;
   font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
   color: var(--ink-faint);
+}
+
+/* Quieter than the name: it answers "which build is this", which is worth
+   having on screen and not worth reading first. */
+.brand-version {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
 }
 
 .body {
@@ -426,10 +495,18 @@ button {
   min-width: 0;
 }
 
+/* The column header, in the row's own grid so the names sit over the cells they
+   name. It is also the day marker — see `drawHeader` in timeline.ts for why
+   those are one strip and not two. Outside the viewport, so it does not scroll
+   away; the columns line up because the list never scrolls horizontally. */
 .context {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
   align-items: center;
+  grid-template-columns:
+    var(--col-time) var(--col-project) var(--col-tool) var(--col-status)
+    minmax(0, 1fr)
+    var(--col-risk) var(--col-score) var(--col-duration) var(--col-decision);
+  gap: var(--s4);
   flex: 0 0 auto;
   height: 22px;
   padding: 0 var(--s5);
@@ -440,6 +517,27 @@ button {
   color: var(--ink-faint);
   background: var(--paper);
   border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.chd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Each name sits the way its column's values do, or the header points at the
+   wrong side of a right-aligned number. */
+.chd-date {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+/* The four right-aligned columns, so a name sits over its values and not on
+   the far side of them. */
+.chd-end {
+  text-align: right;
 }
 
 .viewport {
@@ -464,7 +562,8 @@ button {
   height: var(--row-h);
   grid-template-columns:
     var(--col-time) var(--col-project) var(--col-tool) var(--col-status)
-    minmax(0, 1fr) var(--col-duration) var(--col-decision);
+    minmax(0, 1fr)
+    var(--col-risk) var(--col-score) var(--col-duration) var(--col-decision);
   gap: var(--s4);
   padding: 0 var(--s5);
   border-bottom: 1px solid var(--line);
@@ -570,6 +669,59 @@ button {
 .insnip {
   font-size: var(--text-xs);
   color: var(--ink-faint);
+}
+
+/* The two judgement columns, side by side and deliberately unlike each other.
+
+   `.rsk` is the rules': a word, in the red and amber the risk page uses, for a
+   severity that means the same thing every time it is computed. Coloured text
+   rather than the risk page's filled chip — a chip on every flagged row in a
+   list this dense would shout over the commands.
+
+   `.mdl` is the model's: a digit, in the second opinion's own hue at four
+   weights. A reader must be able to tell at a glance which of the two a number
+   came from, which is why one is never allowed to look like the other
+   (ADR-0013). */
+.rsk {
+  text-align: right;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  color: var(--ink-faint);
+  overflow: hidden;
+}
+
+.rsk.sev-high {
+  color: var(--bad);
+}
+
+.rsk.sev-medium {
+  color: var(--warn);
+}
+
+.rsk.sev-low,
+.rsk.sev-info {
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+.mdl {
+  justify-self: end;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  font: 600 var(--text-xs) / 1 var(--font);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: color-mix(in oklab, var(--chart-track) 30%, transparent);
+}
+
+/* An empty cell holds the column open and claims nothing. */
+.rsk.none,
+.mdl.none {
+  background: none;
 }
 
 .dur {
@@ -1473,10 +1625,6 @@ pre.report {
   font-variant-numeric: tabular-nums;
 }
 
-.risk-count-note {
-  font-size: var(--text-sm);
-  color: var(--ink-soft);
-}
 
 /* The one row a reader cannot go and look at. Named, not hidden: these calls
    were dropped from this table and counted above it (task 11.8). */
@@ -2060,6 +2208,91 @@ details.uninstall[open] > summary {
 
 .llm-none {
   margin: var(--s4) 0 0;
+  color: var(--ink-soft);
+}
+
+/* The rules that matched one call. Each is a button to every other call the
+   same rule caught — the question a reader has as soon as they read the title. */
+.drisk {
+  margin-top: var(--s5);
+}
+
+.drisk-rule {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+  width: 100%;
+  padding: var(--s2) var(--s3);
+  margin-left: calc(var(--s3) * -1);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.drisk-rule:hover,
+.drisk-rule:focus-visible {
+  background: var(--sunken);
+  border-color: var(--line);
+}
+
+.drisk-title {
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   The second opinion, in the detail pane (Phase 13).
+
+   The risk view's section earns its separation with a tinted panel; the pane is
+   narrower and already a stack of headed blocks, so it does the same job with a
+   left rule in the model's own colour — enough to read as an aside, not so much
+   that it becomes the loudest thing in a pane full of evidence.
+   --------------------------------------------------------------------------- */
+.dllm {
+  margin-top: var(--s5);
+  padding-left: var(--s4);
+  border-left: 3px solid var(--chart-track);
+}
+
+.dllm h3 {
+  margin-top: 0;
+}
+
+.dllm-said {
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+  margin-bottom: var(--s3);
+}
+
+.dllm-intent {
+  color: var(--ink);
+}
+
+.dllm-none {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.dllm-none code {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+}
+
+/* Never omitted, whichever of the three states is being shown: a score whose
+   author cannot be named is not evidence of anything (ADR-0013). */
+.dllm-provenance {
+  margin: var(--s3) 0 0;
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+  max-width: 62ch;
+}
+
+.dllm-provenance code {
+  font-family: var(--mono);
   color: var(--ink-soft);
 }
 

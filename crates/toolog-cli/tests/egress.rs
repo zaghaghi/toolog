@@ -142,7 +142,7 @@ fn full_workload() {
     // And the two filters that read them, through the same lens the window uses.
     let examined = TimelineFilter {
         intent: Some("rejects".to_string()),
-        llm_risk: Some(">=3".to_string()),
+        model_risk: Some(">=3".to_string()),
         ..TimelineFilter::default()
     };
     let lens = query::Lens::plain(&examined).and_verdicts(&pair);

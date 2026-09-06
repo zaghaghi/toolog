@@ -124,6 +124,63 @@ function summary(row: TimelineRow, ctx: RowContext): HTMLElement {
   return cell;
 }
 
+/**
+ * The rules' verdict on this row: the worst severity a live rule gives it.
+ *
+ * A column of its own rather than an annotation on the command, and drawn in
+ * the same red and amber the risk page uses — it is the deterministic half: a
+ * rule with an id, conditions anyone can read, and a severity that means the
+ * same thing every time.
+ *
+ * It sits to the right of the command with the other judgement columns rather
+ * than to its left. Both of these are empty on most rows, and 80px of empty in
+ * the middle of every line pushes the commands away from the eye for the sake
+ * of two cells that usually say nothing.
+ *
+ * Empty for the calls no rule matched, which is most of them. That emptiness is
+ * the honest reading: no rule flagged this. Whether anything *examined* it is
+ * the next column's question.
+ */
+function riskCell(row: TimelineRow): HTMLElement {
+  if (row.risk === null) return span("rsk none", "", "No live rule matches this call");
+  return span(
+    `rsk sev-${row.risk}`,
+    row.risk.toUpperCase(),
+    row.rule_titles.join("\n"),
+  );
+}
+
+/**
+ * The lowest score worth showing in the row's score column.
+ *
+ * 1 and 2 are the shape of most of the corpus, and a column full of 1s is a
+ * column of noise. Below this the cell is empty, and the detail pane still has
+ * the score for anyone who opens the call.
+ */
+const SHOW_FROM = 3;
+
+/**
+ * What the local model scored this call — its own column, never the rules'.
+ *
+ * Beside the severity and never inside it (ADR-0013): a rule's severity is
+ * deterministic and this is not, and the two must stay legible as different
+ * kinds of claim. So it keeps the second opinion's colour ramp, stays a digit
+ * where the severity is a word, and carries the model's own sentence as its
+ * tooltip — which is the answer to the question a filtered list otherwise
+ * leaves open, with `@model-risk:>=4` typed and every row matching.
+ */
+function modelCell(row: TimelineRow): HTMLElement {
+  const score = row.model_score;
+  if (score === null || score < SHOW_FROM) {
+    return span("mdl none", "", score === null ? "" : `A local model scored this ${String(score)} of 5`);
+  }
+  return span(
+    `mdl llm-score-${String(score)}`,
+    String(score),
+    row.model_intent ?? `A local model scored this ${String(score)} of 5`,
+  );
+}
+
 /** One timeline row. */
 export function renderRow(row: TimelineRow, _block: RowBlock, ctx: RowContext): HTMLElement {
   const call = row.call;
@@ -144,6 +201,8 @@ export function renderRow(row: TimelineRow, _block: RowBlock, ctx: RowContext): 
     toolBadge(row),
     outcome(row),
     summary(row, ctx),
+    riskCell(row),
+    modelCell(row),
     span(
       call.duration_ms === null ? "dur none" : "dur",
       duration(call.duration_ms),
@@ -171,6 +230,8 @@ export function renderPending(_block: RowBlock, error?: string): HTMLElement {
     error === undefined
       ? span("sum skeleton", "")
       : span("sum none", `could not load these rows — ${error}. Click to try again.`),
+    span("rsk", ""),
+    span("mdl", ""),
     span("dur", ""),
     span("dec", ""),
   );

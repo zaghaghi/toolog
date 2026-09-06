@@ -40,7 +40,20 @@ export class TimelineView {
   private view: ViewState;
   private readonly bar: FilterBar;
   private readonly viewport = el("div", { class: "viewport", role: "listbox", attrs: { tabindex: "0" } });
-  private readonly context = el("div", { class: "context" });
+  /**
+   * The column header, which is also the day marker.
+   *
+   * One strip, not two. The row above the list was already there, carrying the
+   * day of the topmost visible row and nothing else; giving the other eight
+   * columns their names in the same 22px costs no height at all. And the day
+   * belongs over the time column anyway — `Sep 6` above `17:02:43` reads as the
+   * label that column would have had.
+   *
+   * It sits outside the scrolling viewport, so it never scrolls away and never
+   * has to be re-rendered as rows arrive. Only the date cell changes.
+   */
+  private readonly context = el("div", { class: "context", attrs: { role: "row" } });
+  private readonly headDate = el("span", { class: "chd chd-date" });
   private readonly state = el("div", { class: "state", hidden: true });
   private readonly banner = el("div", { class: "banner", hidden: true });
   private readonly newCalls = el("button", { class: "newpill", hidden: true });
@@ -53,6 +66,8 @@ export class TimelineView {
   /** How many calls the current filter matches, from `timeline_count`. */
   private total = 0;
   private cursor = -1;
+  /** The topmost visible row, for the header's date cell. */
+  private firstVisible = 0;
   private readonly pending = new Set<string>();
   /** Bumped per reload so a slow count for an old filter is ignored. */
   private generation = 0;
@@ -62,7 +77,14 @@ export class TimelineView {
     private readonly options: TimelineOptions,
   ) {
     this.view = view;
-    this.store = new RowStore(() => this.list.refreshAll());
+    // A page arriving refreshes the rows *and* the header's date cell: the
+    // first paint happens before any row exists, so `onVisible` ran once with
+    // nothing to read the day from and never ran again — which left the header
+    // starting with an empty cell.
+    this.store = new RowStore(() => {
+      this.list.refreshAll();
+      this.updateContext(this.firstVisible);
+    });
 
     this.bar = new FilterBar(view, {
       onChange: (next) => this.apply(next, true),
@@ -100,10 +122,15 @@ export class TimelineView {
       ]),
     );
 
+    this.drawHeader();
+
     this.list = new VirtualList(this.viewport, {
       rowHeight: ROW_HEIGHT,
       render: (index) => this.renderItem(index),
-      onVisible: (first) => this.updateContext(first),
+      onVisible: (first) => {
+        this.firstVisible = first;
+        this.updateContext(first);
+      },
     });
 
     this.viewport.addEventListener("click", (event) => this.onClick(event));
@@ -263,14 +290,44 @@ export class TimelineView {
     return node;
   }
 
+  /**
+   * The column names, in the row's own grid so they line up with it.
+   *
+   * Built once. The outcome column is 18px of glyph and no word fits in it, so
+   * its cell is empty and carries its name as a tooltip — a header that forced
+   * the column wide enough to be labelled would cost every row the space.
+   */
+  private drawHeader(): void {
+    // Header cells get their own classes rather than the row's. Sharing them
+    // looked like a way to keep the two in step and instead gave the word
+    // "Tool" the tool badge's grey pill.
+    const head = (label: string, cls = "", title = ""): HTMLElement =>
+      span(`chd ${cls}`.trim(), label, title);
+    fill(this.context, [
+      this.headDate,
+      head("Project"),
+      head("Tool"),
+      head("", "", "Outcome: succeeded, failed, or refused"),
+      head("Input", "", "The command a call ran, or the file it touched"),
+      head("Risk", "chd-end", "The worst severity a live rule gives this call"),
+      head("Model", "chd-end", "What a local model scored it, 1 to 5 — advisory, not a rule"),
+      head("Took", "chd-end"),
+      head("Decided by", "chd-end", "What allowed or refused the call"),
+    ]);
+  }
+
   private updateContext(first: number): void {
     const item = this.plan.at(first);
-    let left = "";
+    let day = "";
     if (item !== null) {
       const row = this.store.get(item.block, item.offset);
-      if (row?.call.called_at != null) left = dayLabel(row.call.called_at);
+      if (row?.call.called_at != null) day = dayLabel(row.call.called_at);
     }
-    fill(this.context, [span("cleft", left), span("cright", "")]);
+    this.headDate.textContent = day;
+    // 62px holds `04:44:59`, not `Today · Sep 6`, so the long form is the
+    // tooltip and the cell ellipsizes. Widening the column would cost every
+    // row the space to spell out a date that changes as you scroll.
+    this.headDate.title = day;
   }
 
   private showState(content: HTMLElement): void {

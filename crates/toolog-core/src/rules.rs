@@ -267,6 +267,14 @@ const REFUSALS_CTE: &str = "WITH refusals AS MATERIALIZED (
      WHERE decision = 'reject' AND input_summary IS NOT NULL)
 ";
 
+/// The same declaration, as a clause that follows one rather than opening the
+/// `WITH`. [`matched_rules`] declares its own page CTE first.
+const REFUSALS_CTE_BODY: &str = ", refusals AS MATERIALIZED (
+     SELECT session_id, tool_name, called_at, tool_use_id, input_summary
+     FROM tool_call
+     WHERE decision = 'reject' AND input_summary IS NOT NULL)
+";
+
 impl Compiled {
     /// The `WITH` clause a statement using this fragment must carry.
     pub(crate) fn with_sql(&self) -> &'static str {
@@ -1011,6 +1019,122 @@ pub(crate) fn risk_clause(
         binds,
         needs_refusals,
     })
+}
+
+/// Which live rules matched each of these calls.
+///
+/// The row and the detail pane both need "what is this call's risk", and the
+/// honest answer is the one the review would give — so this evaluates the *same
+/// compiled conditions* `risk_clause` and `reconcile` use, rather than reading
+/// `rule_sighting`. A sighting is a record of the last review; a reader looking
+/// at a row wants what is true now, and on a store nobody has opened the Risk
+/// tab on the ledger is empty while the rules still have opinions.
+///
+/// What makes that affordable is the `page` CTE: the conditions are evaluated
+/// against the ids handed in — one screen of rows, or one call — never the
+/// whole table. Phase 11 measured the unbounded version at 2.3 seconds.
+///
+/// Dismissed rules are skipped, matching the timeline's `@risk:` filter and the
+/// review's posture table: a rule nobody is watching should not colour a row.
+///
+/// The ids are bound as one JSON array rather than a placeholder each, so a
+/// page of 200 rows over a dozen rules is one bind and not 2,400.
+pub fn matched_rules<S: std::hash::BuildHasher>(
+    conn: &Connection,
+    rules: &[Rule],
+    dismissed: &HashMap<String, Dismissal, S>,
+    ids: &[String],
+) -> Result<HashMap<String, Vec<String>>> {
+    let mut found: HashMap<String, Vec<String>> = HashMap::new();
+    let live: Vec<&Rule> = rules
+        .iter()
+        .filter(|r| !dismissed.contains_key(&r.id))
+        .collect();
+    if ids.is_empty() || live.is_empty() {
+        return Ok(found);
+    }
+
+    let compiled: Vec<(&Rule, Compiled)> = live.into_iter().map(|r| (r, where_for(r))).collect();
+    let needs_refusals = compiled.iter().any(|(_, c)| c.needs_refusals);
+
+    // One row per call, one **column** per rule, rather than one statement per
+    // rule `UNION ALL`-ed together. Measured on the owner's store — 5,141 calls,
+    // twelve rules, a 200-row page:
+    //
+    // | shape                                   | per page |
+    // |-----------------------------------------|----------|
+    // | a branch per rule, `IN (page)`          |    45 ms |
+    // | a branch per rule, joined from `page`   |   125 ms |
+    // | one pass, a column per rule (this)      |   2.6 ms |
+    //
+    // The branch forms make the planner choose an access path twelve times, and
+    // it chose to scan `tool_call` for most of them. This shape gives it one
+    // question: walk these 200 rows. The conditions are then arithmetic on rows
+    // already in hand.
+    //
+    // End to end that is a timeline page of 200 rows going from 1.7 ms to
+    // 8.4 ms, on a thread that is not the window's. The alternative — reading
+    // `rule_sighting` — would be nearly free and would be answering a different
+    // question: what the last review found, not what the rules say now.
+    let columns: Vec<String> = compiled
+        .iter()
+        .enumerate()
+        .map(|(i, (_, c))| format!("({}) AS m{i}", c.where_sql))
+        .collect();
+
+    let refusals = if needs_refusals {
+        REFUSALS_CTE_BODY
+    } else {
+        ""
+    };
+    let sql = format!(
+        "WITH page(tool_use_id) AS MATERIALIZED (SELECT value FROM json_each(?)){refusals}
+         SELECT tc.tool_use_id, {}
+           FROM page
+           JOIN tool_call tc ON tc.tool_use_id = page.tool_use_id
+           LEFT JOIN session s ON s.session_id = tc.session_id",
+        columns.join(", ")
+    );
+
+    let list = serde_json::to_string(ids).unwrap_or_else(|_| "[]".to_string());
+    let mut binds: Vec<&dyn ToSql> = vec![&list];
+    for (_, c) in &compiled {
+        binds.extend(c.refs());
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(binds.as_slice(), |row| {
+        let tool_use_id: String = row.get(0)?;
+        let mut matched = Vec::new();
+        for (i, (rule, _)) in compiled.iter().enumerate() {
+            // A condition over a `NULL` column is `NULL`, not false, so this
+            // asks for a definite yes rather than for "not no".
+            if row.get::<_, Option<bool>>(i + 1)? == Some(true) {
+                matched.push(rule.id.clone());
+            }
+        }
+        Ok((tool_use_id, matched))
+    })?;
+    for row in rows {
+        let (tool_use_id, matched) = row?;
+        if !matched.is_empty() {
+            found.insert(tool_use_id, matched);
+        }
+    }
+    Ok(found)
+}
+
+/// The worst severity among a set of matched rule ids.
+///
+/// `None` for a call no live rule matched, which is a different statement from
+/// `info` and is drawn as nothing rather than as a fourth badge.
+#[must_use]
+pub fn worst_severity(rules: &[Rule], matched: &[String]) -> Option<Severity> {
+    matched
+        .iter()
+        .filter_map(|id| rules.iter().find(|r| &r.id == id))
+        .map(|r| r.severity)
+        .max()
 }
 
 /// The word a severity is written as, in a rules file and in the query bar.

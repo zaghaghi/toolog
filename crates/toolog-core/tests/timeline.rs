@@ -695,7 +695,208 @@ fn with_verdicts() -> (Db, llm::Pair) {
     (db, pair)
 }
 
-/// `@llm-risk:>=4` narrows to what the model scored at least that badly.
+/// A row carries the severity of the rules that match it, so `@risk:high`
+/// narrows to five rows that each say what put them there.
+#[test]
+fn a_row_carries_the_worst_severity_of_the_rules_that_match_it() {
+    let db = seeded();
+    let rules = toolog_core::rules::load(None).expect("built-in rules");
+    let dismissed = toolog_core::rules::dismissed_rules(db.conn()).expect("dismissals");
+    let filter = TimelineFilter::default();
+    let lens = query::Lens::with_rules(&filter, &rules, &dismissed);
+    let rows = query::timeline_rows(db.conn(), lens, Page::default()).expect("rows");
+
+    let flagged: Vec<&query::TimelineRow> = rows.iter().filter(|r| r.risk.is_some()).collect();
+    assert!(
+        !flagged.is_empty(),
+        "the corpus has `rm -rf` in it and a built-in rule for exactly that"
+    );
+    for row in flagged {
+        assert!(
+            !row.rule_titles.is_empty(),
+            "a severity with no rule behind it is a number a reader cannot check"
+        );
+    }
+}
+
+/// A lens with no rules leaves it alone, which is what `toolog export` wants: a
+/// severity that changes with a file the export does not carry is not a column
+/// an export should have.
+#[test]
+fn a_lens_with_no_rules_reports_no_severity() {
+    let db = seeded();
+    let filter = TimelineFilter::default();
+    let rows = query::timeline_rows(db.conn(), &filter, Page::default()).expect("rows");
+
+    assert!(!rows.is_empty());
+    assert!(rows.iter().all(|r| r.risk.is_none()));
+    assert!(rows.iter().all(|r| r.rule_titles.is_empty()));
+}
+
+/// The row and the filter must agree: every row of an `@risk:<severity>` list
+/// is a row the annotation gives that severity.
+///
+/// Over every severity the corpus actually trips, rather than a hard-coded
+/// `high` — the built-in rules are a file that changes, and a test that has to
+/// be edited when a rule is retuned is a test that gets deleted.
+#[test]
+fn the_severity_a_row_shows_is_the_one_the_filter_selected_it_for() {
+    let db = seeded();
+    let rules = toolog_core::rules::load(None).expect("built-in rules");
+    let dismissed = toolog_core::rules::dismissed_rules(db.conn()).expect("dismissals");
+
+    let mut checked = 0;
+    for (word, severity) in [
+        ("high", toolog_core::rules::Severity::High),
+        ("medium", toolog_core::rules::Severity::Medium),
+        ("low", toolog_core::rules::Severity::Low),
+        ("info", toolog_core::rules::Severity::Info),
+    ] {
+        let filter = TimelineFilter {
+            risk: Some(word.to_string()),
+            ..TimelineFilter::default()
+        };
+        let lens = query::Lens::with_rules(&filter, &rules, &dismissed);
+        let rows = query::timeline_rows(db.conn(), lens, Page::default()).expect("rows");
+        for row in &rows {
+            checked += 1;
+            // The worst severity, so a call two rules caught shows the higher
+            // of them — it is still selected by both.
+            assert!(
+                row.risk.is_some_and(|r| r >= severity),
+                "@risk:{word} selected a row the annotation calls {:?}",
+                row.risk
+            );
+        }
+    }
+    assert!(checked > 0, "the corpus trips no rule at all");
+}
+
+/// A rule someone set aside stops colouring rows, exactly as it stops filling
+/// the timeline and stops counting against a project.
+#[test]
+fn a_dismissed_rule_does_not_colour_a_row() {
+    let db = seeded();
+    let rules = toolog_core::rules::load(None).expect("built-in rules");
+    let dismissed = toolog_core::rules::dismissed_rules(db.conn()).expect("dismissals");
+    let filter = TimelineFilter::default();
+
+    let before = query::timeline_rows(
+        db.conn(),
+        query::Lens::with_rules(&filter, &rules, &dismissed),
+        Page::default(),
+    )
+    .expect("rows");
+    let flagged: Vec<String> = before
+        .iter()
+        .filter(|r| r.risk.is_some())
+        .flat_map(|r| r.rule_titles.clone())
+        .collect();
+    assert!(!flagged.is_empty());
+
+    // Set every rule aside and nothing is coloured any more.
+    let all_aside: std::collections::HashMap<String, toolog_core::rules::Dismissal> = rules
+        .iter()
+        .map(|r| {
+            (
+                r.id.clone(),
+                toolog_core::rules::Dismissal {
+                    rule_id: r.id.clone(),
+                    note: "not watching".to_string(),
+                    at: 0,
+                },
+            )
+        })
+        .collect();
+    let after = query::timeline_rows(
+        db.conn(),
+        query::Lens::with_rules(&filter, &rules, &all_aside),
+        Page::default(),
+    )
+    .expect("rows");
+    assert!(after.iter().all(|r| r.risk.is_none()));
+}
+
+/// A row carries what the model said about it, so a filtered list can show
+/// *why* each row is in it rather than being a list of commands with no reason.
+#[test]
+fn a_row_carries_the_verdict_when_the_lens_names_a_pair() {
+    let (db, pair) = with_verdicts();
+    let filter = TimelineFilter {
+        model_risk: Some(">=4".to_string()),
+        ..TimelineFilter::default()
+    };
+    let lens = query::Lens::plain(&filter).and_verdicts(&pair);
+    let rows = query::timeline_rows(db.conn(), lens, Page::default()).expect("rows");
+
+    assert_eq!(rows.len(), 2);
+    for row in &rows {
+        assert!(
+            row.model_score.is_some_and(|s| s >= 4),
+            "every row of an @model-risk:>=4 list carries the score that put it there"
+        );
+        assert!(
+            row.model_intent.as_ref().is_some_and(|i| !i.is_empty()),
+            "and the sentence behind that score"
+        );
+    }
+}
+
+/// The two columns are a lookup, not a filter: an unfiltered timeline carries
+/// them too, which is what puts the marker on a row nobody went looking for.
+#[test]
+fn an_unfiltered_row_carries_a_verdict_and_an_unexamined_one_carries_none() {
+    let (db, pair) = with_verdicts();
+    let filter = TimelineFilter::default();
+    let lens = query::Lens::plain(&filter).and_verdicts(&pair);
+    let rows = query::timeline_rows(db.conn(), lens, Page::default()).expect("rows");
+
+    assert_eq!(rows.iter().filter(|r| r.model_score.is_some()).count(), 3);
+    assert!(
+        rows.iter().any(|r| r.model_score.is_none()),
+        "the corpus is bigger than the three calls a verdict was recorded for"
+    );
+}
+
+/// With no model configured the columns are not in the query at all, and a
+/// store that has never had one pays nothing for a feature it is not using.
+#[test]
+fn a_lens_with_no_pair_reports_no_scores() {
+    let (db, _) = with_verdicts();
+    let filter = TimelineFilter::default();
+    let rows = query::timeline_rows(db.conn(), &filter, Page::default()).expect("rows");
+
+    assert!(!rows.is_empty());
+    assert!(rows.iter().all(|r| r.model_score.is_none()));
+    assert!(rows.iter().all(|r| r.model_intent.is_none()));
+}
+
+/// The verdict columns bind parameters in the same statement as the snippet and
+/// the outer match, and SQLite numbers those left to right — so a search that
+/// also carries a pair is where a mis-ordered bind list shows up.
+#[test]
+fn a_search_and_a_verdict_lookup_bind_in_the_right_order() {
+    let (db, pair) = with_verdicts();
+    let filter = TimelineFilter {
+        query: Some("cargo".to_string()),
+        ..TimelineFilter::default()
+    };
+    let lens = query::Lens::plain(&filter).and_verdicts(&pair);
+    let rows = query::timeline_rows(db.conn(), lens, Page::default()).expect("rows");
+
+    assert!(!rows.is_empty(), "the corpus has cargo commands in it");
+    assert!(
+        rows.iter().all(|r| r.snippet.is_some()),
+        "a searched page is still annotated with where the match was"
+    );
+    assert!(
+        rows.iter().any(|r| r.model_score.is_some()),
+        "and the verdict columns still find their own bindings — swap them with \
+         the snippet's and this is what stops being true"
+    );
+}
+
+/// `@model-risk:>=4` narrows to what the model scored at least that badly.
 #[test]
 fn a_score_comparison_selects_the_calls_at_or_above_it() {
     let (db, pair) = with_verdicts();
@@ -703,14 +904,14 @@ fn a_score_comparison_selects_the_calls_at_or_above_it() {
 
     for (written, expected) in [(">=4", 2), (">4", 1), ("5", 1), ("<=2", 1), ("2", 1)] {
         let filter = TimelineFilter {
-            llm_risk: Some(written.to_string()),
+            model_risk: Some(written.to_string()),
             ..TimelineFilter::default()
         };
         let lens = query::Lens::plain(&filter).and_verdicts(&pair);
         assert_eq!(
             query::timeline_count(conn, lens).expect("count"),
             expected,
-            "@llm-risk:{written}"
+            "@model-risk:{written}"
         );
     }
 }
@@ -749,7 +950,7 @@ fn intent_searches_what_the_model_said_rather_than_what_the_command_was() {
 fn the_activity_chart_narrows_by_verdict_like_any_other_filter() {
     let (db, pair) = with_verdicts();
     let filter = TimelineFilter {
-        llm_risk: Some(">=4".to_string()),
+        model_risk: Some(">=4".to_string()),
         ..TimelineFilter::default()
     };
     let lens = query::Lens::plain(&filter).and_verdicts(&pair);
@@ -767,7 +968,7 @@ fn another_models_verdicts_are_not_these_ones() {
     let (db, _) = with_verdicts();
     let other = llm::Pair::new("model-b", "prompt-a");
     let filter = TimelineFilter {
-        llm_risk: Some(">=4".to_string()),
+        model_risk: Some(">=4".to_string()),
         ..TimelineFilter::default()
     };
     let lens = query::Lens::plain(&filter).and_verdicts(&other);
@@ -788,7 +989,7 @@ fn a_verdict_filter_without_a_model_fails_loudly() {
     let (db, _) = with_verdicts();
     for filter in [
         TimelineFilter {
-            llm_risk: Some(">=4".to_string()),
+            model_risk: Some(">=4".to_string()),
             ..TimelineFilter::default()
         },
         TimelineFilter {
@@ -808,14 +1009,14 @@ fn an_unreadable_score_is_reported_rather_than_matching_nothing() {
     let (db, pair) = with_verdicts();
     for written in ["high", "6", ">=x", ""] {
         let filter = TimelineFilter {
-            llm_risk: Some(written.to_string()),
+            model_risk: Some(written.to_string()),
             ..TimelineFilter::default()
         };
         let lens = query::Lens::plain(&filter).and_verdicts(&pair);
         let error = query::timeline_count(db.conn(), lens).expect_err(written);
         assert!(
             error.to_string().contains("score comparison"),
-            "@llm-risk:{written} -> {error}"
+            "@model-risk:{written} -> {error}"
         );
     }
 }
@@ -827,7 +1028,7 @@ fn a_verdict_filter_composes_with_the_rest_of_the_lens() {
     let conn = db.conn();
 
     let all = TimelineFilter {
-        llm_risk: Some(">=2".to_string()),
+        model_risk: Some(">=2".to_string()),
         ..TimelineFilter::default()
     };
     let lens = query::Lens::plain(&all).and_verdicts(&pair);

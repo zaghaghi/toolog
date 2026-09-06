@@ -39,7 +39,7 @@ export function emptyFilter(): TimelineFilter {
     risk: null,
     rule_id: null,
     intent: null,
-    llm_risk: null,
+    model_risk: null,
   };
 }
 
@@ -117,7 +117,7 @@ const KEYS: Record<string, keyof TimelineFilter> = {
   // configured when the link is *opened* — a verdict belongs to a model, and a
   // URL cannot carry 3.1 GB of one.
   intent: "intent",
-  llmrisk: "llm_risk",
+  modelrisk: "model_risk",
 };
 
 const NUMERIC = new Set<keyof TimelineFilter>(["since", "until", "provenance"]);

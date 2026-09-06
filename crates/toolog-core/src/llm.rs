@@ -438,7 +438,34 @@ pub fn verdict_for(conn: &Connection, pair: &Pair, tool_use_id: &str) -> Result<
     Ok(row)
 }
 
-/// A comparison an `@llm-risk:` token can express: `>=4`, `4`, `<2`.
+/// Whether one call is in the population the examination draws from.
+///
+/// [`pending`]'s first two conditions asked about a single id, and it is what
+/// lets the detail pane tell **"the model has not got to this yet"** from
+/// **"this was never going to be looked at"**. Those are different facts about
+/// a call, and a pane that showed the first while meaning the second would
+/// repeat the mistake the whole phase exists to correct — reporting *not
+/// examined* as if it were *nothing to say*.
+///
+/// Deliberately not parameterised by a pair: eligibility is a property of the
+/// call and the rules, and no model has an opinion on it.
+pub fn is_eligible(conn: &Connection, tool_use_id: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (
+             SELECT 1 FROM tool_call tc
+              WHERE tc.tool_use_id = ?
+                AND tc.tool_name = 'Bash'
+                AND tc.input_summary IS NOT NULL
+                AND tc.input_summary <> ''
+                AND NOT EXISTS (
+                    SELECT 1 FROM rule_sighting rs
+                     WHERE rs.tool_use_id = tc.tool_use_id))",
+        params![tool_use_id],
+        |r| r.get(0),
+    )?)
+}
+
+/// A comparison an `@model-risk:` token can express: `>=4`, `4`, `<2`.
 ///
 /// A score is a number on a scale, unlike `@risk:high` which is a word from a
 /// closed set — so the useful question is "at least this bad", and a filter that
@@ -473,7 +500,7 @@ impl ScoreOp {
 impl ScoreFilter {
     /// Read `>=4`, `>3`, `<=2`, `<2`, `=5` or a bare `4`.
     ///
-    /// Returns `None` for anything else rather than guessing: `@llm-risk:high`
+    /// Returns `None` for anything else rather than guessing: `@model-risk:high`
     /// is a reader confusing this with `@risk:`, and answering it with an empty
     /// list would teach them the wrong thing.
     #[must_use]
@@ -564,6 +591,45 @@ mod tests {
             .map(|p| p.tool_use_id)
             .collect();
         assert_eq!(ids, ["t3"]);
+    }
+
+    /// The detail pane's question: is this a call the examination will reach?
+    ///
+    /// The three exclusions matter individually, because each produces a
+    /// *different* silence in the pane and getting one wrong reports "not
+    /// examined" about a call nothing was ever going to examine.
+    #[test]
+    fn eligibility_is_bash_with_a_command_that_no_rule_matched() {
+        let db = store();
+        let is = |id: &str| is_eligible(db.conn(), id).expect("eligible");
+
+        assert!(is("t1"), "Bash, has a command, no sighting");
+        assert!(
+            !is("t2"),
+            "a rule already matched it — it was never unexamined"
+        );
+        assert!(!is("t4"), "not Bash (task 13.12)");
+        assert!(!is("t5"), "no command to show a model");
+        assert!(!is("nope"), "a call the store does not have");
+    }
+
+    /// Eligibility is about the call, never about who has answered for it —
+    /// otherwise the pane would stop saying "examined" the moment it was.
+    #[test]
+    fn a_call_that_has_been_answered_for_is_still_eligible() {
+        let db = store();
+        record(
+            db.conn(),
+            &pair(),
+            &[Record::ok(
+                "t1",
+                said(2, "read", "Lists files.", false),
+                1,
+                900,
+            )],
+        )
+        .expect("record");
+        assert!(is_eligible(db.conn(), "t1").expect("eligible"));
     }
 
     /// Task 13.10: a failure is recorded, which is also what stops it being

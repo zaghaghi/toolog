@@ -123,7 +123,7 @@ and [Phase 12](12-findings-in-time.md), whose sighting ledger is the shape a sto
   `gemma.gguf` are not the same model, and a verdict that cannot name what produced it is not
   evidence of anything.
 - [x] **13.15** The timeline gains `@intent:<text>` — full-text over `intent_summary` — and
-  `@llm-risk:>=4`. The histogram then comes free, exactly as `@risk:high` did in task 12.11, and
+  `@model-risk:>=4`. The histogram then comes free, exactly as `@risk:high` did in task 12.11, and
   "when did the agent start doing network things" becomes a chart.
 - [x] **13.16** The risk view gains a section that is **explicitly not the rules**: how many calls
   have been examined, how many are queued, and the highest-scoring unmatched commands. It states the
@@ -336,13 +336,13 @@ fixed; the second changed `dd if=/dev/zero of=/dev/disk0` from 2 to 5.
 - **A failed verdict is a row.** It is what makes "asked and could not answer" distinguishable from
   "never asked", and — not the original reason, but the more load-bearing one — it is what stops a
   call the model cannot answer for being retried on every pass forever.
-- **`@llm-risk`, not a value of `@risk`.** One token that could mean either a deterministic
+- **`@model-risk`, not a value of `@risk`.** One token that could mean either a deterministic
   severity or a model's guess would be the first step towards a view that mixes them. The section in
   the risk view goes further: its own surface, the histogram's magnitude ramp rather than the rules'
   red and amber, scores as digits, and none of the four severity words. A test asserts all of it,
   because "a reader must be able to tell at a glance which numbers a rule produced" is the kind of
   requirement that erodes silently.
-- **The drill-through hands the timeline a query, not a filter.** `onOpenQuery("@llm-risk:>=4")`
+- **The drill-through hands the timeline a query, not a filter.** `onOpenQuery("@model-risk:>=4")`
   rather than setting the field, so what lands in the box is a sentence the reader could have
   written — and can edit, which is most of its value. `onOpenRule` still builds a filter, because a
   rule id is not something anyone composes.
@@ -378,3 +378,88 @@ It moves. The eligible population was 3,618 when the phase was specified and 3,8
 backfill, because toolog was recording the session that was building this. The live path is visible
 in the same data: 58 calls examined within seconds of running, their summaries accurate descriptions
 of commands from this very session. That is task 13.8 verified in production rather than in a test.
+
+## After the phase closed
+
+Three things the phase shipped without, found by reading the result back rather than by a test.
+
+- **The verdict was missing from the one place a reader stops.** Clicking a scored command in the
+  risk view opened the detail pane, and the verdict that sent them there was not in it — the intent
+  summary, the score and the model that produced them all disappeared at the moment the reader was
+  looking at that single call most closely. The pane now carries a **second opinion block**, with
+  the same separation the risk section has: its own surface, a digit rather than a severity word,
+  and the pair stated underneath. It says all three things the store distinguishes — a verdict, an
+  answer the schema rejected, and **not examined yet** — and stays silent for a call no model has
+  answered for and none was ever going to, so an `Edit` is not reported as unexamined.
+- **A filtered timeline was a list of commands with no visible reason.** With `@model-risk:>=4`
+  typed, every row matched and none said why. A row now carries the score and the sentence behind
+  it, in **its own column** beside the command with the model's sentence on hover. The first cut
+  put it inside the summary cell rather than in a column, on the argument that the row's columns
+  are what the store witnessed and a non-deterministic score among them would start reading as one
+  of them. That was wrong in practice for a plain reason: the summary is the column that truncates,
+  so on most rows the mark was never visible at all. The separation the argument was protecting is
+  done by the *drawing* instead — a digit in the model's hue, next to a word in the rules' red, and
+  never the same cell.
+- **`@llm-risk` became `@model-risk`.** The prefix names the author of the number rather than how
+  it was made, matching the noun the Status card and `toolog model set` already use — and it is
+  spelled that way in the store's `TimelineFilter` and the URL hash too. `deep-risk` was considered
+  and rejected: it implies a more thorough analysis than the rules, which inverts exactly the
+  relationship this phase established. The token had never appeared in a release, so nothing needed
+  an alias. The table is still `llm_verdict` and the crate is still `toolog-llm`; renaming those
+  would be a migration for no reader's benefit.
+
+## And then: what the rules were not saying
+
+Not a phase — no spec and no task list, which is why it is recorded here rather than under a number
+of its own.
+
+Reading Phase 13 back raised the question it had not asked: the *rules* were no more visible in the
+timeline than the model was. `@risk:high` narrowed the list to ten rows and then left the reader to
+work out which rule had put each of them there, and the detail pane — the place a reader stops when
+they want to know about one call — said nothing about risk at all.
+
+- **A severity column, and the matched rules in the pane.** Both are evaluated against the rules in
+  force rather than read from `rule_sighting`: a sighting records what the last review found, and a
+  reader looking at a row wants what is true now. On a store nobody has opened the Risk tab on, the
+  ledger is empty while the rules still have opinions.
+- **What that cost, and the shape that paid for it.** `rules::matched_rules` evaluates every live
+  rule's compiled condition over one page of ids. Three shapes were measured on the owner's store —
+  5,207 calls, twelve rules, 200 rows: a statement per rule tested with `IN (page)` was 45 ms; the
+  same joined from a materialised page was 125 ms; one pass with a **column per rule** is 2.6 ms.
+  The branch forms make the planner choose an access path twelve times and it chose to scan
+  `tool_call` for most of them. A timeline page goes from 1.7 ms to 8.4 ms, on a thread that is not
+  the window's.
+- **Two columns, never one.** The rules' severity is a word in red and amber; the model's score is a
+  digit in the second opinion's hue. [ADR-0013](../adr/0013-a-verdict-is-stored-not-recomputed.md)
+  says a reader must be able to tell at a glance which of the two produced a number, and a shared
+  column would be the fastest way to lose that. They also rarely both appear: the model only
+  examines the calls **no rule matched**, so a row with a severity has no score by construction.
+
+**Every column is named.** The strip above the list already existed, carrying the day of the topmost
+visible row and nothing else; the other eight columns got their names in the same 22px, so the
+header costs no height at all. The day stays in the first cell, which is the label the time column
+would have had — `Sep 6` over `04:44:59`. The outcome column is 18px of glyph and no word fits, so
+its name is a tooltip: a header that forced the column wide enough to be labelled would have cost
+every row the space.
+
+Five smaller things went with it.
+
+- **The window is an application, not a page.** A WebView makes every label selectable and every run
+  of text draggable. Selection is now off by default and switched back on for the evidence — a
+  command, a result body, a path, a diff, an id — because an audit trail nobody can quote out of is
+  not much of one.
+- **`Toolog`, with the version beside it.** The window title and the tray, and `v1.1.0` in the app
+  bar, read out of `Cargo.toml` at build time by `vite.config.ts` so it cannot disagree with
+  `toolog --version`. The bundle is still `toolog.app`: renaming it would move the install path, the
+  cask and the LaunchAgent for a capital letter.
+- **Less text.** Four captions under four numbers, two lines of methodology above a table, a
+  paragraph of caveat under a heading that already said it, and an instruction on how to drag a
+  chart — all of it true, all of it read once and skipped past every time after. What survives is
+  the claim that has to survive: advisory, not a rule, wrong sometimes. The rest is a tooltip.
+- **The header cells got their own classes.** Reusing the row's looked like a way to keep the two in
+  step, and gave the word "Tool" the tool badge's grey pill.
+- **The screenshots** were retaken against the owner's own store and are in the README: the
+  timeline, the risk review, and the timeline under each of the two filters this phase added. The
+  home directory is blurred — found by asking Vision for the token `Users` and whatever segment
+  follows it rather than for one spelling of a name, so a partly covered or misread username is
+  still caught, and each redacted image is read back to confirm nothing legible survived.

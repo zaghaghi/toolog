@@ -131,7 +131,9 @@ function figure(spec: ChartSpec, plot: HTMLElement, summary: string): HTMLElemen
   return el("figure", { class: "chart" }, [
     el("figcaption", { class: "chart-head" }, [
       el("div", { class: "chart-titles" }, [
-        el("span", { class: "chart-title", text: spec.title }),
+        // An empty title draws nothing rather than an empty line: a chart whose
+        // section is already named does not need naming twice.
+        spec.title === "" ? null : el("span", { class: "chart-title", text: spec.title }),
         spec.caption === undefined
           ? null
           : el("span", { class: "chart-caption", text: spec.caption }),

@@ -7,7 +7,14 @@
 //! evidence from one both lanes agree on, and the reader should not have to
 //! work that out.
 
-import type { FileChange, SourceView, TimelineFilter, ToolCallDetail } from "./bindings";
+import type {
+  FileChange,
+  MatchedRule,
+  SecondOpinion,
+  SourceView,
+  TimelineFilter,
+  ToolCallDetail,
+} from "./bindings";
 import { getSource, getToolCall, revealTranscript } from "./bindings";
 import { append, el, fill, orDash, span } from "./dom";
 import { bytes, count, duration, EM_DASH, fullStamp, isByReference, lanes, shortPath } from "./format";
@@ -113,10 +120,9 @@ function sourceSection(toolUseId: string): HTMLElement {
         fill(body, [
           el("div", { class: "mono wrap", text: at, title: at }),
           well(pretty(source.body), "well small"),
-          el("div", { class: "note" }, [
-            "The stored line is the evidence; the file is a convenience. ",
-            open,
-          ]),
+          // The stored line is the evidence and the file is a convenience —
+          // which is the button's tooltip, not a sentence under every call.
+          el("div", { class: "note", title: "The stored line is the evidence; the file is a convenience" }, [open]),
         ]);
       })
       .catch((error: unknown) => {
@@ -128,6 +134,116 @@ function sourceSection(toolUseId: string): HTMLElement {
 
   body.append(find);
   box.append(body);
+  return box;
+}
+
+/**
+ * The rules that match this call, worst first.
+ *
+ * The pane showed a call's whole envelope and never said whether anything had
+ * flagged it — so `@risk:high` narrowed the list to five rows and then left the
+ * reader to guess which rule put each of them there.
+ *
+ * Each rule is a button that narrows the timeline to every other call it
+ * caught, which is the question a reader has the moment they read the title.
+ */
+function matchedRules(matched: MatchedRule[], onFilter: Narrow): HTMLElement | null {
+  if (matched.length === 0) return null;
+  const box = el("div", { class: "drisk" });
+  box.append(heading("Risk"));
+  for (const rule of matched) {
+    const open = el("button", { class: "drisk-rule", attrs: { type: "button" } });
+    open.append(
+      span(`sev-chip ${rule.severity}`, rule.severity),
+      el("span", { class: "drisk-title", text: rule.title }),
+    );
+    open.title = `Every call ${rule.id} matched`;
+    open.addEventListener("click", () => onFilter({ rule_id: rule.id }));
+    box.append(open);
+  }
+  return box;
+}
+
+/**
+ * What a local model said about this call — the risk view's section, for one
+ * call (Phase 13, ADR-0013).
+ *
+ * The pane is where a reader has stopped on a single call and is looking at it
+ * closely, and until now it was the one place the second opinion disappeared:
+ * clicking a scored command in the risk view opened this pane, and the verdict
+ * that sent them here was not in it.
+ *
+ * Everything the risk section does to keep itself apart from the rules is done
+ * here too, because the pressure is worse in a pane that is otherwise all
+ * record: its own surface, a digit rather than one of the four severity words,
+ * the model's own colour, and the pair stated in words underneath. A verdict is
+ * **not** what the audit trail asserts, and a pane that let it look like one
+ * would be the mistake ADR-0013 spent its third decision avoiding.
+ *
+ * Three states, and they are three different facts — the distinction the store
+ * pays a `status` column to keep:
+ *
+ * - **A verdict.** What it said, and how sure the schema was that it said it.
+ * - **An answer that did not validate.** Asked, and could not answer.
+ * - **Nothing yet.** In the queue. Never rendered as "fine": reporting an
+ *   unexamined call as nothing is the thing this whole phase exists to fix.
+ */
+function secondOpinion(opinion: SecondOpinion | null): HTMLElement | null {
+  if (opinion === null) return null;
+
+  const box = el("div", { class: "dllm" });
+  box.append(el("h3", { text: "A second opinion" }));
+
+  const verdict = opinion.verdict;
+  if (verdict !== null) {
+    box.append(
+      el("div", { class: "dllm-said" }, [
+        el("span", {
+          class: `llm-score llm-score-${String(verdict.risk_score)}`,
+          text: String(verdict.risk_score),
+          title: `${String(verdict.risk_score)} of 5 — a model's score, not a rule's severity`,
+        }),
+        el("span", { class: "dllm-intent", text: verdict.intent_summary }),
+      ]),
+      facts([
+        ["Category", verdict.category],
+        ["Destructive", verdict.is_destructive ? "yes" : "no"],
+        ["Outside the project", verdict.violates_sandbox ? "yes" : "no"],
+        ["Examined", opinion.at === null ? EM_DASH : fullStamp(opinion.at)],
+        ["Took", opinion.ms === null ? EM_DASH : duration(opinion.ms)],
+      ]),
+    );
+  } else if (opinion.error !== null) {
+    // Asked and could not answer, which is not the same as never asked — see
+    // task 13.10. Both would look like an empty pane if this said nothing.
+    box.append(
+      el("p", { class: "dllm-none" }, [
+        "Answered, and the schema rejected it: ",
+        el("code", { text: opinion.error }),
+      ]),
+    );
+  } else {
+    box.append(
+      el("p", {
+        class: "dllm-none",
+        text: "Not examined yet.",
+        title: "No rule matches this call and the model has not reached it — unexamined, not fine",
+      }),
+    );
+  }
+
+  // The one line that never goes: advisory, and whose opinion it is. The rest
+  // of the argument is in ADR-0013 and does not need repeating under every
+  // call.
+  box.append(
+    el("p", {
+      class: "dllm-provenance",
+      title: "A local model's reading. Not reproducible, and wrong sometimes.",
+    }, [
+      "Advisory · ",
+      el("code", { text: opinion.pair }),
+    ]),
+  );
   return box;
 }
 
@@ -182,6 +298,14 @@ function render(detail: ToolCallDetail, onFilter: Narrow): HTMLElement {
     ]),
   );
 
+  // The rules first and the model second, in that order everywhere: one is what
+  // the audit trail asserts, the other is a second opinion beside it.
+  const risk = matchedRules(detail.matched_rules, onFilter);
+  if (risk !== null) box.append(risk);
+
+  const opinion = secondOpinion(detail.second_opinion);
+  if (opinion !== null) box.append(opinion);
+
   box.append(
     heading("Session"),
     session === null
@@ -227,10 +351,11 @@ function render(detail: ToolCallDetail, onFilter: Narrow): HTMLElement {
     // large. Say where it is rather than showing the marker.
     box.append(
       heading("Result"),
-      el("p", { class: "note" }, [
-        `This result was ${bytes(call.result_size)} — too large to keep a second copy of. `,
-        "The record is in the evidence store exactly as it arrived; open the source below to read it.",
-      ]),
+      el("p", {
+        class: "note",
+        text: `${bytes(call.result_size)} — kept in the evidence store only. Open the source below.`,
+        title: "Too large to keep a second copy of; the record is there exactly as it arrived",
+      }),
     );
     if (call.result_text !== null && call.result_text !== "") {
       box.append(heading("Result text"), well(call.result_text));

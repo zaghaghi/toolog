@@ -1,4 +1,19 @@
+import { readFileSync } from "node:fs";
+
 import { defineConfig } from "vitest/config";
+
+// The version shown in the window comes from Cargo, like every other version in
+// this project — `tauri.conf.json` is not allowed one either, and a test in
+// crates/toolog-app/tests/bundle.rs says why. Reading it here at build time
+// means there is nothing to keep in sync and nothing that can drift; a parse
+// that fails stops the build rather than shipping a window labelled with the
+// wrong release.
+function workspaceVersion(): string {
+  const cargo = readFileSync(new URL("../Cargo.toml", import.meta.url), "utf8");
+  const found = /\[workspace\.package\][^[]*?\bversion\s*=\s*"([^"]+)"/.exec(cargo);
+  if (found === null) throw new Error("no [workspace.package] version in Cargo.toml");
+  return found[1]!;
+}
 
 // There is no dev server. The bundle is compiled into the binary
 // (`frontendDist` in tauri.conf.json), so `just run` rebuilds it and starts the
@@ -13,6 +28,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   base: "./",
   clearScreen: false,
+  define: {
+    __TOOLOG_VERSION__: JSON.stringify(workspaceVersion()),
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,

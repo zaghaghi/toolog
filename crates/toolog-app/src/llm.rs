@@ -54,7 +54,7 @@ const WORST_FROM: i64 = 4;
 struct Inner {
     #[cfg(feature = "inference")]
     analysis: Option<Arc<Analysis>>,
-    /// Kept even after the model is unloaded, so `@llm-risk` still means
+    /// Kept even after the model is unloaded, so `@model-risk` still means
     /// something for verdicts already recorded.
     pair: Option<Pair>,
     starting: bool,
@@ -341,7 +341,7 @@ mod tests {
         );
     }
 
-    /// The pair outlives the model being unloaded, so `@llm-risk` still means
+    /// The pair outlives the model being unloaded, so `@model-risk` still means
     /// something for verdicts already recorded.
     #[test]
     fn stopping_the_model_does_not_forget_which_question_the_verdicts_answered() {

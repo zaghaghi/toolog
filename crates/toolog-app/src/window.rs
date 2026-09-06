@@ -22,7 +22,7 @@ pub(crate) fn show(app: &AppHandle) -> anyhow::Result<()> {
     }
 
     let window = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
-        .title("toolog")
+        .title("Toolog")
         .inner_size(1120.0, 760.0)
         .min_inner_size(720.0, 480.0)
         .build()?;

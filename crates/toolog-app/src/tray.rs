@@ -33,7 +33,7 @@ pub(crate) struct Handles {
 /// Build the tray item and register its menu.
 pub(crate) fn install(app: &AppHandle) -> anyhow::Result<()> {
     let status = MenuItem::with_id(app, "status", "Starting…", false, None::<&str>)?;
-    let open = MenuItem::with_id(app, "open", "Open toolog", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open Toolog", true, None::<&str>)?;
     let pause = CheckMenuItem::with_id(app, "pause", "Pause Capture", true, false, None::<&str>)?;
     let backfill = MenuItem::with_id(app, "backfill", "Import History…", true, None::<&str>)?;
     let logs = MenuItem::with_id(app, "logs", "Reveal Logs", true, None::<&str>)?;
@@ -45,7 +45,7 @@ pub(crate) fn install(app: &AppHandle) -> anyhow::Result<()> {
         toolog_cli::launchagent::status(&toolog_cli::settings::home_dir()).installed,
         None::<&str>,
     )?;
-    let quit = MenuItem::with_id(app, "quit", "Quit toolog", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Toolog", true, None::<&str>)?;
 
     let menu = Menu::with_items(
         app,
@@ -75,7 +75,7 @@ pub(crate) fn install(app: &AppHandle) -> anyhow::Result<()> {
         .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .tooltip("toolog")
+        .tooltip("Toolog")
         .on_menu_event(on_menu_event)
         .build(app)?;
 

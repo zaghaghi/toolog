@@ -150,8 +150,13 @@ export class ActivityHistogram {
 
     fill(this.body, [
       columnChart({
-        title: "Activity",
-        caption: `${count(total)} ${total === 1 ? "call" : "calls"} by ${NOUN[data.size]} — click a column, or drag across to pick a range`,
+        // No title: the "Hide activity" button above it already names the
+        // section, and two labels for one chart is one label too many. The
+        // caption says what the columns are; how to drag one out of them is a
+        // thing the reader discovers in a second and does not need told on
+        // every load.
+        title: "",
+        caption: `${count(total)} ${total === 1 ? "call" : "calls"} by ${NOUN[data.size]}`,
         columns: [NOUN[data.size].replace(/^./, (c) => c.toUpperCase()), "Calls"],
         data: points,
         format: (v) => count(v),

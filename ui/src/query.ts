@@ -75,8 +75,15 @@ export const KEYS: Record<string, KeySpec> = {
    * Deliberately not folded into `@risk`. A rule's severity is deterministic
    * and a model's score is not, and a box in which one token could mean either
    * would be the first step towards a view that mixes them. The naming says so
-   * too: `@llm-risk` carries its own prefix rather than being a value of
+   * too: `@model-risk` carries its own prefix rather than being a value of
    * `@risk`.
+   *
+   * The prefix names the *author* of the number rather than how it was made.
+   * `@model-risk` is the same noun the Status card and `toolog model set` use,
+   * and it claims nothing about the answer's quality — which matters, because
+   * the honest claim is that this one is advisory and sometimes wrong. A name
+   * suggesting a deeper or better analysis than the rules would invert exactly
+   * the relationship [ADR-0013] establishes.
    *
    * Like `@risk`, a link carrying one is evaluated against what is configured
    * when it is *opened* — and unlike `@risk`, it can fail outright: a store
@@ -84,7 +91,7 @@ export const KEYS: Record<string, KeySpec> = {
    * than answering with an empty list.
    */
   intent: { field: "intent", values: "text", hint: "What the model said it does" },
-  "llm-risk": { field: "llm_risk", values: "score", hint: "A model score: >=4, 5, <2" },
+  "model-risk": { field: "model_risk", values: "score", hint: "A model score: >=4, 5, <2" },
 };
 
 const OUTCOMES: string[] = ["ok", "failed", "refused"];
@@ -293,7 +300,7 @@ function apply(
         });
         return;
       }
-      filter.llm_risk = value.trim();
+      filter.model_risk = value.trim();
       return;
     }
     if (spec.values === "risk") {

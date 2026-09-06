@@ -1,6 +1,6 @@
 # Toolog
 
-> **Status: v1.1 — all twelve phases done.** The timeline is a virtualized list over every tool
+> **Status: v1.2 — thirteen phases done.** The timeline is a virtualized list over every tool
 > call, filtered and searched from one `@key:value` box, with an activity histogram you can drag a
 > time range out of, diffs for every `Edit`, a view that lives in the URL, and export to JSON, CSV
 > or Markdown. The risk review runs rules written as data, shows every rule and what it looks for
@@ -12,6 +12,16 @@
 > notarized universal artifact, and removes itself as carefully as it installs: `toolog uninstall`
 > puts `~/.claude/settings.json` back byte for byte and keeps your history unless you say otherwise.
 > See [docs/](docs/README.md).
+>
+> **v1.2 answers what the rules were not saying.** Twelve rules find what someone thought to write a
+> rule for, and **77% of the owner's store was Bash commands no rule had ever matched** — reported as
+> nothing, which reads as *these are fine* and means *these were not examined*. A local model now
+> reads them and says what each was doing, on this machine, with **no network capability added**:
+> you bring the `.gguf`, and the release asserts the shipped binary links no `libcurl`
+> ([ADR-0013](docs/adr/0013-a-verdict-is-stored-not-recomputed.md)). It is advisory throughout —
+> never a rule, never a severity, never a number in the summary. And both verdicts are now visible
+> where a reader actually looks: a severity column and a model-score column in the timeline, never
+> the same column, and both spelled out in the detail pane.
 >
 > **v1.1 is what living with v1.0 changed.** Four views turned out to be two too many: the usage
 > analytics and the live tail are gone, and toolog now captures cost and reports none of it
@@ -28,6 +38,17 @@ without scrolling a terminal that has already gone.
 Toolog captures every tool call, stores it in an embedded database on your machine, and gives you
 three views over it: a forensic timeline, a permission and risk review, and the state of capture
 itself.
+
+| | |
+|---|---|
+| [![The timeline](docs/screenshots/timeline.png)](docs/screenshots/timeline.png) | [![The risk review](docs/screenshots/risk.png)](docs/screenshots/risk.png) |
+| **The timeline.** Every tool call, newest first, under one query box — with the severity a rule gives each call and the score a local model gave the ones no rule matched. | **The risk review.** The rules evaluated, worst first, with what each one looks for whether or not it matched. |
+| [![Filtered to high risk](docs/screenshots/timeline-risk.png)](docs/screenshots/timeline-risk.png) | [![Filtered to the model's score](docs/screenshots/timeline-model-risk.png)](docs/screenshots/timeline-model-risk.png) |
+| **`@risk:high`** — what a rule flagged, and which rule, on hover. | **`@model-risk:>=4`** — what the local model scored 4 or 5, with its one-line reading of each on hover. |
+
+*Home directory blurred. The two columns are never the same column: a rule's severity is
+deterministic, a model's score is not, and [ADR-0013](docs/adr/0013-a-verdict-is-stored-not-recomputed.md)
+is why a reader has to be able to tell which produced a number at a glance.*
 
 ## Nothing leaves your machine
 
@@ -187,8 +208,10 @@ your existing telemetry pipeline is not ours to redirect. See
   sometimes.** The model analysing the history is nineteen times the size of the history, and
   it is a 4.6B quantized model: measured on the owner's store it scores a benign `cargo test`
   at 2 and needed its rubric spelled out before it called a raw-device `dd` dangerous. That is
-  why it is opt-in, advisory, never a rule, and shown in its own section — and why the
-  one-line intent summary may be the half worth keeping even where the score is not. See
+  why it is opt-in, advisory, never a rule, and kept visibly apart from the rules everywhere it
+  appears — its own section in the risk view, its own block in the detail pane, and its own column
+  in the timeline beside the one carrying rule severities — and why the one-line intent summary may
+  be the half worth keeping even where the score is not. See
   [ADR-0013](docs/adr/0013-a-verdict-is-stored-not-recomputed.md).
 - **macOS 11 or later**, since Phase 13: llama.cpp's C++ needs `std::filesystem`. The floor was
   10.15 through v1.1.

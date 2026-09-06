@@ -94,7 +94,7 @@ intent: string | null,
  * filter that could mix them would be the first step towards a view that
  * does.
  */
-llm_risk: string | null, };
+model_risk: string | null, };
 
 export type Page = { limit: number, offset: number, };
 
@@ -111,7 +111,40 @@ snippet: string | null,
  * `None` for a call that changed no file. An `Edit` row without its size
  * is the one row in this list that says nothing about what it did.
  */
-lines_added: number | null, lines_removed: number | null, };
+lines_added: number | null, lines_removed: number | null, 
+/**
+ * What a local model scored this call, when one has looked at it.
+ *
+ * `None` for a call the pair has no accepted verdict for — and for every
+ * call when the lens names no pair, because then the columns are not in
+ * the query at all. **Never rendered as a severity**: the row draws it in
+ * the second opinion's own colour, and the rules' four words are not
+ * available to it (ADR-0013).
+ */
+model_score: number | null, 
+/**
+ * The one sentence the model wrote about it.
+ *
+ * Carried beside the score because a number with no reading of the command
+ * behind it is the thing this phase set out not to produce. The row shows
+ * it on hover; the detail pane shows it outright.
+ */
+model_intent: string | null, 
+/**
+ * The worst live rule severity that matches this call.
+ *
+ * Evaluated against the rules in force, not read from `rule_sighting` — a
+ * reader looking at a row wants what is true now. `None` when no rule
+ * matches, and for every row when the lens carries no rules.
+ *
+ * This is the deterministic half, and it is the one the audit trail
+ * asserts. `model_score` sits beside it and never in it.
+ */
+risk: Severity | null, 
+/**
+ * The titles of the rules that matched, worst first, for the row's tooltip.
+ */
+rule_titles: Array<string>, };
 
 export type Facets = { projects: Array<string>, tools: Array<string>, decision_sources: Array<string>, permission_modes: Array<string>, agents: Array<string>, };
 
@@ -296,6 +329,25 @@ model_path: string | null,
  * should still be there tomorrow.
  */
 analysis_paused: boolean, };
+
+export type Verdict = { 
+/**
+ * One sentence saying what the command does.
+ *
+ * The half of the answer most likely to be worth keeping even when the
+ * score is not — see the phase's stated risks.
+ */
+intent_summary: string, 
+/**
+ * One of `toolog_llm::verdict::CATEGORIES`, checked there.
+ */
+category: string, 
+/**
+ * 1–5. **Never mixed into a severity column**: a rule's severity is
+ * deterministic and this is not, and a reader must be able to tell at a
+ * glance which is which.
+ */
+risk_score: number, is_destructive: boolean, violates_sandbox: boolean, };
 
 export type Progress = { 
 /**
@@ -493,6 +545,33 @@ export type Summary = { files: number, lines: number, stored: number, duplicates
 
 export type Format = "json" | "jsonl" | "csv" | "markdown";
 
+export type MatchedRule = { id: string, title: string, severity: Severity, };
+
+export type SecondOpinion = { 
+/**
+ * Which model and which prompt, short form: `a1b2c3d4e5f6 / 0f1e2d3c4b5a`.
+ */
+pair: string, 
+/**
+ * What the model said, when the schema accepted it.
+ */
+verdict: Verdict | null, 
+/**
+ * Why its answer was rejected. `None` when accepted, and `None` when
+ * nothing has been asked.
+ */
+error: string | null, 
+/**
+ * When the verdict was recorded, in epoch milliseconds. `None` for a call
+ * still in the queue — which is what distinguishes "not examined" from
+ * every other state here.
+ */
+at: number | null, 
+/**
+ * How long the model took, in milliseconds.
+ */
+ms: number | null, };
+
 export type ToolCallDetail = { call: ToolCall, 
 /**
  * Files this call changed, with their diffs.
@@ -502,7 +581,25 @@ file_changes: Array<FileChange>,
  * The envelope the call ran inside: cwd, branch, Claude Code version.
  * `None` for a call whose session the store never learned.
  */
-session: Session | null, };
+session: Session | null, 
+/**
+ * The live rules that match this call, worst first.
+ *
+ * Empty for a call no rule matches, which is the common case and is drawn
+ * as nothing. Evaluated against the rules in force rather than read from
+ * `rule_sighting`, so a pane opened on a store nobody has reviewed still
+ * says what the rules say.
+ */
+matched_rules: Array<MatchedRule>, 
+/**
+ * What a local model said about this call, when there is anything to say.
+ *
+ * `None` when no model has ever run against this store, and also for a
+ * call outside the examined population — an `Edit`, or a Bash command a
+ * rule already matched. Both are cases where the pane is better silent
+ * than reporting an absence nobody was expecting a presence in.
+ */
+second_opinion: SecondOpinion | null, };
 
 export type SourceView = { 
 /**

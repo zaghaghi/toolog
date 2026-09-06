@@ -130,7 +130,7 @@ function openRule(ruleId: string): void {
  * reader composes; this takes the query *language* instead, so what arrives in
  * the box is a sentence they could have written and can now edit. Phase 13's
  * section is the first caller: "the calls the model scored 4 or above" is
- * `@llm-risk:>=4`, and being able to change the 4 is most of its value.
+ * `@model-risk:>=4`, and being able to change the 4 is most of its value.
  */
 function openQuery(query: string): void {
   view = { ...emptyView(), filter: parseQuery(query).filter };
@@ -151,7 +151,13 @@ function drawTabs(): void {
   fill(tabs, [
     ...SCREENS.map(([id, label]) => tab(label, id)),
     span("grow", ""),
-    span("brand", "toolog"),
+    // The version beside the name, because "which build is this" is a question
+    // an audit tool should not make anyone go and look up. It comes from Cargo
+    // via `vite.config.ts`, so it cannot disagree with `toolog --version`.
+    el("span", { class: "brand" }, [
+      "Toolog",
+      span("brand-version", `v${__TOOLOG_VERSION__}`, "The running version"),
+    ]),
   ]);
 }
 

@@ -363,7 +363,7 @@ pub struct TimelineFilter {
     /// a separate field from `risk`. An LLM score is not a rule severity, and a
     /// filter that could mix them would be the first step towards a view that
     /// does.
-    pub llm_risk: Option<String>,
+    pub model_risk: Option<String>,
 }
 
 /// Paging for a timeline query.

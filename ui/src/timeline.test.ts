@@ -7,7 +7,13 @@
 
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import type { TimelineFilter, TimelineRow, ToolCall } from "./bindings";
+import type {
+  MatchedRule,
+  SecondOpinion,
+  TimelineFilter,
+  TimelineRow,
+  ToolCall,
+} from "./bindings";
 
 vi.mock("./bindings", () => ({
   queryTimeline: vi.fn((filter: TimelineFilter, page: { limit: number; offset: number }) => {
@@ -33,6 +39,8 @@ vi.mock("./bindings", () => ({
     Promise.resolve({
       call: store.rows.find((r) => r.call.tool_use_id === id)?.call ?? null,
       file_changes: [],
+      matched_rules: store.matched,
+      second_opinion: store.opinion,
       session: {
         session_id: "s1",
         project_path: "/work/app",
@@ -100,6 +108,10 @@ function row(over: Partial<ToolCall>, extra: Partial<TimelineRow> = {}): Timelin
     snippet: null,
     lines_added: null,
     lines_removed: null,
+    model_score: null,
+    model_intent: null,
+    risk: null,
+    rule_titles: [],
     ...extra,
   };
 }
@@ -108,6 +120,8 @@ const store = {
   rows: [] as TimelineRow[],
   status: { listening: true, paused: false } as { listening: boolean; paused: boolean },
   failNextPage: false,
+  opinion: null as SecondOpinion | null,
+  matched: [] as MatchedRule[],
   count(_filter: TimelineFilter): number {
     return this.rows.length;
   },
@@ -187,6 +201,8 @@ beforeEach(() => {
   store.failNextPage = false;
   store.rows = [];
   store.status = { listening: true, paused: false };
+  store.opinion = null;
+  store.matched = [];
   document.body.replaceChildren();
 });
 
@@ -654,5 +670,218 @@ describe("closing the detail pane (task 10.12)", () => {
 
     expect(timeline.node.className).not.toContain("has-detail");
     expect(lastView?.selected).toBeNull();
+  });
+});
+
+describe("the second opinion, on one call (Phase 13)", () => {
+  function said(over: Partial<SecondOpinion> = {}): SecondOpinion {
+    return {
+      pair: "a1b2c3d4e5f6 / 0f1e2d3c4b5a",
+      verdict: {
+        intent_summary: "Deletes the build directory.",
+        category: "filesystem",
+        risk_score: 4,
+        is_destructive: true,
+        violates_sandbox: false,
+      },
+      error: null,
+      at: Date.parse("2026-09-06T11:00:00Z"),
+      ms: 1_250,
+      ...over,
+    };
+  }
+
+  async function pane(opinion: SecondOpinion | null): Promise<HTMLElement> {
+    store.opinion = opinion;
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount();
+    await settle();
+    rowsOf(timeline)[0]!.click();
+    await settle();
+    return timeline.node.querySelector<HTMLElement>(".pane-body")!;
+  }
+
+  test("shows what the model said, and whose opinion it is", async () => {
+    const body = await pane(said());
+
+    expect(body.textContent).toContain("A second opinion");
+    expect(body.textContent).toContain("Deletes the build directory.");
+    expect(body.querySelector(".dllm .llm-score")?.textContent).toBe("4");
+    // A score whose author cannot be named is not evidence (ADR-0013).
+    expect(body.textContent).toContain("a1b2c3d4e5f6 / 0f1e2d3c4b5a");
+    expect(body.textContent).toContain("Advisory");
+  });
+
+  test("never borrows one of the rules' four severity words", async () => {
+    const said5 = said({ verdict: { ...said().verdict!, risk_score: 5 } });
+    const text = (await pane(said5)).querySelector(".dllm")!.textContent ?? "";
+
+    for (const word of ["high", "medium", "low", "info", "severity"]) {
+      expect(text.toLowerCase()).not.toContain(word);
+    }
+  });
+
+  test("an answer the schema rejected is not the same as no answer", async () => {
+    const body = await pane(
+      said({ verdict: null, error: "risk_score is 9, and the scale is 1 to 5" }),
+    );
+
+    expect(body.textContent).toContain("the schema rejected it");
+    expect(body.textContent).toContain("risk_score is 9");
+  });
+
+  test("an unexamined call says so, and does not say it is fine", async () => {
+    const body = await pane(said({ verdict: null, error: null, at: null, ms: null }));
+
+    expect(body.textContent).toContain("Not examined yet");
+    // The reasoning is still reachable, it is just not four lines of the pane.
+    expect(body.querySelector(".dllm-none")?.getAttribute("title")).toContain("not fine");
+  });
+
+  test("is absent entirely when no model has ever answered here", async () => {
+    const body = await pane(null);
+
+    expect(body.textContent).toContain("Bash");
+    expect(body.querySelector(".dllm")).toBeNull();
+  });
+});
+
+describe("the two judgement columns", () => {
+  async function cell(over: Partial<TimelineRow>, sel: string): Promise<HTMLElement | null> {
+    store.rows = [row({ tool_use_id: "t1" }, over)];
+    const timeline = mount();
+    await settle();
+    return rowsOf(timeline)[0]!.querySelector<HTMLElement>(sel);
+  }
+
+  test("the rules' severity is a column, in the risk page's words", async () => {
+    const rsk = await cell(
+      { risk: "high", rule_titles: ["Destructive shell commands approved by a rule, not a person"] },
+      ".rsk",
+    );
+
+    expect(rsk?.textContent).toBe("HIGH");
+    expect(rsk?.className).toContain("sev-high");
+    expect(rsk?.title).toContain("Destructive shell commands");
+  });
+
+  test("the model's score is a separate column, as a digit", async () => {
+    const mdl = await cell(
+      { model_score: 5, model_intent: "Deletes the whole repository." },
+      ".mdl",
+    );
+
+    expect(mdl?.textContent).toBe("5");
+    expect(mdl?.title).toBe("Deletes the whole repository.");
+    // A digit in its own hue, never one of the rules' four words.
+    expect(mdl?.className).toContain("llm-score-5");
+    expect(mdl?.className).not.toContain("sev-");
+  });
+
+  test("the two are never the same column", async () => {
+    store.rows = [
+      row({ tool_use_id: "t1" }, { risk: "high", rule_titles: ["A rule"], model_score: 5 }),
+    ];
+    const timeline = mount();
+    await settle();
+
+    const node = rowsOf(timeline)[0]!;
+    expect(node.querySelector(".rsk")).not.toBe(node.querySelector(".mdl"));
+    expect(node.children.length).toBe(9);
+    // To the right of the command, with the other judgement columns.
+    expect([...node.children].indexOf(node.querySelector(".rsk")!)).toBeGreaterThan(
+      [...node.children].indexOf(node.querySelector(".sum")!),
+    );
+    // And a pending row holds the same columns open, or the list jumps as
+    // pages arrive.
+    expect(timeline.node.querySelectorAll(".row.pending .rsk").length).toBeLessThanOrEqual(1);
+  });
+
+  test("every column is named, and the names line up with the cells", async () => {
+    store.rows = [row({ tool_use_id: "t1" }, { risk: "high", rule_titles: ["A rule"] })];
+    const timeline = mount();
+    await settle();
+
+    const header = timeline.node.querySelector<HTMLElement>(".context")!;
+    // One cell per column, in the row's own order — a header with a different
+    // number of cells is a header pointing at the wrong columns.
+    expect(header.children.length).toBe(rowsOf(timeline)[0]!.children.length);
+    expect([...header.children].map((c) => c.textContent)).toEqual([
+      // The day of the topmost row, in the slot the time column occupies.
+      expect.any(String),
+      "Project",
+      "Tool",
+      // 18px of glyph: no word fits, so the name is a tooltip.
+      "",
+      "Input",
+      "Risk",
+      "Model",
+      "Took",
+      "Decided by",
+    ]);
+    expect(header.children[3]!.getAttribute("title")).toContain("Outcome");
+  });
+
+  test("the first cell carries the day of the topmost row", async () => {
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount();
+    await settle();
+
+    // The first paint happens before any row exists, so this is only right if
+    // the arriving page refreshes it.
+    const date = timeline.node.querySelector<HTMLElement>(".chd-date")!;
+    expect(date.textContent).not.toBe("");
+  });
+
+  test("a call no rule matched leaves the column empty rather than saying low", async () => {
+    const rsk = await cell({ risk: null }, ".rsk");
+
+    expect(rsk?.textContent).toBe("");
+    expect(rsk?.title).toContain("No live rule");
+  });
+
+  test("the everyday scores are not drawn at all", async () => {
+    expect((await cell({ model_score: 2 }, ".mdl"))?.textContent).toBe("");
+    expect((await cell({ model_score: null }, ".mdl"))?.textContent).toBe("");
+    expect((await cell({ model_score: 3 }, ".mdl"))?.textContent).toBe("3");
+  });
+});
+
+describe("the rules that matched one call, in the pane", () => {
+  async function pane(matched: MatchedRule[]): Promise<HTMLElement> {
+    store.matched = matched;
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount();
+    await settle();
+    rowsOf(timeline)[0]!.click();
+    await settle();
+    return timeline.node.querySelector<HTMLElement>(".pane-body")!;
+  }
+
+  test("names every rule that flagged the call", async () => {
+    const body = await pane([
+      { id: "destructive", title: "Destructive shell commands", severity: "high" },
+      { id: "outside", title: "Files written outside the session", severity: "medium" },
+    ]);
+
+    expect(body.textContent).toContain("Destructive shell commands");
+    expect(body.textContent).toContain("Files written outside the session");
+    expect(body.querySelectorAll(".drisk-rule").length).toBe(2);
+  });
+
+  test("a rule is a way into every other call it caught", async () => {
+    const body = await pane([
+      { id: "destructive", title: "Destructive shell commands", severity: "high" },
+    ]);
+    body.querySelector<HTMLButtonElement>(".drisk-rule")!.click();
+    await settle();
+
+    expect(lastView?.filter.rule_id).toBe("destructive");
+  });
+
+  test("a call no rule matched gets no risk section at all", async () => {
+    const body = await pane([]);
+
+    expect(body.querySelector(".drisk")).toBeNull();
   });
 });

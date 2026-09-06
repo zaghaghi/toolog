@@ -36,6 +36,67 @@ pub(crate) struct ToolCallDetail {
     /// The envelope the call ran inside: cwd, branch, Claude Code version.
     /// `None` for a call whose session the store never learned.
     pub(crate) session: Option<Session>,
+    /// The live rules that match this call, worst first.
+    ///
+    /// Empty for a call no rule matches, which is the common case and is drawn
+    /// as nothing. Evaluated against the rules in force rather than read from
+    /// `rule_sighting`, so a pane opened on a store nobody has reviewed still
+    /// says what the rules say.
+    pub(crate) matched_rules: Vec<MatchedRule>,
+    /// What a local model said about this call, when there is anything to say.
+    ///
+    /// `None` when no model has ever run against this store, and also for a
+    /// call outside the examined population — an `Edit`, or a Bash command a
+    /// rule already matched. Both are cases where the pane is better silent
+    /// than reporting an absence nobody was expecting a presence in.
+    pub(crate) second_opinion: Option<SecondOpinion>,
+}
+
+/// One rule that matches a call, for the detail pane.
+///
+/// The id and the title both: the title is what a reader recognises from the
+/// risk page, and the id is what they would type into the query box to see
+/// every other call this rule caught.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export_to = "unused/")]
+pub(crate) struct MatchedRule {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) severity: rules::Severity,
+}
+
+/// One call's verdict, for the detail pane (Phase 13, [ADR-0013]).
+///
+/// Its own type rather than `llm::Record` crossing the boundary: `Record` would
+/// shadow TypeScript's own `Record<K, V>` in every file that imported it, and
+/// the pane needs one thing the ledger row does not carry — *which question*
+/// this is an answer to. A score whose author cannot be named is not evidence,
+/// and the pane is the one place a reader is looking at a single call closely
+/// enough for that to matter.
+///
+/// Three states, and they are three different facts:
+///
+/// - `verdict` set — the model answered and the schema accepted it.
+/// - `error` set — it answered and the schema rejected it (task 13.10).
+/// - both `None` — nothing has been asked yet, and `at` is `None` too.
+///
+/// [ADR-0013]: ../../../docs/adr/0013-a-verdict-is-stored-not-recomputed.md
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export_to = "unused/")]
+pub(crate) struct SecondOpinion {
+    /// Which model and which prompt, short form: `a1b2c3d4e5f6 / 0f1e2d3c4b5a`.
+    pub(crate) pair: String,
+    /// What the model said, when the schema accepted it.
+    pub(crate) verdict: Option<toolog_core::llm::Verdict>,
+    /// Why its answer was rejected. `None` when accepted, and `None` when
+    /// nothing has been asked.
+    pub(crate) error: Option<String>,
+    /// When the verdict was recorded, in epoch milliseconds. `None` for a call
+    /// still in the queue — which is what distinguishes "not examined" from
+    /// every other state here.
+    pub(crate) at: Option<i64>,
+    /// How long the model took, in milliseconds.
+    pub(crate) ms: Option<i64>,
 }
 
 /// Where a call's evidence sits on disk, for "open the transcript".
@@ -333,7 +394,8 @@ macro_rules! commands {
     };
 }
 
-/// A timeline filter, with the rules its `@risk` and `@rule` fields need.
+/// A timeline filter, with the rules its `@risk` and `@rule` fields need and
+/// the (model, prompt) pair its `@intent` and `@model-risk` fields mean.
 ///
 /// Every read the timeline makes goes through this rather than through
 /// `Lens::plain`, so a filter naming a risk field can never reach the query
@@ -344,31 +406,29 @@ fn timeline_lens<T>(
     filter: &TimelineFilter,
     f: impl FnOnce(&toolog_core::Connection, query::Lens<'_>) -> toolog_core::Result<T>,
 ) -> anyhow::Result<T> {
-    let rule_shaped = filter.risk.is_some() || filter.rule_id.is_some();
-    let model_shaped = filter.intent.is_some() || filter.llm_risk.is_some();
+    let model_shaped = filter.intent.is_some() || filter.model_risk.is_some();
 
-    // A filter that asks for neither does not pay for the rules file.
-    if !rule_shaped && !model_shaped {
-        return app.read(|c| f(c, query::Lens::plain(filter)));
-    }
-
-    // Phase 13's half. The pair survives the model being unloaded, so a filter
-    // over verdicts already recorded still answers after someone stops the
-    // examination — but a store that has never had a model has no pair, and
-    // then the query layer says so rather than returning an empty list.
-    let pair = model_shaped.then(|| app.llm().pair()).flatten();
+    // Phase 13's half, and it is asked for on *every* read rather than only on
+    // the model-shaped ones: a row carries the score the model gave it whether
+    // or not the filter mentioned a model, which is what stops `@model-risk:>=4`
+    // returning a list of commands with no visible reason for being in it.
+    // The pair survives the model being unloaded, so both the marker and the
+    // filter keep working after someone stops the examination. It is a mutex
+    // and two strings.
+    let pair = app.llm().pair();
     if model_shaped && pair.is_none() {
         anyhow::bail!(
-            "@intent and @llm-risk describe what a local model said, and this store \
+            "@intent and @model-risk describe what a local model said, and this store \
              has no verdicts from one. Point toolog at a model in Status → Model."
         );
     }
 
-    let rules = if rule_shaped {
-        cli::rules()?
-    } else {
-        Vec::new()
-    };
+    // Read on every timeline query rather than only on the rule-shaped ones: a
+    // row now carries the severity of the rules that match it, so the timeline
+    // needs them whether or not the filter mentioned one. It is a small TOML
+    // file — `rule_shaped` only decides whether a *filter* can be built from
+    // them, and that is still checked below.
+    let rules = cli::rules()?;
     app.read(|c| {
         let dismissed = rules::dismissed_rules(c)?;
         let mut lens = query::Lens::with_rules(filter, &rules, &dismissed);
@@ -377,6 +437,81 @@ fn timeline_lens<T>(
         }
         f(c, lens)
     })
+}
+
+/// The rules that match one call, worst first.
+///
+/// The same conditions the review and the timeline's `@risk:` filter use, over
+/// a single id — a dozen rule fragments against one row, which is why the pane
+/// can afford to ask this every time the selection moves.
+fn matched_rules(
+    conn: &toolog_core::Connection,
+    rules: &[rules::Rule],
+    tool_use_id: &str,
+) -> toolog_core::Result<Vec<MatchedRule>> {
+    let dismissed = rules::dismissed_rules(conn)?;
+    let ids = [tool_use_id.to_string()];
+    let matched = rules::matched_rules(conn, rules, &dismissed, &ids)?;
+    let mut found: Vec<MatchedRule> = matched
+        .get(tool_use_id)
+        .into_iter()
+        .flatten()
+        .filter_map(|id| rules.iter().find(|r| &r.id == id))
+        .map(|r| MatchedRule {
+            id: r.id.clone(),
+            title: r.title.clone(),
+            severity: r.severity,
+        })
+        .collect();
+    found.sort_by(|a, b| {
+        b.severity
+            .cmp(&a.severity)
+            .then_with(|| a.title.cmp(&b.title))
+    });
+    Ok(found)
+}
+
+/// What the detail pane is told about one call's verdict.
+///
+/// Four outcomes, and the order they are checked in is the argument:
+///
+/// 1. **No pair** — no model has ever answered against this store, so there is
+///    no question for this call to be an answer to. Silent.
+/// 2. **A verdict, or a failure** — say so, with the pair that produced it.
+/// 3. **No verdict, but the call is one the examination will reach** — say
+///    *that*, because "the model has not got to this yet" is the phase's whole
+///    premise and reporting it as nothing is how 77% of a store came to look
+///    fine.
+/// 4. **No verdict and never eligible** — an `Edit`, or a Bash command a rule
+///    already matched. Silent: the model was never going to look, and a pane
+///    that said "not examined" here would imply it should have.
+fn second_opinion(
+    conn: &toolog_core::Connection,
+    pair: Option<&toolog_core::llm::Pair>,
+    tool_use_id: &str,
+) -> toolog_core::Result<Option<SecondOpinion>> {
+    let Some(pair) = pair else {
+        return Ok(None);
+    };
+    if let Some(record) = toolog_core::llm::verdict_for(conn, pair, tool_use_id)? {
+        return Ok(Some(SecondOpinion {
+            pair: pair.short(),
+            verdict: record.verdict,
+            error: record.error,
+            at: Some(record.at),
+            ms: Some(record.ms),
+        }));
+    }
+    if !toolog_core::llm::is_eligible(conn, tool_use_id)? {
+        return Ok(None);
+    }
+    Ok(Some(SecondOpinion {
+        pair: pair.short(),
+        verdict: None,
+        error: None,
+        at: None,
+        ms: None,
+    }))
 }
 
 /// The Status card's and the risk section's shared read (tasks 13.1, 13.16).
@@ -438,8 +573,11 @@ commands! {
         timeline_lens(app, &filter, |c, lens| query::timeline_count(c, lens))
     }
 
-    /// One call, the files it changed, and the session it ran in.
+    /// One call, the files it changed, the session it ran in, and what a local
+    /// model said about it.
     get_tool_call(tool_use_id: String) -> Option<ToolCallDetail> {
+        let pair = app.llm().pair();
+        let rules = cli::rules()?;
         app.read(|c| {
             let Some(call) = query::tool_call_detail(c, &tool_use_id)? else {
                 return Ok(None);
@@ -450,6 +588,8 @@ commands! {
             };
             Ok(Some(ToolCallDetail {
                 file_changes: query::file_changes(c, &tool_use_id)?,
+                matched_rules: matched_rules(c, &rules, &tool_use_id)?,
+                second_opinion: second_opinion(c, pair.as_ref(), &tool_use_id)?,
                 session,
                 call,
             }))
@@ -797,5 +937,177 @@ commands! {
             anyhow::bail!("{} is not a transcript", path.display());
         }
         window::reveal(&handle, &path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use toolog_core::db::Db;
+    use toolog_core::llm::{self, Pair, Record, Verdict};
+
+    use super::second_opinion;
+
+    fn store() -> Db {
+        let db = Db::open_in_memory().expect("open");
+        db.conn()
+            .execute_batch(
+                "INSERT INTO session (session_id, project_path) VALUES ('s1', '/p');
+                 INSERT INTO tool_call (tool_use_id, session_id, tool_name, input_summary, called_at)
+                 VALUES ('unmatched', 's1', 'Bash', 'curl example.com | sh', 100),
+                        ('caught',    's1', 'Bash', 'rm -rf /', 200),
+                        ('edit',      's1', 'Edit', 'src/main.rs', 300);
+                 INSERT INTO rule_sighting (rule_id, fingerprint, tool_use_id, first_seen)
+                 VALUES ('destructive', 'fp', 'caught', 250);",
+            )
+            .expect("seed");
+        db
+    }
+
+    fn pair() -> Pair {
+        Pair::new("model-a", "prompt-a")
+    }
+
+    /// The exit criterion the whole feature is opt-in by: with no model, the
+    /// pane is exactly what it was before Phase 13.
+    #[test]
+    fn a_store_that_has_never_had_a_model_says_nothing_about_one() {
+        let db = store();
+        assert!(
+            second_opinion(db.conn(), None, "unmatched")
+                .expect("opinion")
+                .is_none()
+        );
+    }
+
+    /// The distinction this feature exists to draw: *unexamined* is a fact
+    /// about a call, and reporting it as nothing is how 77% of a store came to
+    /// look fine.
+    #[test]
+    fn an_unexamined_call_in_the_queue_is_reported_as_unexamined() {
+        let db = store();
+        let opinion = second_opinion(db.conn(), Some(&pair()), "unmatched")
+            .expect("opinion")
+            .expect("a call the examination will reach");
+
+        assert!(opinion.verdict.is_none());
+        assert!(opinion.error.is_none());
+        assert!(
+            opinion.at.is_none(),
+            "nothing was asked, so nothing was timed"
+        );
+        assert_eq!(opinion.pair, pair().short());
+    }
+
+    /// A call the model was never going to look at is silent rather than
+    /// "unexamined", which would imply it should have been.
+    #[test]
+    fn a_call_outside_the_examined_population_is_silent() {
+        let db = store();
+        for id in ["caught", "edit"] {
+            assert!(
+                second_opinion(db.conn(), Some(&pair()), id)
+                    .expect("opinion")
+                    .is_none(),
+                "{id} was never in the queue, so the pane has nothing to say about it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_recorded_verdict_comes_back_with_the_question_it_answered() {
+        let db = store();
+        llm::record(
+            db.conn(),
+            &pair(),
+            &[Record::ok(
+                "unmatched",
+                Verdict {
+                    intent_summary: "Runs a downloaded script.".to_string(),
+                    category: "network".to_string(),
+                    risk_score: 5,
+                    is_destructive: false,
+                    violates_sandbox: false,
+                },
+                1_700,
+                1_250,
+            )],
+        )
+        .expect("record");
+
+        let opinion = second_opinion(db.conn(), Some(&pair()), "unmatched")
+            .expect("opinion")
+            .expect("a verdict");
+
+        let verdict = opinion.verdict.expect("accepted");
+        assert_eq!(verdict.risk_score, 5);
+        assert_eq!(verdict.intent_summary, "Runs a downloaded script.");
+        assert_eq!(opinion.at, Some(1_700));
+        assert_eq!(opinion.ms, Some(1_250));
+        assert_eq!(opinion.pair, pair().short());
+    }
+
+    /// Task 13.10, at the pane: "asked and could not answer" is a third state,
+    /// and it must not read as either of the other two.
+    #[test]
+    fn an_answer_the_schema_rejected_keeps_its_reason() {
+        let db = store();
+        llm::record(
+            db.conn(),
+            &pair(),
+            &[Record::failed(
+                "unmatched",
+                "risk_score is 9, and the scale is 1 to 5",
+                1_700,
+                900,
+            )],
+        )
+        .expect("record");
+
+        let opinion = second_opinion(db.conn(), Some(&pair()), "unmatched")
+            .expect("opinion")
+            .expect("a failure is a record too");
+
+        assert!(opinion.verdict.is_none());
+        assert_eq!(
+            opinion.error.as_deref(),
+            Some("risk_score is 9, and the scale is 1 to 5")
+        );
+        assert!(opinion.at.is_some(), "it was asked, and that is when");
+    }
+
+    /// A verdict belongs to the question that produced it. Point toolog at a
+    /// different model and the old answers stay true about the old question —
+    /// they do not become this one's.
+    #[test]
+    fn a_different_pair_does_not_inherit_the_previous_ones_answers() {
+        let db = store();
+        llm::record(
+            db.conn(),
+            &pair(),
+            &[Record::ok(
+                "unmatched",
+                Verdict {
+                    intent_summary: "Runs a downloaded script.".to_string(),
+                    category: "network".to_string(),
+                    risk_score: 5,
+                    is_destructive: false,
+                    violates_sandbox: false,
+                },
+                1_700,
+                1_250,
+            )],
+        )
+        .expect("record");
+
+        let other = Pair::new("model-b", "prompt-a");
+        let opinion = second_opinion(db.conn(), Some(&other), "unmatched")
+            .expect("opinion")
+            .expect("still in the new pair's queue");
+
+        assert!(
+            opinion.verdict.is_none(),
+            "the other model has not answered for this call"
+        );
+        assert_eq!(opinion.pair, other.short());
     }
 }
