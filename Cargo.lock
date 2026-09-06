@@ -4726,7 +4726,7 @@ checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "toolog-app"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4749,7 +4749,7 @@ dependencies = [
 
 [[package]]
 name = "toolog-cli"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4772,7 +4772,7 @@ dependencies = [
 
 [[package]]
 name = "toolog-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "directories",
  "hex",
@@ -4791,7 +4791,7 @@ dependencies = [
 
 [[package]]
 name = "toolog-ingest"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "directories",
  "jiff",
@@ -4807,7 +4807,7 @@ dependencies = [
 
 [[package]]
 name = "toolog-otlp"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "axum",
  "jiff",

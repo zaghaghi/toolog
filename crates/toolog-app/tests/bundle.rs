@@ -154,5 +154,21 @@ fn the_bundle_version_comes_from_cargo_and_nowhere_else() {
         "tauri.conf.json pins a version of its own; it would silently win over \
          Cargo.toml and could drift from `toolog --version`"
     );
-    assert_eq!(env!("CARGO_PKG_VERSION"), "1.0.0");
+    // Not `assert_eq!(CARGO_PKG_VERSION, "1.0.0")`, which is what stood here:
+    // that macro reads Cargo.toml, so comparing it to a literal asserts only
+    // that someone edited this file too. It failed every release, said nothing
+    // about why, and the runbook did not mention it.
+    //
+    // What is worth checking is the shape the release workflow depends on. It
+    // compares the pushed tag to this string exactly, so `1.1` or `v1.1.0`
+    // would fail there — after the tag is public — rather than here.
+    let version = env!("CARGO_PKG_VERSION");
+    let parts: Vec<&str> = version.split('.').collect();
+    assert_eq!(parts.len(), 3, "`{version}` is not MAJOR.MINOR.PATCH");
+    for part in parts {
+        assert!(
+            !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()),
+            "`{version}` has a non-numeric component; the tag check compares strings"
+        );
+    }
 }
