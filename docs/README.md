@@ -52,6 +52,12 @@ finding was first seen, which is an observation rather than a derivation and so 
 a finding may not — and `@risk:high` / `@rule:<id>` in the query bar, which makes the histogram a
 chart of risk over time for free.
 
+## The database
+
+[database.md](database.md) — one SQLite file, what is in it, and the three tables that are not
+rebuildable projections. Written to be read next to `sqlite3`, which is the point of storing it in a
+format you can open.
+
 ## Releasing
 
 [releasing.md](releasing.md) — the six signing secrets, the tag that triggers everything, the tap,
