@@ -497,3 +497,203 @@ fn paging_walks_the_whole_result_without_repeating_or_skipping_a_row() {
     }
     assert_eq!(seen, ["t7", "t6", "t3", "t5", "t4", "t2", "t1"]);
 }
+
+// ---------------------------------------------------------------------------
+// The activity histogram (tasks 10.1 and 10.2)
+// ---------------------------------------------------------------------------
+
+/// A store whose calls are spread over a chosen span, one per step.
+fn spread(step_ms: i64, n: i64) -> Db {
+    let db = Db::open_in_memory().expect("open");
+    let conn = db.conn();
+    project::upsert_session(
+        conn,
+        &Session {
+            session_id: "s".to_string(),
+            project_path: Some("/work/app".to_string()),
+            ..Session::default()
+        },
+    )
+    .expect("session");
+    for i in 0..n {
+        call(conn, &format!("h{i}"), "s", "Bash", "ls", i * step_ms, true);
+    }
+    db
+}
+
+#[test]
+fn the_bucket_size_comes_from_the_span_rather_than_from_the_reader() {
+    use query::BucketSize;
+
+    // Chosen so each span lands inside one size's sixty columns and outside
+    // the one below it.
+    assert_eq!(BucketSize::for_span(0), BucketSize::Minute);
+    assert_eq!(BucketSize::for_span(30 * 60_000), BucketSize::Minute);
+    assert_eq!(BucketSize::for_span(90 * 60_000), BucketSize::Hour);
+    assert_eq!(BucketSize::for_span(20 * 3_600_000), BucketSize::Hour);
+    assert_eq!(BucketSize::for_span(5 * 86_400_000), BucketSize::Day);
+    assert_eq!(BucketSize::for_span(400 * 86_400_000), BucketSize::Week);
+
+    // Sixty columns is the aim, and the size chosen never spreads a span
+    // thinner than it has to be.
+    for span in [1, 60_000, 3_600_000, 86_400_000, 400 * 86_400_000] {
+        let size = BucketSize::for_span(span);
+        assert!(
+            span / size.ms() <= 60,
+            "a span of {span} ms in {size:?} columns is more than sixty of them"
+        );
+    }
+}
+
+#[test]
+fn a_histogram_carries_every_column_in_the_span_including_the_empty_ones() {
+    // Three calls an hour apart: hour columns, and the middle hour is empty.
+    let db = Db::open_in_memory().expect("open");
+    let conn = db.conn();
+    project::upsert_session(
+        conn,
+        &Session {
+            session_id: "s".to_string(),
+            ..Session::default()
+        },
+    )
+    .expect("session");
+    call(conn, "a", "s", "Bash", "ls", 0, true);
+    call(conn, "b", "s", "Bash", "ls", 2 * 3_600_000, true);
+
+    let h = query::histogram(conn, &TimelineFilter::default(), 0).expect("histogram");
+    assert_eq!(h.size, query::BucketSize::Hour);
+    assert_eq!(
+        h.buckets.len(),
+        3,
+        "the empty hour between them is a column"
+    );
+    assert_eq!(h.buckets[1].calls, 0, "nothing ran, which is not no data");
+    assert_eq!(h.buckets[0].calls, 1);
+    assert_eq!(h.buckets[2].calls, 1);
+}
+
+#[test]
+fn a_histogram_and_the_list_can_never_describe_different_rows() {
+    let db = spread(86_400_000, 10);
+    let conn = db.conn();
+
+    for filter in [
+        TimelineFilter::default(),
+        TimelineFilter {
+            tool_name: Some("Bash".to_string()),
+            ..TimelineFilter::default()
+        },
+        TimelineFilter {
+            project_path: Some("/work/app".to_string()),
+            ..TimelineFilter::default()
+        },
+        TimelineFilter {
+            query: Some("ls".to_string()),
+            ..TimelineFilter::default()
+        },
+        TimelineFilter {
+            since: Some(2 * 86_400_000),
+            until: Some(5 * 86_400_000),
+            ..TimelineFilter::default()
+        },
+    ] {
+        let counted = query::timeline_count(conn, &filter).expect("count");
+        let plotted: i64 = query::histogram(conn, &filter, 0)
+            .expect("histogram")
+            .buckets
+            .iter()
+            .map(|b| b.calls)
+            .sum();
+        assert_eq!(
+            counted, plotted,
+            "the chart and the count disagree for {filter:?}"
+        );
+    }
+}
+
+#[test]
+fn failures_and_refusals_ride_along_rather_than_becoming_a_second_series() {
+    let db = seeded();
+    let conn = db.conn();
+    let h = query::histogram(conn, &TimelineFilter::default(), 0).expect("histogram");
+
+    let calls: i64 = h.buckets.iter().map(|b| b.calls).sum();
+    let failures: i64 = h.buckets.iter().map(|b| b.failures).sum();
+    let refusals: i64 = h.buckets.iter().map(|b| b.refusals).sum();
+    assert_eq!(calls, 7, "every call in the store");
+    assert_eq!(failures, 1, "t6 is the failure");
+    assert_eq!(refusals, 0, "nothing in this fixture was refused");
+    assert!(
+        failures <= calls && refusals <= calls,
+        "the carried counts are a slice of the measure, not a second one"
+    );
+}
+
+#[test]
+fn days_are_the_readers_days() {
+    // 23:30 UTC. In UTC that is one day; two hours east it is already the next.
+    let db = Db::open_in_memory().expect("open");
+    let conn = db.conn();
+    project::upsert_session(
+        conn,
+        &Session {
+            session_id: "s".to_string(),
+            ..Session::default()
+        },
+    )
+    .expect("session");
+    let late = 23 * 3_600_000 + 30 * 60_000;
+    call(conn, "a", "s", "Bash", "ls", 0, true);
+    call(conn, "b", "s", "Bash", "ls", late + 6 * 86_400_000, true);
+
+    let utc = query::histogram(conn, &TimelineFilter::default(), 0).expect("histogram");
+    let east = query::histogram(conn, &TimelineFilter::default(), 120).expect("histogram");
+    assert_eq!(utc.size, query::BucketSize::Day);
+
+    // The same two calls, and a column boundary that moved with the reader.
+    assert_eq!(utc.buckets[0].start_ms, 0, "local midnight at UTC is 0");
+    assert_eq!(
+        east.buckets[0].start_ms,
+        -2 * 3_600_000,
+        "two hours east, the day that contains the epoch started before it"
+    );
+    assert_eq!(
+        utc.buckets.len() + 1,
+        east.buckets.len(),
+        "the late call falls into tomorrow once the reader is east of Greenwich"
+    );
+}
+
+#[test]
+fn a_column_start_is_the_instant_a_brush_can_write_into_the_hash() {
+    let db = spread(3_600_000, 5);
+    let conn = db.conn();
+    let h = query::histogram(conn, &TimelineFilter::default(), 0).expect("histogram");
+    let width = h.size.ms();
+
+    // Narrowing to one column's own range yields exactly that column's calls,
+    // which is what makes click-to-filter honest (task 10.4).
+    for bucket in &h.buckets {
+        let narrowed = TimelineFilter {
+            since: Some(bucket.start_ms),
+            until: Some(bucket.start_ms + width - 1),
+            ..TimelineFilter::default()
+        };
+        assert_eq!(
+            query::timeline_count(conn, &narrowed).expect("count"),
+            bucket.calls,
+            "the column starting at {} does not reproduce itself",
+            bucket.start_ms
+        );
+    }
+}
+
+#[test]
+fn an_empty_store_has_no_columns_rather_than_a_grid_of_zeroes() {
+    let db = Db::open_in_memory().expect("open");
+    let h = query::histogram(db.conn(), &TimelineFilter::default(), 0).expect("histogram");
+    assert!(h.buckets.is_empty());
+    assert_eq!(h.since_ms, None);
+    assert_eq!(h.until_ms, None);
+}

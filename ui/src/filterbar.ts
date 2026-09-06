@@ -1,78 +1,63 @@
-//! The controls above the list (tasks 5.6, 5.7, 5.12).
+//! The controls above the list (tasks 5.6, 5.7, 5.12, and 10.5–10.11).
 //!
-//! Every control writes into one `TimelineFilter`, which is also what the URL
+//! One box, one time control, one grouping toggle and Export. Seven `<select>`s
+//! used to sit here; the owner's report on v1.0 was "filters are too much, too
+//! many items to filter — I like the style of filtering that is embedded in the
+//! search edit box, like GitHub or Datadog", and this is that.
+//!
+//! Everything still writes into one `TimelineFilter`, which is what the URL
 //! hash holds and what an export is taken from — so what you see, what you can
 //! link to and what you can hand to someone else are the same thing by
-//! construction, not by three code paths agreeing.
+//! construction. The query bar is a second **editor** of that filter, not a
+//! second representation of it (task 10.7): a v1.0 link still restores, and
+//! Export still exports the filter rather than the text in the box.
 //!
-//! The dropdown values come from the store rather than from a hard-coded list.
-//! Claude Code adds tools and permission modes between releases, and a filter
-//! that offers values nobody has used — or omits ones they have — is worse than
-//! no filter at all.
+//! **Time stays a control.** It is the one dimension with a chart under it, and
+//! dragging across the histogram says "this hour" better than typing two
+//! timestamps ever will.
+//!
+//! Autocomplete values come from the store, not from a hard-coded list: Claude
+//! Code adds tools and permission modes between releases, and a filter offering
+//! values nobody has used — or missing ones they have — is worse than none.
 
 import type { Facets, Format, TimelineFilter } from "./bindings";
 import { saveExport } from "./bindings";
 import { el, fill, span } from "./dom";
 import { count } from "./format";
-import type { Lane, Outcome, Thread, ViewState } from "./view";
-import {
-  emptyFilter,
-  isFiltered,
-  laneOf,
-  outcomeOf,
-  PRESETS,
-  threadOf,
-  withLane,
-  withOutcome,
-  withThread,
-} from "./view";
+import { fixedValues, format as formatQuery, KEYS, parse, quote, tokenize } from "./query";
+import type { Token } from "./query";
+import type { ViewState } from "./view";
+import { emptyFilter, isFiltered, PRESETS } from "./view";
 
-/** How long the search box waits before asking the store (task 5.7). */
+/** How long the box waits before asking the store (task 5.7). */
 const DEBOUNCE = 140;
 
-interface Option {
-  value: string;
-  label: string;
-}
-
-function select(
-  label: string,
-  options: Option[],
-  current: string,
-  onPick: (value: string) => void,
-): HTMLElement {
-  const node = el("select", { class: "pick", attrs: { "aria-label": label } });
-  for (const option of options) {
-    const item = el("option", { value: option.value, text: option.label });
-    if (option.value === current) item.selected = true;
-    node.append(item);
-  }
-  node.addEventListener("change", () => onPick(node.value));
-  return node;
-}
-
-function names(values: string[], all: string): Option[] {
-  return [{ value: "", label: all }, ...values.map((v) => ({ value: v, label: v }))];
-}
-
-/** The last path segment, for a project dropdown that has to fit. */
-function leaf(path: string): string {
-  const parts = path.split("/").filter(Boolean);
-  return parts.at(-1) ?? path;
-}
+/** How many completions are offered at once. */
+const SUGGESTIONS = 8;
 
 export interface FilterBarOptions {
   onChange: (next: ViewState) => void;
   onNotice: (message: string) => void;
 }
 
+interface Suggestion {
+  /** What replaces the token under the caret. */
+  insert: string;
+  label: string;
+  hint: string;
+}
+
 export class FilterBar {
   readonly node = el("header", { class: "bar" });
   private readonly controls = el("div", { class: "controls" });
   private readonly summary = el("div", { class: "summary" });
+  private readonly errors = el("div", { class: "qerrors", hidden: true });
+  private readonly complete = el("div", { class: "qmenu", hidden: true });
   private readonly search: HTMLInputElement;
   private timer = 0;
   private view: ViewState;
+  private suggestions: Suggestion[] = [];
+  private highlighted = 0;
   private facets: Facets = {
     projects: [],
     tools: [],
@@ -88,28 +73,39 @@ export class FilterBar {
     this.view = view;
     this.search = el("input", {
       class: "search",
-      type: "search",
-      placeholder: "Search commands, paths and results…",
-      value: view.filter.query ?? "",
-      attrs: { "aria-label": "Search", spellcheck: "false", autocomplete: "off" },
-    });
-    // Debounced, because every keystroke is an FTS query over the whole store.
-    this.search.addEventListener("input", () => {
-      clearTimeout(this.timer);
-      this.timer = window.setTimeout(() => {
-        const text = this.search.value.trim();
-        this.change({ query: text === "" ? null : text });
-      }, DEBOUNCE);
-    });
-    this.search.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        this.search.value = "";
-        this.change({ query: null });
-      }
+      type: "text",
+      placeholder: "Filter with @tool:Bash @outcome:refused, and search for the rest…",
+      value: formatQuery(view.filter),
+      attrs: {
+        "aria-label": "Filter and search",
+        spellcheck: "false",
+        autocomplete: "off",
+        role: "combobox",
+        "aria-expanded": "false",
+        "aria-autocomplete": "list",
+      },
     });
 
+    // Debounced, because every keystroke is an FTS query over the whole store.
+    this.search.addEventListener("input", () => {
+      this.drawComplete();
+      clearTimeout(this.timer);
+      this.timer = window.setTimeout(() => this.commit(), DEBOUNCE);
+    });
+    this.search.addEventListener("keydown", (event) => this.onKey(event));
+    this.search.addEventListener("blur", () => {
+      // A click on a suggestion fires before blur settles, so the menu closes
+      // on the next tick rather than under the pointer.
+      window.setTimeout(() => this.closeComplete(), 120);
+    });
+    this.search.addEventListener("click", () => this.drawComplete());
+
     this.node.append(
-      el("div", { class: "searchrow" }, [this.search, this.exportMenu()]),
+      el("div", { class: "searchrow" }, [
+        el("div", { class: "qbox" }, [this.search, this.complete]),
+        this.exportMenu(),
+      ]),
+      this.errors,
       this.controls,
       this.summary,
     );
@@ -128,10 +124,20 @@ export class FilterBar {
 
   setView(view: ViewState): void {
     this.view = view;
-    if (this.search.value !== (view.filter.query ?? "")) {
-      this.search.value = view.filter.query ?? "";
+    // Only rewrite the box when it would say something different. Reformatting
+    // under the caret while someone is typing is how a text field fights back.
+    const text = formatQuery(view.filter);
+    if (parse(this.search.value).filter.query !== view.filter.query || !this.saysSame(text)) {
+      this.search.value = text;
     }
     this.draw();
+  }
+
+  /** Whether the box already expresses this filter, whatever its spelling. */
+  private saysSame(text: string): boolean {
+    const typed = parse(this.search.value).filter;
+    const wanted = parse(text).filter;
+    return (Object.keys(wanted) as (keyof TimelineFilter)[]).every((k) => typed[k] === wanted[k]);
   }
 
   /** The line under the controls: how many rows, and how they were narrowed. */
@@ -141,12 +147,40 @@ export class FilterBar {
     ];
     if (isFiltered(this.view.filter)) {
       const clear = el("button", { class: "link", text: "Clear filters" });
-      clear.addEventListener("click", () =>
-        this.replace({ ...this.view, selected: null, filter: emptyFilter() }),
-      );
+      clear.addEventListener("click", () => {
+        this.search.value = "";
+        this.replace({ ...this.view, selected: null, filter: emptyFilter() });
+      });
       parts.push(span("dot", "·"), clear);
     }
     fill(this.summary, parts);
+  }
+
+  // ------------------------------------------------------------- the box
+
+  /**
+   * Read the box into the filter.
+   *
+   * The time bounds and the unattributed-group flag are carried over rather
+   * than taken from the text: the query bar does not write them, so it must not
+   * clear them either (task 10.7).
+   */
+  private commit(): void {
+    const { filter, errors } = parse(this.search.value);
+    const next: TimelineFilter = {
+      ...filter,
+      since: this.view.filter.since,
+      until: this.view.filter.until,
+      session_unknown: this.view.filter.session_unknown,
+    };
+
+    fill(
+      this.errors,
+      errors.map((e) => el("div", { class: "qerror", text: e.message })),
+    );
+    this.errors.hidden = errors.length === 0;
+
+    this.replace({ ...this.view, selected: null, filter: next });
   }
 
   private change(patch: Partial<TimelineFilter>): void {
@@ -165,6 +199,151 @@ export class FilterBar {
     this.options.onChange(next);
   }
 
+  // ------------------------------------------------------- autocomplete
+
+  /** The token the caret sits in, which is what a completion replaces. */
+  private tokenAtCaret(): Token | null {
+    const caret = this.search.selectionStart ?? this.search.value.length;
+    const tokens = tokenize(this.search.value);
+    return tokens.find((t) => caret >= t.start && caret <= t.end) ?? null;
+  }
+
+  /** The values a key offers: from the store where there are any (task 10.8). */
+  private valuesFor(key: string): string[] {
+    switch (key) {
+      case "project":
+        return this.facets.projects;
+      case "tool":
+        return this.facets.tools;
+      case "source":
+        return this.facets.decision_sources;
+      case "mode":
+        return this.facets.permission_modes;
+      case "agent":
+        return this.facets.agents;
+      case "decision":
+        return ["accept", "reject"];
+      default:
+        return fixedValues(key);
+    }
+  }
+
+  private suggest(token: Token | null): Suggestion[] {
+    if (token === null || token.kind !== "pair") return [];
+    const colon = this.search.value.slice(token.start, token.end).includes(":");
+
+    if (!colon) {
+      const typed = token.key.toLowerCase();
+      return Object.entries(KEYS)
+        .filter(([key]) => key.startsWith(typed))
+        .slice(0, SUGGESTIONS)
+        .map(([key, spec]) => ({ insert: `@${key}:`, label: `@${key}`, hint: spec.hint }));
+    }
+
+    if (KEYS[token.key] === undefined) return [];
+    const typed = token.value.toLowerCase();
+    return this.valuesFor(token.key)
+      .filter((v) => v.toLowerCase().includes(typed))
+      .slice(0, SUGGESTIONS)
+      .map((value) => ({
+        insert: `@${token.key}:${quote(value)} `,
+        label: value,
+        hint: `@${token.key}`,
+      }));
+  }
+
+  private drawComplete(): void {
+    this.suggestions = this.suggest(this.tokenAtCaret());
+    this.highlighted = 0;
+    if (this.suggestions.length === 0) {
+      this.closeComplete();
+      return;
+    }
+    fill(
+      this.complete,
+      this.suggestions.map((item, i) => {
+        const row = el("button", {
+          class: i === this.highlighted ? "qitem on" : "qitem",
+          attrs: { type: "button", role: "option", "aria-selected": String(i === this.highlighted) },
+        });
+        row.append(span("qlabel", item.label), span("qhint", item.hint));
+        // `mousedown`, not `click`: the input's blur would close the menu first.
+        row.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          this.accept(i);
+        });
+        return row;
+      }),
+    );
+    this.complete.hidden = false;
+    this.search.setAttribute("aria-expanded", "true");
+  }
+
+  private closeComplete(): void {
+    this.suggestions = [];
+    this.complete.hidden = true;
+    this.search.setAttribute("aria-expanded", "false");
+  }
+
+  /** Put a suggestion in place of the token under the caret. */
+  private accept(index: number): void {
+    const item = this.suggestions[index];
+    const token = this.tokenAtCaret();
+    if (item === undefined || token === null) return;
+
+    const text = this.search.value;
+    this.search.value = text.slice(0, token.start) + item.insert + text.slice(token.end);
+    const caret = token.start + item.insert.length;
+    this.search.setSelectionRange(caret, caret);
+    this.search.focus();
+
+    this.closeComplete();
+    // A completed key still needs its value, so only a completed *value*
+    // is worth asking the store about.
+    if (item.insert.endsWith(" ")) this.commit();
+    else this.drawComplete();
+  }
+
+  private onKey(event: KeyboardEvent): void {
+    if (event.key === "Escape") {
+      if (this.suggestions.length > 0) {
+        event.preventDefault();
+        this.closeComplete();
+        return;
+      }
+      this.search.value = "";
+      this.commit();
+      return;
+    }
+
+    if (this.suggestions.length === 0) {
+      if (event.key === "Enter") {
+        clearTimeout(this.timer);
+        this.commit();
+      }
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      const n = this.suggestions.length;
+      this.highlighted = (this.highlighted + step + n) % n;
+      for (const [i, row] of [...this.complete.children].entries()) {
+        row.className = i === this.highlighted ? "qitem on" : "qitem";
+        row.setAttribute("aria-selected", String(i === this.highlighted));
+      }
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      this.accept(this.highlighted);
+    }
+  }
+
+  // --------------------------------------------------------- the controls
+
   private draw(): void {
     const f = this.view.filter;
     const now = Date.now();
@@ -172,87 +351,36 @@ export class FilterBar {
     // `since` is stored absolute so a shared link keeps its meaning, which
     // means the preset it came from has to be recognised rather than read back.
     // A minute of tolerance covers the gap between choosing and redrawing.
+    // A range brushed on the histogram matches no preset, and lands on
+    // "Custom range" — which is the state this control already had.
     const elapsed = f.since === null ? null : now - f.since;
     const preset =
       elapsed === null
         ? "null"
-        : (PRESETS.find((p) => p.ago !== null && Math.abs(elapsed - p.ago) < 60_000)?.ago ??
-          "custom");
+        : f.until !== null
+          ? "custom"
+          : (PRESETS.find((p) => p.ago !== null && Math.abs(elapsed - p.ago) < 60_000)?.ago ??
+            "custom");
 
-    fill(this.controls, [
-      select(
-        "Project",
-        [
-          { value: "", label: "All projects" },
-          ...this.facets.projects.map((p) => ({ value: p, label: leaf(p) })),
-        ],
-        f.project_path ?? "",
-        (v) => this.change({ project_path: v === "" ? null : v }),
-      ),
-      select(
-        "Tool",
-        names(this.facets.tools, "All tools"),
-        f.tool_name ?? "",
-        (v) => this.change({ tool_name: v === "" ? null : v }),
-      ),
-      select(
-        "Outcome",
-        [
-          { value: "any", label: "Any outcome" },
-          { value: "ok", label: "Succeeded" },
-          { value: "failed", label: "Failed" },
-          { value: "refused", label: "Refused" },
-        ],
-        outcomeOf(f),
-        (v) => this.replace({ ...this.view, selected: null, filter: withOutcome(f, v as Outcome) }),
-      ),
-      select(
-        "Time",
-        [
-          ...PRESETS.map((p) => ({ value: String(p.ago), label: p.label })),
-          ...(preset === "custom" ? [{ value: "custom", label: "Custom range" }] : []),
-        ],
-        String(preset),
-        (v) => {
-          if (v === "custom") return;
-          this.change({ since: v === "null" ? null : now - Number(v), until: null });
-        },
-      ),
-      select(
-        "Thread",
-        [
-          { value: "any", label: "All threads" },
-          { value: "main", label: "Main thread" },
-          { value: "sub", label: "Subagents" },
-        ],
-        threadOf(f),
-        (v) => this.replace({ ...this.view, selected: null, filter: withThread(f, v as Thread) }),
-      ),
-      select(
-        "Decision source",
-        names(this.facets.decision_sources, "Any decision source"),
-        f.decision_source ?? "",
-        (v) => this.change({ decision_source: v === "" ? null : v }),
-      ),
-      select(
-        "Permission mode",
-        names(this.facets.permission_modes, "Any permission mode"),
-        f.permission_mode ?? "",
-        (v) => this.change({ permission_mode: v === "" ? null : v }),
-      ),
-      select(
-        "Lanes",
-        [
-          { value: "any", label: "Any lane" },
-          { value: "both", label: "Both lanes" },
-          { value: "transcript", label: "Transcript only" },
-          { value: "otel", label: "OTEL only" },
-        ],
-        laneOf(f),
-        (v) => this.replace({ ...this.view, selected: null, filter: withLane(f, v as Lane) }),
-      ),
-      this.groupToggle(),
-    ]);
+    const time = el("select", { class: "pick", attrs: { "aria-label": "Time" } });
+    for (const option of [
+      ...PRESETS.map((p) => ({ value: String(p.ago), label: p.label })),
+      ...(preset === "custom" ? [{ value: "custom", label: "Custom range" }] : []),
+    ]) {
+      time.append(el("option", { value: option.value, text: option.label }));
+    }
+    // Assigned after the options exist rather than by marking one `selected`
+    // before it is inserted. The two are equivalent in a browser and not in
+    // every DOM: selectedness set on a detached option is reset on insertion
+    // unless the implementation tracks dirtiness, and this does not depend on
+    // it doing so.
+    time.value = String(preset);
+    time.addEventListener("change", () => {
+      if (time.value === "custom") return;
+      this.change({ since: time.value === "null" ? null : now - Number(time.value), until: null });
+    });
+
+    fill(this.controls, [time, this.groupToggle()]);
   }
 
   private groupToggle(): HTMLElement {

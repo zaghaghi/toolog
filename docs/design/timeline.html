@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>toolog — timeline mockup (task 5.2)</title>
+    <title>toolog — timeline mockup (tasks 5.2, 10.13)</title>
     <!-- The same token file the application uses, so this cannot drift from it. -->
     <link rel="stylesheet" href="../../ui/src/styles/tokens.css" />
     <style>
@@ -31,6 +31,39 @@
       .pick { font: var(--text-sm)/1 var(--font); color: var(--ink-soft);
               background: var(--card); border: 1px solid var(--line);
               border-radius: var(--r-md); padding: var(--s3) var(--s4); }
+      .barwrap { border-bottom: 1px solid var(--line); }
+      .controls { display: flex; gap: var(--s2); padding: 0 var(--s5) var(--s3); }
+      .qerror { padding: 0 var(--s5) var(--s3); font-size: var(--text-sm); color: var(--warn); }
+
+      /* The completion menu, shown open because that is the state worth pinning. */
+      .qmenu { position: absolute; left: var(--s5); right: 240px; top: 46px; z-index: 5;
+               padding: var(--s2); background: var(--card); border: 1px solid var(--line-strong);
+               border-radius: var(--r-md); box-shadow: var(--shadow); }
+      .qitem { display: flex; justify-content: space-between; gap: var(--s4);
+               padding: var(--s2) var(--s3); border-radius: var(--r-sm); }
+      .qitem.on { background: var(--sunken); }
+      .qlabel { font: var(--text-sm)/1.4 var(--mono); }
+      .qhint { font-size: var(--text-xs); color: var(--ink-faint); }
+
+      /* The activity histogram: the one chart kept from the usage view, re-keyed
+         onto the timeline's own filter. */
+      .histo { padding: var(--s4) var(--s5); border-bottom: 1px solid var(--line); }
+      .histo-toggle { font-size: var(--text-xs); font-weight: 600; text-transform: uppercase;
+                      letter-spacing: var(--tracking-caps); color: var(--ink-faint);
+                      background: none; border: 0; padding: 0 0 var(--s2); }
+      .htitle { display: block; font-size: var(--text-xs); color: var(--ink-soft);
+                padding-bottom: var(--s3); }
+      .plot { position: relative; display: flex; align-items: flex-end; gap: 2px; height: 78px;
+              border-bottom: 1px solid var(--chart-grid); }
+      .col { flex: 1; display: flex; align-items: flex-end; height: 100%; }
+      .col i { display: block; width: 100%; max-width: 24px; margin: 0 auto; min-height: 1px;
+               background: var(--chart-mark); border-radius: 2px 2px 0 0; }
+      .brush { position: absolute; top: 0; bottom: 0; left: 41.5%; width: 25%;
+               background: var(--clay-wash); border-left: 1px solid var(--clay);
+               border-right: 1px solid var(--clay); }
+      .axis { display: flex; gap: 2px; margin-top: var(--s2); }
+      .axis span { flex: 1; text-align: center; font: var(--text-xs)/1 var(--mono);
+                   color: var(--ink-faint); }
 
       .day { display: flex; align-items: center; justify-content: space-between;
              padding: var(--s2) var(--s5); font-size: var(--text-xs); font-weight: 600;
@@ -71,7 +104,12 @@
                font-size: var(--text-sm); font-weight: 600; }
       .ghead .meta { font-weight: 400; color: var(--ink-soft); font-size: var(--text-xs); }
 
-      .pane { border-left: 1px solid var(--line); padding: var(--s5); overflow: hidden; }
+      .pane { border-left: 1px solid var(--line); overflow: hidden; }
+      .pane-head { display: flex; justify-content: flex-end; padding: var(--s3) var(--s3) 0; }
+      .pane-close { font-size: var(--text-md); line-height: 1; color: var(--ink-faint);
+                    background: none; border: 0; padding: var(--s2) var(--s3);
+                    border-radius: var(--r-sm); }
+      .pane-body { padding: 0 var(--s5) var(--s5); }
       .pane h2 { font-size: var(--text-md); margin: 0 0 var(--s2); }
       .pane h3 { font-size: var(--text-xs); text-transform: uppercase; font-weight: 600;
                  letter-spacing: var(--tracking-caps); color: var(--ink-faint);
@@ -103,21 +141,73 @@
         than by a coloured row, so a screen of failures still reads as a list.
       </p>
       <p>
+        <strong>Updated for Phase 10.</strong> Seven dropdowns became one <code>@key:value</code>
+        box, shown with its completion menu open; an activity histogram sits between the bar and
+        the list, describing the filter and setting it — the band is a brushed range; and the
+        detail pane has a close button in a header that does not scroll away, because in a narrow
+        window the pane covers the list it was opened from.
+      </p>
+      <p>
         Every value below comes from <code>ui/src/styles/tokens.css</code>. Open this file
-        alongside the app to check the two still agree.
+        alongside the app to check the two still agree — and then open the app, because a
+        <code>file://</code> page has no Content Security Policy and the window does.
       </p>
     </div>
 
     <div class="frame">
       <div class="window">
         <div>
-          <div class="bar">
-            <input class="search" value="rm -rf" aria-label="Search" />
-            <span class="pick">Project: toolog</span>
-            <span class="pick">Any tool</span>
-            <span class="pick">Any result</span>
-            <span class="pick">Group by session</span>
+          <div class="barwrap" style="position: relative">
+            <div class="bar">
+              <input class="search" value="@project:toolog @tool:Ba" aria-label="Filter and search" />
+              <span class="pick">Export…</span>
+            </div>
+            <div class="qmenu">
+              <div class="qitem on"><span class="qlabel">Bash</span><span class="qhint">@tool</span></div>
+              <div class="qitem"><span class="qlabel">BashOutput</span><span class="qhint">@tool</span></div>
+            </div>
+            <div class="controls">
+              <span class="pick">Custom range</span>
+              <span class="pick">Group by session</span>
+            </div>
           </div>
+
+          <div class="histo">
+            <button class="histo-toggle">Hide activity</button>
+            <span class="htitle">
+              2,817 calls by hour — click a column, or drag across to pick a range
+            </span>
+            <!--
+              The bar heights are `style` attributes here and must never be in
+              the application: the window's CSP has `style-src 'self'`, which
+              discards a style *attribute* silently and renders every column at
+              its natural size. `ui/src/chart.ts` sets them through the CSSOM,
+              and `chart.test.ts` asserts it. A file:// page has no CSP, which
+              is exactly why this page cannot be the last thing you look at.
+            -->
+            <div class="plot">
+              <div class="brush"></div>
+              <div class="col"><i style="height: 22%"></i></div>
+              <div class="col"><i style="height: 41%"></i></div>
+              <div class="col"><i style="height: 9%"></i></div>
+              <div class="col"><i style="height: 0"></i></div>
+              <div class="col"><i style="height: 55%"></i></div>
+              <div class="col"><i style="height: 78%"></i></div>
+              <div class="col"><i style="height: 100%"></i></div>
+              <div class="col"><i style="height: 64%"></i></div>
+              <div class="col"><i style="height: 30%"></i></div>
+              <div class="col"><i style="height: 47%"></i></div>
+              <div class="col"><i style="height: 12%"></i></div>
+              <div class="col"><i style="height: 5%"></i></div>
+            </div>
+            <div class="axis">
+              <span>06:00</span><span></span><span></span><span>09:00</span><span></span>
+              <span></span><span>12:00</span><span></span><span></span><span>15:00</span>
+              <span></span><span></span>
+            </div>
+          </div>
+
+          <div class="qerror">No filter called @proj. Try @project, @tool, @session, @agent, @source, @mode, @decision, @outcome, @lane, @thread, @sidechain.</div>
 
           <div class="day"><span>Today · 5 September</span><span>2,817 calls</span></div>
 
@@ -170,7 +260,7 @@
           </div>
 
           <div class="ghead">
-            <span>taptrigg <span class="meta">· feat/photos · 61 calls · $0.42 · 08:50–09:04</span></span>
+            <span>taptrigg <span class="meta">· feat/photos · 61 calls · 08:50–09:04 · 14m</span></span>
             <span class="meta">collapse</span>
           </div>
           <div class="row">
@@ -182,6 +272,8 @@
         </div>
 
         <div class="pane">
+          <div class="pane-head"><button class="pane-close" title="Close (Esc)">✕</button></div>
+          <div class="pane-body">
           <h2>Read <span class="chip ok">ok</span> <span class="chip lane">both lanes</span></h2>
           <div class="none" style="font-family: var(--mono); font-size: var(--text-sm)">
             /Users/hamedzaghaghi/Projects/taptrigg/apps/host-panel/src/App.tsx
@@ -213,6 +305,7 @@
 
           <h3>Input</h3>
           <div class="well">{ "file_path": "/Users/…/App.tsx" }</div>
+          </div>
         </div>
       </div>
     </div>

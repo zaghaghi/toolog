@@ -8,13 +8,14 @@ machine. It installs and uninstalls as one signed, notarized universal artifact 
 and declined.
 
 **v1.1 is in progress.** Living with v1.0 found four of its views to be two too many, and the risk
-review — the one worth keeping — to be slow and self-contradictory. Phase 9 has taken the two views
-away; Phases 10 and 11 are planned and not started.
+review — the one worth keeping — to be slow and self-contradictory. Phase 9 took the two views away
+and Phase 10 rebuilt the timeline around one query bar and an activity histogram; Phase 11 is
+planned and not started.
 
 ## Phases
 
-Nine phases shipped v1.0. Three more are the revision after living with it, of which **Phase 9 is
-done and 10–11 are not started**. Each phase ends in something runnable and checkable. **Phase 5 was
+Nine phases shipped v1.0. Three more are the revision after living with it, of which **Phases 9 and
+10 are done and Phase 11 is not started**. Each phase ends in something runnable and checkable. **Phase 5 was
 the first usable release (v0.1); Phase 8 is v1.0; Phase 11 is v1.1.**
 
 | Phase | Goal | Milestone |
@@ -29,14 +30,16 @@ the first usable release (v0.1); Phase 8 is v1.0; Phase 11 is v1.1.**
 | [07 — Privacy, retention, integrity](phases/07-privacy-retention-integrity.md) | Earn the word "audit" | done |
 | [08 — Packaging & distribution](phases/08-packaging-distribution.md) | Dead simple install | **v1.0** — done |
 | [09 — Subtraction](phases/09-subtraction.md) | The usage and live views are removed | done |
-| [10 — One lens](phases/10-one-lens.md) | The timeline's query bar, histogram and closable pane | planned |
+| [10 — One lens](phases/10-one-lens.md) | The timeline's query bar, histogram and closable pane | done |
 | [11 — Risk, fast and legible](phases/11-risk-fast-and-legible.md) | A review that is fast, adds up, and can be read | **v1.1** — planned |
 
 Phases 9–11 come from the owner's report after using v1.0: two views did not earn their place, the
 timeline asks the reader to work too hard, and the risk view — the one that is good — is slow, does
 not reconcile with itself, and never shows what its rules actually look for. Phase 9 stated the
 decisions those three phases rest on and removed the two views; the window now has three tabs —
-Timeline, Risk, Status.
+Timeline, Risk, Status. Phase 10 made the timeline the one lens over the store: seven dropdowns
+became one `@key:value` box, and the one chart worth keeping from the usage view came back re-keyed
+onto the timeline's own filter.
 
 ## Releasing
 
@@ -65,6 +68,7 @@ version moves substantially.
 | 987 OTLP records across 11 event types carry **no** `permission_mode` attribute and no `permission_mode_changed` event; the transcript carries the mode in two shapes | The column belongs to the transcript lane → [Phase 6](phases/06-risk-analytics-live.md) |
 | `prompt` and `response` attributes **are** present on OTLP records, with the literal value `<REDACTED>` | The privacy posture is measured, not assumed → [ADR-0008](adr/0008-local-only-zero-egress.md) |
 | The window's CSP (`style-src 'self'`) silently discards `style` **attributes**; CSSOM assignment is honoured | Chart geometry goes through `element.style` → [Phase 6](phases/06-risk-analytics-live.md) |
+| `foo:bar` is an ordinary thing to search for in a corpus that is two-thirds shell commands | The query bar's filter syntax needs a sigil: `@key:value`, not `key:value` → [Phase 10](phases/10-one-lens.md) |
 | 48 of 3,506 stored results — 1.4% — hold 11 MB of the projection's 18 MB of result bodies | Bodies over 64 KiB are kept by reference → [Phase 7](phases/07-privacy-retention-integrity.md) |
 | `session.transcript_path` is the only link between a projection row and its evidence | Retention removes whole sessions, both halves together → [Phase 7](phases/07-privacy-retention-integrity.md) |
 | `plutil -lint` accepts an entitlements file that `codesign` rejects: XML forbids `--` inside a comment, and AMFI then signs the app **without** the entitlements rather than stopping | The plists are asserted by a test, not by a linter → [Phase 8](phases/08-packaging-distribution.md) |
@@ -87,11 +91,11 @@ can be looked at in a browser without driving the window.
 
 | Page | What it pins |
 |---|---|
-| [timeline.html](design/timeline.html) | Row anatomy, the detail pane, the states a list can be in (task 5.2) |
+| [timeline.html](design/timeline.html) | Row anatomy, the query bar and its completions, the activity histogram, the detail pane and its close button, and the states a list can be in (tasks 5.2, 10.13) |
 
 `analytics.html` pinned the chart forms and their mark geometry; it went with the view it described
-(task 9.8). The column chart it also pinned survives in `ui/src/chart.ts` for Phase 10's histogram,
-and [Phase 10](phases/10-one-lens.md) puts it back on the timeline mockup.
+(task 9.8). The column chart it also pinned survives in `ui/src/chart.ts`, and task 10.13 put it
+back on the timeline mockup where it is now drawn.
 
 The page is worth opening after a change to `ui/src/styles/`. It does not replace looking at the
 application: a `file://` page has no Content Security Policy, and the window does — which is how a

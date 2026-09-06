@@ -19,6 +19,7 @@ vi.mock("./bindings", () => ({
   }),
   timelineCount: vi.fn((filter: TimelineFilter) => Promise.resolve(store.count(filter))),
   timelineGroups: vi.fn(() => Promise.resolve(store.groups)),
+  timelineHistogram: vi.fn((filter: TimelineFilter) => Promise.resolve(store.histogram(filter))),
   facets: vi.fn(() =>
     Promise.resolve({
       projects: ["/work/app"],
@@ -55,7 +56,7 @@ vi.mock("./bindings", () => ({
 
 // Imported after the mock so the module graph picks it up.
 const { TimelineView } = await import("./timeline");
-const { emptyView } = await import("./view");
+const { emptyView, fromHash, toHash } = await import("./view");
 type ViewState = ReturnType<typeof emptyView>;
 type Timeline = InstanceType<typeof TimelineView>;
 
@@ -118,6 +119,24 @@ const store = {
     else if (filter.main_thread === true) rows = rows.filter((r) => r.call.agent_id === null);
     return rows.slice(page.offset, page.offset + page.limit);
   },
+  /** Three hour-wide columns, the middle one empty. */
+  histogram(_filter: TimelineFilter) {
+    if (this.rows.length === 0) {
+      return { size: "hour" as const, buckets: [], since_ms: null, until_ms: null };
+    }
+    const buckets = [0, 1, 2].map((i) => ({
+      start_ms: i * 3_600_000,
+      calls: i === 1 ? 0 : 1,
+      failures: 0,
+      refusals: 0,
+    }));
+    return {
+      size: "hour" as const,
+      buckets,
+      since_ms: 0,
+      until_ms: 3 * 3_600_000,
+    };
+  },
 };
 
 /** Let the pending promises and the next animation frame run. */
@@ -126,6 +145,21 @@ async function settle(times = 6): Promise<void> {
     await Promise.resolve();
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
+}
+
+/**
+ * Type into the query bar and wait for it to reach the store.
+ *
+ * The box is debounced by 140 ms, because every keystroke would otherwise be an
+ * FTS query over the whole corpus — so a test that only flushes microtasks is
+ * testing the debounce rather than the parse.
+ */
+async function typeQuery(timeline: Timeline, text: string): Promise<void> {
+  const box = timeline.node.querySelector<HTMLInputElement>(".search")!;
+  box.value = text;
+  box.dispatchEvent(new Event("input"));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await settle();
 }
 
 let lastView: ViewState | null = null;
@@ -411,9 +445,10 @@ describe("selection", () => {
     await settle();
 
     // The pane is laid out by `has-detail`; with nothing selected it holds no
-    // width and no leftover content.
+    // width and no leftover content. Its header — the close button — is always
+    // built, so "empty" is about the body.
     expect(timeline.node.className).not.toContain("has-detail");
-    expect(timeline.node.querySelector(".pane")?.textContent).toBe("");
+    expect(timeline.node.querySelector(".pane-body")?.textContent).toBe("");
 
     rowsOf(timeline)[1]!.click();
     await settle();
@@ -437,7 +472,7 @@ describe("selection", () => {
     await settle();
 
     expect(timeline.node.className).not.toContain("has-detail");
-    expect(timeline.node.querySelector(".pane")?.textContent).toBe("");
+    expect(timeline.node.querySelector(".pane-body")?.textContent).toBe("");
   });
 
   test("narrowing the filter closes the pane with the selection", async () => {
@@ -486,5 +521,207 @@ describe("the live stream", () => {
     const pill = timeline.node.querySelector<HTMLElement>(".newpill");
     expect(pill?.hidden).toBe(false);
     expect(pill?.textContent).toBe("1 new call");
+  });
+});
+
+describe("the activity histogram (tasks 10.3, 10.4)", () => {
+  test("sits above the list and draws a column per bucket, empty ones included", async () => {
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount();
+    await settle();
+
+    const marks = timeline.node.querySelectorAll(".histo .chart-col-mark");
+    expect(marks).toHaveLength(3);
+    // A bucket with nothing in it is a hairline on the baseline, not a gap.
+    expect([...marks].map((m) => (m as HTMLElement).style.height)).toEqual([
+      "100.00%",
+      "0.00%",
+      "100.00%",
+    ]);
+  });
+
+  test("clicking a column writes that column's absolute range into the filter", async () => {
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount();
+    await settle();
+
+    const plot = timeline.node.querySelector<HTMLElement>(".histo .chart-plot")!;
+    // A click is a drag that went nowhere: down and up on the same column.
+    plot.dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true }));
+    plot.dispatchEvent(new PointerEvent("pointerup", { button: 0, bubbles: true }));
+    await settle();
+
+    expect(lastView?.filter.since).toBe(0);
+    // Inclusive of the last instant inside the column, because `until` binds
+    // as `called_at <= ?`.
+    expect(lastView?.filter.until).toBe(3_600_000 - 1);
+  });
+
+  test("dragging across columns brushes a range, and the hash reproduces it", async () => {
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount();
+    await settle();
+
+    const plot = timeline.node.querySelector<HTMLElement>(".histo .chart-plot")!;
+    // happy-dom lays nothing out, so the chart is given a width to measure
+    // against: the column under a pointer is `clientX` over that width.
+    plot.getBoundingClientRect = () =>
+      ({ left: 0, width: 300, top: 0, height: 78 }) as DOMRect;
+
+    plot.dispatchEvent(new PointerEvent("pointerdown", { button: 0, clientX: 10, bubbles: true }));
+    plot.dispatchEvent(new PointerEvent("pointerup", { button: 0, clientX: 290, bubbles: true }));
+    await settle();
+
+    // The first column's start to the last instant inside the third.
+    expect(lastView?.filter.since).toBe(0);
+    expect(lastView?.filter.until).toBe(3 * 3_600_000 - 1);
+
+    // And the view that produced it survives the address bar.
+    expect(fromHash(toHash(lastView!))).toEqual(lastView);
+  });
+
+  test("a range chosen on the chart shows as Custom range in the time control", async () => {
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount({
+      ...emptyView(),
+      filter: { ...emptyView().filter, since: 0, until: 3_599_999 },
+    });
+    await settle();
+
+    const time = timeline.node.querySelector<HTMLSelectElement>(".controls .pick")!;
+    expect(time.value).toBe("custom");
+    expect([...time.options].map((o) => o.textContent)).toContain("Custom range");
+  });
+
+  test("an empty store has no chart rather than an empty frame", async () => {
+    store.rows = [];
+    const timeline = mount();
+    await settle();
+    expect(timeline.node.querySelector<HTMLElement>(".histo")?.hidden).toBe(true);
+  });
+});
+
+describe("the query bar (tasks 10.5–10.11)", () => {
+  test("has no dropdowns left but Time and Group by session", async () => {
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount();
+    await settle();
+
+    // Seven `<select>`s used to sit here.
+    expect(timeline.node.querySelectorAll(".controls .pick")).toHaveLength(1);
+    expect(timeline.node.querySelector(".controls .toggle")?.textContent).toBe(
+      "Group by session",
+    );
+  });
+
+  test("shows the current filter as text, and typing narrows the list", async () => {
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount({
+      ...emptyView(),
+      filter: { ...emptyView().filter, tool_name: "Bash" },
+    });
+    await settle();
+
+    const box = timeline.node.querySelector<HTMLInputElement>(".search")!;
+    expect(box.value).toBe("@tool:Bash");
+
+    await typeQuery(timeline, "@tool:Edit rm -rf");
+
+    expect(lastView?.filter.tool_name).toBe("Edit");
+    expect(lastView?.filter.query).toBe("rm -rf");
+  });
+
+  test("an unknown key is said under the box, and the rest still applies", async () => {
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount();
+    await settle();
+
+    await typeQuery(timeline, "@nonsense:x @tool:Bash");
+
+    const errors = timeline.node.querySelector<HTMLElement>(".qerrors")!;
+    expect(errors.hidden).toBe(false);
+    expect(errors.textContent).toContain("@nonsense");
+    expect(lastView?.filter.tool_name).toBe("Bash");
+  });
+
+  test("offers keys after @ and store values after the colon", async () => {
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount();
+    await settle();
+
+    const box = timeline.node.querySelector<HTMLInputElement>(".search")!;
+    const menu = timeline.node.querySelector<HTMLElement>(".qmenu")!;
+
+    box.value = "@to";
+    box.setSelectionRange(3, 3);
+    box.dispatchEvent(new Event("input"));
+    expect([...menu.querySelectorAll(".qlabel")].map((n) => n.textContent)).toEqual(["@tool"]);
+
+    box.value = "@tool:";
+    box.setSelectionRange(6, 6);
+    box.dispatchEvent(new Event("input"));
+    // From `facets()`, not from a hard-coded list.
+    expect([...menu.querySelectorAll(".qlabel")].map((n) => n.textContent)).toEqual([
+      "Bash",
+      "Edit",
+    ]);
+  });
+
+  test("the time control is not reachable by typing, because it pairs with the chart", async () => {
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount({
+      ...emptyView(),
+      filter: { ...emptyView().filter, since: 1_000, until: 2_000 },
+    });
+    await settle();
+
+    const box = timeline.node.querySelector<HTMLInputElement>(".search")!;
+    expect(box.value).toBe("");
+
+    // And editing the text leaves the bounds where the chart put them.
+    await typeQuery(timeline, "@tool:Bash");
+    expect(lastView?.filter.since).toBe(1_000);
+    expect(lastView?.filter.until).toBe(2_000);
+  });
+});
+
+describe("closing the detail pane (task 10.12)", () => {
+  async function opened(): Promise<Timeline> {
+    store.rows = [row({ tool_use_id: "t1" })];
+    const timeline = mount();
+    await settle();
+    rowsOf(timeline)[0]!.click();
+    await settle();
+    expect(timeline.node.className).toContain("has-detail");
+    return timeline;
+  }
+
+  test("closes from the button in its own header", async () => {
+    const timeline = await opened();
+    timeline.node.querySelector<HTMLButtonElement>(".pane-close")!.click();
+    await settle();
+
+    expect(timeline.node.className).not.toContain("has-detail");
+    expect(lastView?.selected).toBeNull();
+  });
+
+  test("closes on Escape from inside the pane, not only from the list", async () => {
+    const timeline = await opened();
+    timeline.node
+      .querySelector<HTMLElement>(".pane-body")!
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await settle();
+
+    expect(timeline.node.className).not.toContain("has-detail");
+    expect(lastView?.selected).toBeNull();
+  });
+
+  test("closes when the row that opened it is clicked again", async () => {
+    const timeline = await opened();
+    rowsOf(timeline)[0]!.click();
+    await settle();
+
+    expect(timeline.node.className).not.toContain("has-detail");
+    expect(lastView?.selected).toBeNull();
   });
 });

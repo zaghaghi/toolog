@@ -50,25 +50,14 @@ export function isFiltered(f: TimelineFilter): boolean {
   return Object.values(f).some((v) => v !== null);
 }
 
-/** The status control collapses three different columns into one choice. */
-export type Outcome = "any" | "ok" | "failed" | "refused";
-
-export function outcomeOf(f: TimelineFilter): Outcome {
-  if (f.decision === "reject") return "refused";
-  if (f.success === true) return "ok";
-  if (f.success === false) return "failed";
-  return "any";
-}
-
-export function withOutcome(f: TimelineFilter, outcome: Outcome): TimelineFilter {
-  const next: TimelineFilter = { ...f, success: null, decision: null };
-  if (outcome === "ok") next.success = true;
-  if (outcome === "failed") next.success = false;
-  if (outcome === "refused") next.decision = "reject";
-  return next;
-}
-
-/** The lane control, over `provenance`'s two bits. */
+/**
+ * The lane control, over `provenance`'s two bits.
+ *
+ * The outcome collapse that used to sit above this went with the dropdown it
+ * served (task 10.11). `@outcome` writes `success` and `decision` directly in
+ * `query.ts`, and deliberately does not clear the one it did not name — see the
+ * note there.
+ */
 export type Lane = "any" | "both" | "transcript" | "otel";
 
 const LANE_BITS: Record<Exclude<Lane, "any">, number> = { both: 3, transcript: 1, otel: 2 };

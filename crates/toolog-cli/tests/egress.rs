@@ -66,6 +66,8 @@ fn full_workload() {
     query::reconcile(conn).expect("reconcile");
     query::ingest_summary(conn).expect("ingest summary");
     query::search(conn, "rm", Page::default()).expect("search");
+    // The timeline's activity histogram (Phase 10), which loads with the list.
+    query::histogram(conn, &filter, 0).expect("histogram");
 
     // The detail pane, which reads a call, its session, its diffs and the
     // transcript line behind it.

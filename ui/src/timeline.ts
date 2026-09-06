@@ -9,6 +9,7 @@ import type { SessionGroup, ToolCall } from "./bindings";
 import { collectorStatus, facets, timelineCount, timelineGroups } from "./bindings";
 import { DetailPane } from "./detail";
 import { el, fill, span } from "./dom";
+import { ActivityHistogram } from "./histogram";
 import { count, dayLabel } from "./format";
 import { FilterBar } from "./filterbar";
 import { agentKey, Plan, RowStore, sessionKey } from "./plan";
@@ -38,6 +39,7 @@ export class TimelineView {
   private readonly banner = el("div", { class: "banner", hidden: true });
   private readonly newCalls = el("button", { class: "newpill", hidden: true });
   private readonly detail: DetailPane;
+  private readonly histogram: ActivityHistogram;
   private readonly list: VirtualList;
   private readonly store: RowStore;
 
@@ -64,16 +66,30 @@ export class TimelineView {
     });
 
     const pane = el("aside", { class: "pane" });
-    this.detail = new DetailPane(pane, (patch) =>
-      this.apply(
-        { ...this.view, selected: null, filter: { ...this.view.filter, ...patch } },
-        true,
-      ),
+    this.detail = new DetailPane(
+      pane,
+      (patch) =>
+        this.apply(
+          { ...this.view, selected: null, filter: { ...this.view.filter, ...patch } },
+          true,
+        ),
+      () => this.closeDetail(),
     );
+
+    // The chart writes absolute bounds into the same filter the list reads, so
+    // the two are one question asked twice rather than two questions.
+    this.histogram = new ActivityHistogram({
+      onRange: (since, until) =>
+        this.apply(
+          { ...this.view, selected: null, filter: { ...this.view.filter, since, until } },
+          true,
+        ),
+    });
 
     this.node.append(
       this.bar.node,
       this.banner,
+      this.histogram.node,
       el("div", { class: "split" }, [
         el("div", { class: "listwrap" }, [this.context, this.viewport, this.state, this.newCalls]),
         pane,
@@ -186,6 +202,7 @@ export class TimelineView {
 
     try {
       const filter = this.view.filter;
+      void this.histogram.load(filter);
       const [total, groups] = await Promise.all([
         timelineCount(filter),
         this.view.grouped ? timelineGroups(filter) : Promise.resolve([]),
@@ -337,7 +354,26 @@ export class TimelineView {
 
     const row = target?.closest<HTMLElement>(".row");
     const id = row?.dataset["id"];
-    if (id !== undefined) this.select(id, this.indexOfNode(row));
+    if (id === undefined) return;
+    // Clicking the row that is already open closes it — the third way out of
+    // the pane (task 10.12), and the one a reader tries first.
+    if (id === this.view.selected) this.closeDetail();
+    else this.select(id, this.indexOfNode(row));
+  }
+
+  /**
+   * Close the detail pane, from wherever the reader asked.
+   *
+   * All three routes come through here and all three clear `selected` from the
+   * hash, so the back button undoes each of them.
+   */
+  private closeDetail(): void {
+    if (this.view.selected === null) return;
+    this.view = { ...this.view, selected: null };
+    this.options.onViewChange(this.view);
+    this.showSelected();
+    this.list.refreshAll();
+    this.viewport.focus();
   }
 
   private indexOfNode(node: HTMLElement | null | undefined): number {
@@ -376,10 +412,8 @@ export class TimelineView {
     event.preventDefault();
 
     if (event.key === "Escape") {
-      this.view = { ...this.view, selected: null };
       this.cursor = -1;
-      this.options.onViewChange(this.view);
-      this.showSelected();
+      this.closeDetail();
       this.list.refreshAll();
       return;
     }

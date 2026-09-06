@@ -97,6 +97,29 @@ session_id: string | null, project_path: string | null, git_branch: string | nul
 
 export type Facets = { projects: Array<string>, tools: Array<string>, decision_sources: Array<string>, permission_modes: Array<string>, agents: Array<string>, };
 
+export type BucketSize = "minute" | "hour" | "day" | "week";
+
+export type Bucket = { 
+/**
+ * Inclusive start, in epoch milliseconds. The column covers
+ * `[start_ms, start_ms + size.ms())`.
+ */
+start_ms: number, calls: number, failures: number, refusals: number, };
+
+export type Histogram = { size: BucketSize, 
+/**
+ * Every column in the span, including the empty ones.
+ *
+ * A bucket with no calls is a fact — nothing ran that hour — and dropping
+ * it would draw a chart whose gaps mean "no data" and "not asked" at once.
+ */
+buckets: Array<Bucket>, 
+/**
+ * The span the columns cover: the first column's start, and the end of
+ * the last. Absolute, because that is what a brush writes into the hash.
+ */
+since_ms: number | null, until_ms: number | null, };
+
 export type IngestSummary = { 
 /**
  * Distinct transcript files with at least one stored record.
@@ -278,6 +301,10 @@ export function timelineGroups(filter: TimelineFilter): Promise<Array<SessionGro
 
 export function facets(): Promise<Facets> {
   return invoke("facets");
+}
+
+export function timelineHistogram(filter: TimelineFilter, utcOffsetMinutes: number): Promise<Histogram> {
+  return invoke("timeline_histogram", { filter, utcOffsetMinutes });
 }
 
 export function timelineCount(filter: TimelineFilter): Promise<number> {

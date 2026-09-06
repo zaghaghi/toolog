@@ -277,6 +277,16 @@ commands! {
         app.read(query::facets)
     }
 
+    /// The activity histogram over the same filter the list is showing.
+    ///
+    /// `utcOffsetMinutes` is the window's own — `-new Date().getTimezoneOffset()`
+    /// — because a day boundary is a local fact and the store keeps UTC. The
+    /// bucket size is chosen from the span rather than passed in: it is a
+    /// property of what is being looked at, not a preference.
+    timeline_histogram(filter: TimelineFilter, utc_offset_minutes: i32) -> query::Histogram {
+        app.read(|c| query::histogram(c, &filter, utc_offset_minutes))
+    }
+
     /// How many calls match a filter, ignoring paging.
     ///
     /// Beyond the tasks' list, and needed by every one of them: a virtualized

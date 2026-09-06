@@ -163,26 +163,6 @@ fn selection(f: &TimelineFilter) -> Selection {
     }
 }
 
-/// `date(…)` over an epoch-millisecond column, shifted into the local day.
-///
-/// Days are the reader's days. A day boundary is a local fact; bucketing in
-/// UTC would put an evening's work on tomorrow's bar for anyone east of
-/// Greenwich, so the caller passes its own offset — `-new
-/// Date().getTimezoneOffset()` in the browser — and the timestamp is shifted
-/// before the date is taken.
-///
-/// The one piece of the deleted usage analytics worth keeping (task 9.5): the
-/// timeline's activity histogram buckets by the same rule. Public rather than
-/// private only because nothing in this module calls it yet, and a phase does
-/// not close on an `#[allow(dead_code)]`.
-#[must_use]
-pub fn local_day(column: &str, offset_minutes: i32) -> String {
-    format!(
-        "date({column} / 1000 + {}, 'unixepoch')",
-        offset_minutes * 60
-    )
-}
-
 /// Marks where a match starts inside [`TimelineRow::snippet`].
 ///
 /// A control character, because the corpus is shell commands and file paths:
@@ -321,6 +301,212 @@ pub fn timeline_count(conn: &Connection, filter: &TimelineFilter) -> Result<i64>
     let sql = format!("SELECT count(*) FROM {}{}", sel.from, sel.where_sql);
     let refs: Vec<&dyn ToSql> = sel.binds.iter().map(AsRef::as_ref).collect();
     Ok(conn.query_row(&sql, refs.as_slice(), |r| r.get(0))?)
+}
+
+// ---------------------------------------------------------------------------
+// The activity histogram (tasks 10.1 and 10.2)
+// ---------------------------------------------------------------------------
+
+/// How wide one column of the histogram is.
+///
+/// Four sizes, not a number the reader picks. A bucket width is a property of
+/// the span being looked at — sixty columns of an hour each is a readable day,
+/// and sixty columns of a minute each is not — so it is derived rather than
+/// offered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
+#[serde(rename_all = "lowercase")]
+pub enum BucketSize {
+    Minute,
+    Hour,
+    Day,
+    Week,
+}
+
+/// Roughly how many columns a histogram aims for.
+///
+/// Sixty rather than a round hundred: at the width this chart gets, a column
+/// narrower than about four pixels stops being a hit target, and the crosshair
+/// in `columnChart` is what makes the chart usable at all.
+const TARGET_BUCKETS: i64 = 60;
+
+impl BucketSize {
+    /// The width in milliseconds.
+    #[must_use]
+    pub const fn ms(self) -> i64 {
+        match self {
+            Self::Minute => 60_000,
+            Self::Hour => 3_600_000,
+            Self::Day => 86_400_000,
+            Self::Week => 7 * 86_400_000,
+        }
+    }
+
+    /// The smallest size that puts `span_ms` inside roughly [`TARGET_BUCKETS`].
+    ///
+    /// Smallest, so a span is never spread thinner than it needs to be: half an
+    /// hour of work is sixty minutes' worth of columns, not one hour-column
+    /// with everything in it.
+    #[must_use]
+    pub fn for_span(span_ms: i64) -> Self {
+        for size in [Self::Minute, Self::Hour, Self::Day] {
+            if span_ms <= size.ms() * TARGET_BUCKETS {
+                return size;
+            }
+        }
+        Self::Week
+    }
+
+    /// How far past the epoch this size's grid starts, in its own units.
+    ///
+    /// Zero for everything but a week. Epoch day 0 was a Thursday, so weeks
+    /// bucketed by plain division would run Thursday to Wednesday; three days
+    /// of shift puts them on Monday, which is where a reader's week starts.
+    const fn phase_ms(self) -> i64 {
+        match self {
+            Self::Week => 3 * 86_400_000,
+            _ => 0,
+        }
+    }
+}
+
+/// One column: when it starts, and what happened inside it.
+///
+/// **One measure — `calls`.** `failures` and `refusals` ride along for the
+/// tooltip and the table twin, and are never a second series: Phase 6 settled
+/// that two scales on one chart let a reader see a correlation the data does
+/// not contain.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
+pub struct Bucket {
+    /// Inclusive start, in epoch milliseconds. The column covers
+    /// `[start_ms, start_ms + size.ms())`.
+    pub start_ms: i64,
+    pub calls: i64,
+    pub failures: i64,
+    pub refusals: i64,
+}
+
+/// The histogram over a filter: its columns, and the grid they sit on.
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
+pub struct Histogram {
+    pub size: BucketSize,
+    /// Every column in the span, including the empty ones.
+    ///
+    /// A bucket with no calls is a fact — nothing ran that hour — and dropping
+    /// it would draw a chart whose gaps mean "no data" and "not asked" at once.
+    pub buckets: Vec<Bucket>,
+    /// The span the columns cover: the first column's start, and the end of
+    /// the last. Absolute, because that is what a brush writes into the hash.
+    pub since_ms: Option<i64>,
+    pub until_ms: Option<i64>,
+}
+
+/// The first and last call a filter touches.
+///
+/// Read through [`selection`] like everything else here, so the span the chart
+/// is drawn over and the rows the list shows can never come from different
+/// questions. With no filter at all this is the store's own first-to-last, and
+/// the `tool_call_called_at` index answers it without a scan.
+fn called_at_span(conn: &Connection, filter: &TimelineFilter) -> Result<Option<(i64, i64)>> {
+    let sel = selection(filter);
+    let sql = format!(
+        "SELECT min(tc.called_at), max(tc.called_at) FROM {}{}",
+        sel.from, sel.where_sql
+    );
+    let refs: Vec<&dyn ToSql> = sel.binds.iter().map(AsRef::as_ref).collect();
+    let (first, last): (Option<i64>, Option<i64>) =
+        conn.query_row(&sql, refs.as_slice(), |r| Ok((r.get(0)?, r.get(1)?)))?;
+    Ok(first.zip(last))
+}
+
+/// The activity histogram for a filter, at a bucket size of its own choosing.
+///
+/// `utc_offset_minutes` is the reader's own — `-new Date().getTimezoneOffset()`
+/// in the browser. **Days are the reader's days:** a day boundary is a local
+/// fact, and bucketing in UTC would put an evening's work on tomorrow's column
+/// for anyone east of Greenwich. The offset shifts the timestamp before it is
+/// divided and is taken back off the result, so a column's `start_ms` is the
+/// real instant local midnight (or the hour, or Monday) fell on.
+pub fn histogram(
+    conn: &Connection,
+    filter: &TimelineFilter,
+    utc_offset_minutes: i32,
+) -> Result<Histogram> {
+    let Some((first, last)) = called_at_span(conn, filter)? else {
+        return Ok(Histogram {
+            size: BucketSize::Hour,
+            buckets: Vec::new(),
+            since_ms: None,
+            until_ms: None,
+        });
+    };
+
+    let size = BucketSize::for_span(last - first);
+    let width = size.ms();
+    let shift = i64::from(utc_offset_minutes) * 60_000 + size.phase_ms();
+
+    // Floor towards negative infinity: `i64` division truncates towards zero,
+    // which would put the instant before the epoch in the bucket after it.
+    let index_of = |ms: i64| (ms + shift).div_euclid(width);
+    let (first_index, last_index) = (index_of(first), index_of(last));
+
+    let sel = selection(filter);
+    let sql = format!(
+        "SELECT (tc.called_at + {shift}) / {width} - CASE WHEN (tc.called_at + {shift}) % {width} < 0 THEN 1 ELSE 0 END,
+                count(*),
+                sum(CASE WHEN tc.success = 0 THEN 1 ELSE 0 END),
+                sum(CASE WHEN tc.decision = 'reject' THEN 1 ELSE 0 END)
+         FROM {}{}{} tc.called_at IS NOT NULL
+         GROUP BY 1",
+        sel.from,
+        sel.where_sql,
+        if sel.where_sql.is_empty() {
+            " WHERE"
+        } else {
+            " AND"
+        },
+    );
+    let refs: Vec<&dyn ToSql> = sel.binds.iter().map(AsRef::as_ref).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(refs.as_slice(), |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, Option<i64>>(2)?.unwrap_or_default(),
+            r.get::<_, Option<i64>>(3)?.unwrap_or_default(),
+        ))
+    })?;
+
+    // Every column in the span, then the counts dropped into it. Built from
+    // the grid rather than from the rows so an empty bucket is a column with a
+    // zero in it, which is what the chart draws as a hairline on the baseline.
+    let span = usize::try_from(last_index - first_index + 1).unwrap_or(0);
+    let mut buckets: Vec<Bucket> = (0..span)
+        .map(|i| Bucket {
+            start_ms: (first_index + i64::try_from(i).unwrap_or(0)) * width - shift,
+            ..Bucket::default()
+        })
+        .collect();
+    for row in rows {
+        let (index, calls, failures, refusals) = row?;
+        let Ok(at) = usize::try_from(index - first_index) else {
+            continue;
+        };
+        if let Some(bucket) = buckets.get_mut(at) {
+            bucket.calls = calls;
+            bucket.failures = failures;
+            bucket.refusals = refusals;
+        }
+    }
+
+    Ok(Histogram {
+        since_ms: buckets.first().map(|b| b.start_ms),
+        until_ms: buckets.last().map(|b| b.start_ms + width),
+        size,
+        buckets,
+    })
 }
 
 /// The subagent instances inside one session, newest first.

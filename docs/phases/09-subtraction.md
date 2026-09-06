@@ -117,6 +117,14 @@ files (`analytics.ts`, `live.ts` and both test files) and one mockup page were d
   histogram will — and a private helper with no caller is a dead-code warning. `#[allow(dead_code)]`
   was the thing the exit criteria forbade, so the function is public with the reason written down.
 
+  > **Corrected in Phase 10.** The histogram did not need it and the function is now deleted. It
+  > returns a `date()` string; the chart needs a bucket *start in milliseconds*, for every one of
+  > four bucket sizes, and integer arithmetic on the shifted timestamp gives that in one expression
+  > where a date string would have needed converting back. What was worth keeping was the
+  > reasoning, not the four lines — "days are the reader's days" is now the doc comment on
+  > `query::histogram`'s `utc_offset_minutes`, and `days_are_the_readers_days` in
+  > `crates/toolog-core/tests/timeline.rs` asserts it.
+
 ### The exit criteria
 
 - `just check` green, no `#[allow(dead_code)]` in the diff. ✓
@@ -140,7 +148,8 @@ files (`analytics.ts`, `live.ts` and both test files) and one mockup page were d
 ### What Phase 10 inherits
 
 `columnChart`, `ticks`, `scaleTop`, `figure`/`tableTwin` and their CSS; `query::local_day` with its
-reasoning; and `chart.test.ts`'s two surviving guards — the CSP case that cost Phase 6 a day, and
+reasoning (which Phase 10 replaced — see the correction above); and `chart.test.ts`'s two surviving
+guards — the CSP case that cost Phase 6 a day, and
 the one asserting a chart label from a transcript is text rather than markup (re-pointed from the
 deleted `barChart` at the column chart's x-ticks).
 

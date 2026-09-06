@@ -55,6 +55,16 @@ export interface ChartSpec {
   columns?: [string, string] | undefined;
   /** What to say when there is nothing to plot. Never an empty frame. */
   empty?: string | undefined;
+  /**
+   * A column was clicked, or Enter was pressed on it (task 10.4).
+   *
+   * Selection lives here rather than in the caller because the index under the
+   * pointer is already worked out here, by the crosshair — and a second
+   * calculation of "which column is that" is a second chance to disagree.
+   */
+  onPick?: ((index: number) => void) | undefined;
+  /** A drag across columns, inclusive at both ends and always ordered. */
+  onBrush?: ((from: number, to: number) => void) | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +235,7 @@ export function columnChart(spec: ChartSpec): HTMLElement {
     ),
   );
 
+  const brush = el("div", { class: "chart-brush", hidden: true });
   const plot = el("div", { class: "chart-plot" }, [
     el(
       "div",
@@ -234,10 +245,12 @@ export function columnChart(spec: ChartSpec): HTMLElement {
         .reverse()
         .map((v) => el("div", { class: "chart-gridline" }, [el("span", { class: "chart-ytick", text: spec.format(v) })])),
     ),
+    brush,
     el("div", { class: "chart-cols" }, columns),
     crosshair,
     tip.node,
   ]);
+  if (spec.onPick !== undefined || spec.onBrush !== undefined) plot.classList.add("pickable");
 
   const hover = (index: number): void => {
     const d = spec.data[index];
@@ -262,17 +275,66 @@ export function columnChart(spec: ChartSpec): HTMLElement {
     tip.node.hidden = true;
   };
 
-  plot.addEventListener("pointermove", (event) => {
+  /** Which column the pointer is over, from the pointer alone. */
+  const indexAt = (clientX: number): number => {
     const rect = plot.getBoundingClientRect();
-    const fraction = (event.clientX - rect.left) / Math.max(rect.width, 1);
-    const index = Math.min(spec.data.length - 1, Math.max(0, Math.floor(fraction * spec.data.length)));
+    const fraction = (clientX - rect.left) / Math.max(rect.width, 1);
+    return Math.min(spec.data.length - 1, Math.max(0, Math.floor(fraction * spec.data.length)));
+  };
+
+  // The brush, drawn over the same column boxes the marks sit in so the band
+  // and the columns cannot describe different ranges.
+  let anchor: number | null = null;
+  const paintBrush = (from: number, to: number): void => {
+    const first = columns[Math.min(from, to)];
+    const last = columns[Math.max(from, to)];
+    if (first === undefined || last === undefined) return;
+    brush.hidden = false;
+    brush.style.left = `${first.offsetLeft}px`;
+    brush.style.width = `${last.offsetLeft + last.offsetWidth - first.offsetLeft}px`;
+  };
+
+  plot.addEventListener("pointermove", (event) => {
+    const index = indexAt(event.clientX);
     hover(index);
+    if (anchor !== null) paintBrush(anchor, index);
   });
   plot.addEventListener("pointerleave", leave);
+
+  if (spec.onPick !== undefined || spec.onBrush !== undefined) {
+    plot.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      anchor = indexAt(event.clientX);
+      plot.setPointerCapture(event.pointerId);
+    });
+    plot.addEventListener("pointerup", (event) => {
+      if (anchor === null) return;
+      const from = anchor;
+      const to = indexAt(event.clientX);
+      anchor = null;
+      brush.hidden = true;
+      // A click is a drag that went nowhere. Both write an absolute range;
+      // one of them is just narrower.
+      if (from === to) spec.onPick?.(from);
+      else spec.onBrush?.(Math.min(from, to), Math.max(from, to));
+    });
+    plot.addEventListener("pointercancel", () => {
+      anchor = null;
+      brush.hidden = true;
+    });
+  }
+
   for (const [i, column] of columns.entries()) {
-    // Keyboard focus shows exactly what hover shows.
+    // Keyboard focus shows exactly what hover shows, and Enter does what a
+    // click does — the chart is not reachable by pointer only.
     column.addEventListener("focus", () => hover(i));
     column.addEventListener("blur", leave);
+    column.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        spec.onPick?.(i);
+      }
+    });
   }
 
   const axis = el(

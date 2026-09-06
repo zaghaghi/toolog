@@ -262,11 +262,39 @@ export type Narrow = (patch: Partial<TimelineFilter>) => void;
 /** The pane: shows one call at a time, and says when it is showing nothing. */
 export class DetailPane {
   private token = 0;
+  /** The content, under a header that does not get replaced on every load. */
+  private readonly body = el("div", { class: "pane-body" });
 
   constructor(
     private readonly host: HTMLElement,
     private readonly onFilter: Narrow,
+    /**
+     * The reader closed the pane (task 10.12).
+     *
+     * A button, because `Escape` was the only way out in v1.0 and it only
+     * worked while focus was in the list — so a pane opened by clicking a row
+     * and then scrolled had no visible exit at all. In a narrow window it
+     * covers the list it was opened from, which makes that a trap rather than
+     * an inconvenience.
+     */
+    onClose: () => void,
   ) {
+    const close = el("button", {
+      class: "pane-close",
+      text: "✕",
+      attrs: { type: "button", "aria-label": "Close the detail pane", title: "Close (Esc)" },
+    });
+    close.addEventListener("click", onClose);
+    this.host.append(el("div", { class: "pane-head" }, [close]), this.body);
+
+    // `Escape` from anywhere inside the pane, not only from the list. The
+    // handler sits on the pane so a keystroke while reading a result body
+    // reaches it.
+    this.host.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      onClose();
+    });
     this.clear();
   }
 
@@ -275,30 +303,30 @@ export class DetailPane {
    * about what is shown. */
   clear(): void {
     this.token += 1;
-    fill(this.host, []);
+    fill(this.body, []);
   }
 
   show(toolUseId: string): void {
     this.token += 1;
     const token = this.token;
-    fill(this.host, [el("div", { class: "empty small", text: "Loading…" })]);
+    fill(this.body, [el("div", { class: "empty small", text: "Loading…" })]);
 
     void getToolCall(toolUseId)
       .then((detail) => {
         if (token !== this.token) return;
         if (detail === null) {
-          fill(this.host, [
+          fill(this.body, [
             el("div", { class: "empty small", text: "That call is no longer in the store." }),
           ]);
           return;
         }
-        fill(this.host, [render(detail, this.onFilter)]);
-        this.host.scrollTop = 0;
+        fill(this.body, [render(detail, this.onFilter)]);
+        this.body.scrollTop = 0;
       })
       .catch((error: unknown) => {
         if (token !== this.token) return;
-        fill(this.host, []);
-        append(this.host, [el("div", { class: "problem", text: String(error) })]);
+        fill(this.body, []);
+        append(this.body, [el("div", { class: "problem", text: String(error) })]);
       });
   }
 }
