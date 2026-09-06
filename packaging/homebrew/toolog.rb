@@ -29,11 +29,11 @@
 #            someone asks for the history to go too, and it maps onto exactly
 #            what `toolog uninstall --delete-data` would have removed.
 cask "toolog" do
-  version "1.1.0"
+  version "1.2.0"
   # Replaced by `just cask <version>`, which reads it from the release's
   # SHA256SUMS. Left as an impossible value rather than :no_check: a cask
   # published by accident must fail to install, not install anything.
-  sha256 "5f39ff5d3ba634f728b3ab3c548848e052e7ffcc5a502cff80b36ed1f88c93f9"
+  sha256 "85823dc26eaf6a4aec84276d7018e0cfe10c6317aa79d0092c6521cc23f4bb1f"
 
   url "https://github.com/zaghaghi/toolog/releases/download/v#{version}/toolog_#{version}_universal.dmg"
   name "toolog"
