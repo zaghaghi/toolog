@@ -99,6 +99,15 @@ pub struct Lens<'a> {
     filter: &'a TimelineFilter,
     rules: &'a [crate::rules::Rule],
     dismissed: Option<&'a std::collections::HashMap<String, crate::rules::Dismissal>>,
+    /// Which model and which prompt `intent` and `llm_risk` are asking about
+    /// (task 13.15).
+    ///
+    /// The same argument as `rules`, one phase later: a verdict is an answer to
+    /// a question identified by a (model, prompt) pair, and a filter naming one
+    /// of those fields without saying which pair is not a narrower question, it
+    /// is an ambiguous one. So the caller hands it over, and a filter that names
+    /// an LLM field without it is an error rather than an empty list.
+    verdicts: Option<&'a crate::llm::Pair>,
 }
 
 impl<'a> Lens<'a> {
@@ -109,6 +118,7 @@ impl<'a> Lens<'a> {
             filter,
             rules: &[],
             dismissed: None,
+            verdicts: None,
         }
     }
 
@@ -123,7 +133,20 @@ impl<'a> Lens<'a> {
             filter,
             rules,
             dismissed: Some(dismissed),
+            verdicts: None,
         }
+    }
+
+    /// Name the model and prompt whose verdicts `@intent` and `@llm-risk` mean.
+    ///
+    /// A builder rather than a fourth constructor: a filter can narrow by rule
+    /// *and* by verdict at once — "the high-risk calls the model also called
+    /// destructive" — and two orthogonal things should not need four ways to
+    /// say them.
+    #[must_use]
+    pub fn and_verdicts(mut self, pair: &'a crate::llm::Pair) -> Self {
+        self.verdicts = Some(pair);
+        self
     }
 }
 
@@ -221,6 +244,9 @@ fn selection(lens: Lens<'_>) -> Result<Selection> {
         }
     }
 
+    // The local model's verdicts (task 13.15).
+    verdict_clauses(lens, &mut clauses, &mut binds)?;
+
     // The FTS table is joined rather than used as a subquery so `snippet()`
     // can still be called on it. It is not aliased: FTS5 wants its own name on
     // both the `MATCH` and the auxiliary functions.
@@ -246,6 +272,71 @@ fn selection(lens: Lens<'_>) -> Result<Selection> {
         searching: fts.is_some(),
         fts,
     })
+}
+
+/// The `WHERE` fragments for `@intent` and `@llm-risk` (task 13.15).
+///
+/// Its own function because `selection` was already at the length where a
+/// reader stops holding the whole thing in their head, and this is a
+/// self-contained question: which calls did *this* model, under *this* prompt,
+/// say something about.
+fn verdict_clauses(
+    lens: Lens<'_>,
+    clauses: &mut Vec<String>,
+    binds: &mut Vec<Box<dyn ToSql>>,
+) -> Result<()> {
+    let f = lens.filter;
+    if f.intent.is_none() && f.llm_risk.is_none() {
+        return Ok(());
+    }
+
+    let Some(pair) = lens.verdicts else {
+        return Err(Error::Rules(
+            "this filter narrows by what a local model said, and no model was \
+             named — a verdict belongs to one model and one prompt, and the \
+             query layer does not choose which"
+                .to_string(),
+        ));
+    };
+
+    // Subqueries against `llm_verdict`, never a join: a call has at most one
+    // verdict per pair, but joining would still let a second pair double every
+    // row, and a timeline whose row count depended on how many models had been
+    // tried would be a bug nobody could see.
+    if let Some(text) = f.intent.as_deref().and_then(fts::build_query) {
+        clauses.push(
+            "tc.tool_use_id IN (
+                 SELECT tool_use_id FROM llm_verdict_fts
+                  WHERE llm_verdict_fts MATCH ?
+                    AND model_fingerprint = ? AND prompt_fingerprint = ?)"
+                .to_string(),
+        );
+        binds.push(Box::new(text));
+        binds.push(Box::new(pair.model.clone()));
+        binds.push(Box::new(pair.prompt.clone()));
+    }
+
+    if let Some(score) = f.llm_risk.as_deref() {
+        let parsed = crate::llm::ScoreFilter::parse(score).ok_or_else(|| {
+            Error::Rules(format!(
+                "`{score}` is not a score comparison. Write a number 1 to 5, \
+                 optionally after >=, >, <= or < — for example `>=4`."
+            ))
+        })?;
+        // The operator comes from a closed enum, never from the string: the
+        // value is bound, and the comparison is one of five literals.
+        clauses.push(format!(
+            "tc.tool_use_id IN (
+                 SELECT tool_use_id FROM llm_verdict
+                  WHERE model_fingerprint = ? AND prompt_fingerprint = ?
+                    AND status = 'ok' AND risk_score {} ?)",
+            parsed.op.sql()
+        ));
+        binds.push(Box::new(pair.model.clone()));
+        binds.push(Box::new(pair.prompt.clone()));
+        binds.push(Box::new(parsed.score));
+    }
+    Ok(())
 }
 
 /// Marks where a match starts inside [`TimelineRow::snippet`].

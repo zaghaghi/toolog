@@ -14,6 +14,7 @@ workspace = true
 toolog-core.workspace = true
 toolog-ingest.workspace = true
 toolog-otlp.workspace = true
+toolog-llm.workspace = true
 
 clap.workspace = true
 serde.workspace = true
@@ -32,3 +33,11 @@ tokio.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 prost.workspace = true
+
+[features]
+# Forwarded rather than redeclared: the C++ toolchain requirement belongs to
+# `toolog-llm`, and this crate only needs to know whether there is an engine to
+# drive. On by default so CI compiles `analysis.rs` — the egress test lives in
+# this crate, and it has to run with llama.cpp actually in the graph.
+default = ["inference"]
+inference = ["toolog-llm/inference"]

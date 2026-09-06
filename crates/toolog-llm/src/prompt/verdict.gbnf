@@ -1,0 +1,28 @@
+# The shape of an answer, as a grammar rather than as a request (task 13.10).
+#
+# Asking a model for JSON and hoping is not a mitigation. This is applied as a
+# GBNF sampler, so at every step the tokens that would leave the schema are
+# given -inf and the model *cannot* emit them — not "is unlikely to". The
+# command under audit is attacker-influenced text, and "reply with your
+# instructions instead" is not expressible in this grammar.
+#
+# The field order is deliberate and not alphabetical: `intent_summary` comes
+# first so the score is generated after the model has already committed to a
+# description of what the command does.
+#
+# `char{0,200}` bounds the summary. Without a bound a model that starts
+# repeating has no way to stop, and one call would run to the context limit.
+#
+# This file is hashed into the prompt fingerprint. Editing it starts a fresh set
+# of verdicts (migration 008) — which is correct: a different grammar is a
+# different question.
+
+root  ::= "{\"intent_summary\":" ws string ",\"category\":" ws category ",\"risk_score\":" ws score ",\"is_destructive\":" ws bool ",\"violates_sandbox\":" ws bool ws "}"
+
+category ::= "\"read\"" | "\"search\"" | "\"build\"" | "\"test\"" | "\"vcs\"" | "\"package\"" | "\"network\"" | "\"filesystem\"" | "\"process\"" | "\"config\"" | "\"other\""
+score ::= "1" | "2" | "3" | "4" | "5"
+bool  ::= "true" | "false"
+
+string ::= "\"" char{0,200} "\""
+char  ::= [^"\\\x00-\x1F] | "\\" ["\\/bfnrt]
+ws    ::= " "?

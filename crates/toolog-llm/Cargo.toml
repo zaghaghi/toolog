@@ -1,0 +1,49 @@
+[package]
+name = "toolog-llm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "A local model over the tool calls no rule matched"
+
+[lints]
+workspace = true
+
+[dependencies]
+toolog-core.workspace = true
+
+anyhow.workspace = true
+hex.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# The incremental UTF-8 decoder token_to_piece writes into. Already in the graph
+# via llama-cpp-2; named here because this crate uses it directly.
+encoding_rs = { version = "0.8.35", optional = true }
+ts-rs.workspace = true
+
+# Optional, because a build without it is the fallback task 13.19 reserved and
+# the way this crate stays checkable on a machine with no C++ toolchain. Every
+# module except `engine` compiles either way: the GGUF header reader, the prompt
+# template and its fingerprint, and the verdict schema are plain Rust, and they
+# are where most of what can go wrong lives.
+llama-cpp-2 = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Metal is a macOS framework, so the feature is added here rather than in the
+# workspace declaration; Cargo unions the two.
+llama-cpp-2 = { workspace = true, optional = true, features = ["metal"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+# On by default so CI compiles and lints it. A feature CI never builds is a
+# feature that rots, and this one links the C++ that the release depends on.
+default = ["inference"]
+inference = ["dep:llama-cpp-2", "dep:encoding_rs"]

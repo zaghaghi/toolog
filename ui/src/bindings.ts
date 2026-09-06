@@ -73,7 +73,28 @@ risk: string | null,
 /**
  * Calls one named rule matched.
  */
-rule_id: string | null, };
+rule_id: string | null, 
+/**
+ * Free text over the local model's intent summaries (task 13.15).
+ *
+ * Like `risk` and `rule_id`, this cannot be compiled from the store alone:
+ * a verdict is keyed on which model and which prompt produced it, and the
+ * query layer is handed that pair rather than choosing one. **Not** the
+ * same index as `query`: that searches the command and its output, this
+ * searches what a model said the command was *for*, and "when did the
+ * agent start doing network things" is only answerable in the second.
+ */
+intent: string | null, 
+/**
+ * Calls the local model scored, as a comparison: `>=4`, `<2`, `5`.
+ *
+ * A number on a scale rather than a word from a closed set, which is why
+ * it takes an operator where `risk` does not — and why it is deliberately
+ * a separate field from `risk`. An LLM score is not a rule severity, and a
+ * filter that could mix them would be the first step towards a view that
+ * does.
+ */
+llm_risk: string | null, };
 
 export type Page = { limit: number, offset: number, };
 
@@ -250,7 +271,31 @@ redact_evidence: boolean,
  * opened and nothing from it is ever stored — which is a different and
  * stronger thing than filtering it out of a view.
  */
-excluded_projects: Array<string>, };
+excluded_projects: Array<string>, 
+/**
+ * The `.gguf` the local second opinion reads (task 13.1).
+ *
+ * A path, not a download. [ADR-0008] rules out fetching 3.1 GB from
+ * Hugging Face — the user brings the file and toolog is pointed at it, and
+ * `docs/README.md` gives the `curl` line to run in their own shell.
+ *
+ * It lives here rather than in the window's `localStorage` for the same
+ * reason the notification switches do: the resident process acts on it. A
+ * backfill that survives the window being closed cannot be driven by a
+ * preference only the window can read.
+ *
+ * `None` — the default — means no model, and then nothing changes: no
+ * thread, no verdicts, and the risk view exactly as it was.
+ */
+model_path: string | null, 
+/**
+ * Whether the background examination is stopped (task 13.7).
+ *
+ * Separate from `model_path` because pausing and forgetting are different
+ * acts: a 65-minute backfill that someone paused to get their laptop back
+ * should still be there tomorrow.
+ */
+analysis_paused: boolean, };
 
 export type CounterSnapshot = { batches: number, records: number, dropped: number, rejected_bodies: number, paused_drops: number, };
 

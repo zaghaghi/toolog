@@ -6,6 +6,10 @@
 //! acts on has to be readable by the resident process, and it has to survive a
 //! restart the same way the LaunchAgent does.
 //!
+//! Phase 13 added a path here as well as switches (task 13.1), for the same
+//! reason: the resident process is what loads a model, so the preference that
+//! names one has to be readable by the resident process.
+//!
 //! `Default` is every switch off. A file that fails to parse is treated as
 //! absent rather than as an error: a monitoring tool that will not start
 //! because a preferences file has a typo in it is worse than one that starts
@@ -19,6 +23,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(default)]
 #[ts(export_to = "unused/")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "a list of independent switches, not a state machine: each is its own \
+              preference and grouping them into an enum would invent relationships \
+              between them that the user interface does not have"
+)]
 pub struct Prefs {
     /// Notify when a call is refused — by a person, a hook or a rule.
     pub notify_refusals: bool,
@@ -39,6 +49,28 @@ pub struct Prefs {
     /// stronger thing than filtering it out of a view.
     #[serde(default)]
     pub excluded_projects: Vec<String>,
+    /// The `.gguf` the local second opinion reads (task 13.1).
+    ///
+    /// A path, not a download. [ADR-0008] rules out fetching 3.1 GB from
+    /// Hugging Face — the user brings the file and toolog is pointed at it, and
+    /// `docs/README.md` gives the `curl` line to run in their own shell.
+    ///
+    /// It lives here rather than in the window's `localStorage` for the same
+    /// reason the notification switches do: the resident process acts on it. A
+    /// backfill that survives the window being closed cannot be driven by a
+    /// preference only the window can read.
+    ///
+    /// `None` — the default — means no model, and then nothing changes: no
+    /// thread, no verdicts, and the risk view exactly as it was.
+    #[serde(default)]
+    pub model_path: Option<String>,
+    /// Whether the background examination is stopped (task 13.7).
+    ///
+    /// Separate from `model_path` because pausing and forgetting are different
+    /// acts: a 65-minute backfill that someone paused to get their laptop back
+    /// should still be there tomorrow.
+    #[serde(default)]
+    pub analysis_paused: bool,
 }
 
 impl Prefs {
@@ -46,6 +78,15 @@ impl Prefs {
     #[must_use]
     pub fn any(&self) -> bool {
         self.notify_refusals || self.notify_high_risk
+    }
+
+    /// The model file to load, if one is configured.
+    #[must_use]
+    pub fn model(&self) -> Option<std::path::PathBuf> {
+        self.model_path
+            .as_deref()
+            .filter(|p| !p.trim().is_empty())
+            .map(std::path::PathBuf::from)
     }
 
     /// Push the settings that live in `toolog-core` into it.
@@ -105,6 +146,31 @@ mod tests {
         assert!(!prefs.redact_evidence);
         assert!(prefs.excluded_projects.is_empty());
         assert!(!prefs.any());
+        assert!(
+            prefs.model().is_none(),
+            "no model until someone points at one — task 13.1's exit criterion \
+             is that a store with none configured behaves exactly as it did"
+        );
+        assert!(!prefs.analysis_paused);
+    }
+
+    #[test]
+    fn a_blank_model_path_is_no_model_rather_than_a_path_to_nowhere() {
+        for written in ["", "   "] {
+            let prefs = Prefs {
+                model_path: Some(written.to_string()),
+                ..Prefs::default()
+            };
+            assert!(prefs.model().is_none(), "{written:?}");
+        }
+        let set = Prefs {
+            model_path: Some("/models/gemma.gguf".into()),
+            ..Prefs::default()
+        };
+        assert_eq!(
+            set.model(),
+            Some(std::path::PathBuf::from("/models/gemma.gguf"))
+        );
     }
 
     #[test]

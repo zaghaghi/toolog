@@ -31,6 +31,12 @@
 //! separate claim from *completeness*, which reconciliation answers — a record
 //! that was never captured leaves nothing to break.
 //!
+//! [`llm`] is the second opinion (Phase 13): the ledger of what a local model
+//! said about the calls no rule matched. It is the one derived-looking thing in
+//! this crate that is **stored** rather than recomputed, because an LLM answer
+//! is not reproducible and so is not a derivation in ADR-0004's sense — see
+//! [ADR-0013]. It is advisory throughout: nothing here feeds [`rules`].
+//!
 //! [`rules`] is the risk layer: rules written as data, compiled to bound SQL
 //! here so a rules file can express a question but never a query. Findings are
 //! computed rather than stored, for the same reason the projections are.
@@ -38,12 +44,14 @@
 //! [ADR-0003]: ../../../docs/adr/0003-sqlite-as-the-embedded-store.md
 //! [ADR-0004]: ../../../docs/adr/0004-store-raw-project-normalized.md
 //! [ADR-0009]: ../../../docs/adr/0009-correlate-on-tool-use-id.md
+//! [ADR-0013]: ../../../docs/adr/0013-a-verdict-is-stored-not-recomputed.md
 
 pub mod chain;
 pub mod constants;
 pub mod db;
 pub mod error;
 pub mod fts;
+pub mod llm;
 pub mod migrations;
 pub mod model;
 pub mod normalize;

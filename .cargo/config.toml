@@ -1,0 +1,22 @@
+# The macOS floor, in the one place both halves of the build can see it.
+#
+# Phase 13 links llama.cpp, whose C++ uses `std::filesystem` — macOS 10.15 and
+# later. The floor moves 10.15 → 11.0 rather than to 10.15 exactly, because 11.0
+# is the first release on both architectures and the universal build has to name
+# one number.
+#
+# `MACOSX_DEPLOYMENT_TARGET` reaches rustc and the linker. It does **not** reach
+# the CMake build of ggml: that reads `CMAKE_OSX_DEPLOYMENT_TARGET`, which
+# `llama-cpp-sys-2` forwards from the environment as a `-D` define. Without it
+# ggml compiles below 10.15 and fails on `std::filesystem`, which is why CI
+# exports both (`.github/workflows/*.yml`) and why this file sets both.
+#
+# `RUSTFLAGS` is not the place for either: rustc rejects clang's
+# `-mmacosx-version-min`.
+#
+# `crates/toolog-app/tauri.conf.json` carries the same number for the installer,
+# and `crates/toolog-app/tests/bundle.rs` asserts the two agree — a `.dmg` that
+# installs on a Mac the binary cannot run on is worse than one that refuses.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "11.0"
+CMAKE_OSX_DEPLOYMENT_TARGET = "11.0"

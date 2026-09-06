@@ -347,6 +347,23 @@ pub struct TimelineFilter {
     pub risk: Option<String>,
     /// Calls one named rule matched.
     pub rule_id: Option<String>,
+    /// Free text over the local model's intent summaries (task 13.15).
+    ///
+    /// Like `risk` and `rule_id`, this cannot be compiled from the store alone:
+    /// a verdict is keyed on which model and which prompt produced it, and the
+    /// query layer is handed that pair rather than choosing one. **Not** the
+    /// same index as `query`: that searches the command and its output, this
+    /// searches what a model said the command was *for*, and "when did the
+    /// agent start doing network things" is only answerable in the second.
+    pub intent: Option<String>,
+    /// Calls the local model scored, as a comparison: `>=4`, `<2`, `5`.
+    ///
+    /// A number on a scale rather than a word from a closed set, which is why
+    /// it takes an operator where `risk` does not — and why it is deliberately
+    /// a separate field from `risk`. An LLM score is not a rule severity, and a
+    /// filter that could mix them would be the first step towards a view that
+    /// does.
+    pub llm_risk: Option<String>,
 }
 
 /// Paging for a timeline query.

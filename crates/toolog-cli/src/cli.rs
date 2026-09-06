@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 use crate::commands::{self, Format};
-use crate::{doctor, launchagent, logging, settings, uninstall};
+use crate::{doctor, launchagent, logging, model, prefs, settings, uninstall};
 
 /// A local audit trail for Claude Code tool calls.
 #[derive(Debug, Parser)]
@@ -91,6 +91,14 @@ pub enum Command {
         #[command(subcommand)]
         action: AgentAction,
     },
+    /// Point the local second opinion at a model file, or report on it.
+    ///
+    /// toolog never downloads anything: `toolog model status` prints the one
+    /// `curl` line that fetches the model, for you to run yourself.
+    Model {
+        #[command(subcommand)]
+        action: ModelAction,
+    },
     /// Undo the install: the login agent, and the telemetry configuration.
     ///
     /// Shows what would change; needs `--apply` to do it. Your recorded
@@ -134,6 +142,25 @@ pub struct ExportArgs {
     /// Write here instead of stdout.
     #[arg(long, short, value_name = "PATH")]
     pub output: Option<PathBuf>,
+}
+
+/// What to do with the local model (task 13.1).
+#[derive(Debug, Subcommand)]
+pub enum ModelAction {
+    /// Point toolog at a `.gguf` file.
+    ///
+    /// Reads its header and hashes it, so a path that is not a model is refused
+    /// here rather than at the next launch.
+    Set {
+        /// The `.gguf` file. `~` is expanded.
+        #[arg(value_name = "PATH")]
+        path: String,
+    },
+    /// Forget the model. Nothing is deleted from disk, and recorded verdicts
+    /// stay — they are still true statements about what that model said.
+    Clear,
+    /// Report the configured model and how far the examination has got.
+    Status,
 }
 
 /// What to do with the login agent.
@@ -183,8 +210,90 @@ pub fn run(cli: &Cli) -> anyhow::Result<i32> {
             },
         ),
         Command::Agent { action } => run_agent(action),
+        Command::Model { action } => run_model(cli, action),
         Command::Uninstall { delete_data, apply } => run_uninstall(*delete_data, *apply),
     }
+}
+
+/// `toolog model set|clear|status` (task 13.1).
+fn run_model(cli: &Cli, action: &ModelAction) -> anyhow::Result<i32> {
+    let mut prefs = prefs::load();
+    match action {
+        ModelAction::Set { path } => {
+            let path = model::normalize(path, &settings::home_dir());
+            // Checked before it is stored, so `set` is where a wrong path is
+            // reported rather than the next launch, where nobody is watching.
+            let file = model::adopt(&path)?;
+            prefs.model_path = Some(path.display().to_string());
+            prefs::save(&prefs)?;
+            println!("Model set: {}", path.display());
+            println!("  {}", file.describe());
+            if let Some(sha) = &file.sha256 {
+                println!("  sha256 {sha}");
+            }
+            println!(
+                "\nVerdicts are keyed on that hash. A different file is a different \n\
+                 model, and starts a fresh set of answers."
+            );
+            if !toolog_llm::built_with_inference() {
+                println!(
+                    "\nNote: this build has no inference support compiled in, so nothing \n\
+                     will actually be analysed."
+                );
+            }
+            Ok(0)
+        }
+        ModelAction::Clear => {
+            let had = prefs.model_path.take();
+            prefs::save(&prefs)?;
+            match had {
+                Some(path) => println!(
+                    "Model cleared: {path}\n\nThe file is untouched, and recorded verdicts are \
+                     kept — they are still\ntrue statements about what that model said."
+                ),
+                None => println!("No model was configured."),
+            }
+            Ok(0)
+        }
+        ModelAction::Status => {
+            let configured = prefs.model();
+            print!(
+                "{}",
+                model::render(&model::status(configured.as_deref(), false))
+            );
+            print_examination(cli, configured.as_deref())?;
+            Ok(0)
+        }
+    }
+}
+
+/// How far the examination has got, when there is a model to have got anywhere.
+fn print_examination(cli: &Cli, configured: Option<&std::path::Path>) -> anyhow::Result<()> {
+    let Some(path) = configured else {
+        return Ok(());
+    };
+    // The hash, not the path: a file swapped in place is a different model.
+    let Ok(fingerprint) = toolog_llm::gguf::sha256_file(path) else {
+        return Ok(());
+    };
+    let pair = toolog_core::llm::Pair::new(
+        fingerprint,
+        toolog_llm::Prompt::current().fingerprint().to_string(),
+    );
+    let db = toolog_core::Db::open(db_path(cli)?)?;
+    let progress = toolog_core::llm::progress(db.conn(), &pair)?;
+    println!(
+        "\n  examined {} of {} unmatched Bash calls ({} failed, {} queued)",
+        progress.examined, progress.eligible, progress.failed, progress.queued
+    );
+    if let Some(mean) = progress.mean_ms {
+        println!("  {mean} ms per call, so far");
+    }
+    println!(
+        "  prompt   {}",
+        toolog_llm::Prompt::current().short_fingerprint()
+    );
+    Ok(())
 }
 
 #[expect(

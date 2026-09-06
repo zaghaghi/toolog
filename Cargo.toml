@@ -20,6 +20,7 @@ toolog-core = { path = "crates/toolog-core" }
 toolog-ingest = { path = "crates/toolog-ingest" }
 toolog-otlp = { path = "crates/toolog-otlp" }
 toolog-cli = { path = "crates/toolog-cli" }
+toolog-llm = { path = "crates/toolog-llm" }
 
 # --- storage (ADR-0003) ---
 # `bundled` compiles SQLite from source: no system dependency, no version skew.
@@ -73,6 +74,22 @@ directories = "6.0.0"
 # --- hashing: raw_event dedup and the Phase 7 integrity chain (ADR-0004) ---
 sha2 = "0.11.0"
 hex = "0.4.3"
+
+# --- the local second opinion (Phase 13, ADR-0013) ---
+# `default-features = false` drops `openmp`, which Apple's clang does not ship,
+# and `android-shared-stdcxx`, which is not this platform. `common` is not
+# optional: `LlamaSampler::grammar` is behind it, and the GBNF grammar is what
+# stops the model emitting anything but the schema (task 13.10). `metal` is
+# added per-target by toolog-llm, because it is a macOS framework.
+#
+# This is the one dependency in the workspace that builds C++. It does **not**
+# bring a network stack: llama-cpp-sys-2 passes `-DLLAMA_CURL=OFF` to CMake, and
+# because a C library is invisible to the egress test's manifest check, that is
+# asserted against the built binary instead — `just verify-bundle` (task 13.4).
+llama-cpp-2 = { version = "0.1.150", default-features = false, features = [
+    "common",
+    "sampler",
+] }
 
 # --- test-only ---
 tempfile = "3.27.0"
