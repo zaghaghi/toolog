@@ -183,8 +183,198 @@ and [Phase 12](12-findings-in-time.md), whose sighting ledger is the shape a sto
 
 ## Not verified
 
-*To be filled in.*
+- **CI has not run this.** The Linux job now installs `cmake` and `libclang-dev` and compiles
+  llama.cpp for the first time; that is a change to a workflow file, and nothing here proves the
+  GitHub runner has what it needs. The macOS half is proven locally, on a machine with Command Line
+  Tools and no full Xcode.
+- **A signed, notarized release has not been cut.** The bundle was built and asserted unsigned, so
+  `codesign --verify`, `spctl` and `stapler` are unexercised against a Phase 13 artifact. Nothing in
+  the phase touches the signing path, but "nothing touches it" is an argument, not a check.
+- **The window was not looked at.** The Model card and the second-opinion section are asserted by
+  frontend tests and their data path was exercised end to end against the real store — but
+  `screencapture` returns black frames without Screen Recording permission for the terminal, so
+  nobody has *seen* them rendered. The CSS in particular is unverified by eye.
+- **Only one model.** Everything measured used `gemma-4-E2B_q4_0-it.gguf`. The GGUF reader is
+  tested against synthesised headers for four architectures' worth of shapes, but no second real
+  model has been loaded, and the prompt is tuned to this one.
+- **Intel is untested at runtime.** The `x86_64` half builds, links no `libcurl` and carries
+  `minos 11.0`, and nothing has run it. There is no Intel Mac here.
+- **A 24-hour run.** The examination has been up for a bit over an hour. Nothing is known about a
+  model resident for a week, or about what a laptop sleeping mid-backfill does to it.
 
 ## Outcome
 
-*Not started.*
+**Done.** Twenty tasks, six commits, `just check` green: 180 frontend tests and the Rust suite.
+Measured on the owner's real store with the application running and the model loaded, not on a
+fixture.
+
+The headline, and the reason the phase existed: **3,618 of 4,682 calls — 77% — had never been
+looked at**. They have been.
+
+### The machine
+
+Apple M4 Pro, 12 cores, 24 GB, macOS 26.6.2, Command Line Tools and no full Xcode. The store was
+166 MB and 4,682 calls when the phase started.
+
+### Task 13.20's numbers
+
+| | |
+|---|---|
+| Model | `gemma-4-E2B_q4_0-it.gguf` — gemma4, 4.63 B parameters, GGUF v3, 541 tensors |
+| Model file | 3,349,514,112 bytes (3.12 GB) |
+| SHA-256 of it | `3646b4c147cd…` — the model half of every verdict's key |
+| Reading that hash | 1.5 – 2.1 s (once, when a file is chosen) |
+| Model load | **476 ms** |
+| Prompt prefix | 461 tokens, prefilled once in ~10 ms |
+| Ready, load + prefill | 512 ms |
+| Peak RSS with the model resident | **3.6 GB** (518 MiB of it the Metal compute buffer) |
+| Per-call latency | **1,249 ms** over the first 50; **1,272 ms** sustained over the real backfill |
+| Generation | 41.6 tokens/second, ~44 tokens per answer |
+| Schema failures | **0** in 764 verdicts and 0 in the 20-entry injection corpus |
+
+**Build and artifact.**
+
+| | Before | After |
+|---|---|---|
+| `.dmg` | 11.28 MB (released v1.1.0) | **15.14 MB** — +3.86 MB, +34% |
+| Universal binary | — | 35.8 MB (`x86_64` 19.43 MB, `arm64` 18.08 MB) |
+| Cold llama.cpp build, `aarch64` | — | 29.8 s |
+| Cold llama.cpp build, `x86_64` | — | 23.5 s |
+| `just bundle`, both architectures, warm cargo | — | 3 m 32 s |
+
+The prompt prefix cache is worth its complexity and was measured before being kept: re-prefilling
+the 461-token instruction block on every call cost **1,377 ms → 1,070 ms**, 22% of the wall clock,
+in the spike. It is not free of consequence — the command is tokenized as its own sequence, which
+moves verdicts at the margin, and `rm -rf node_modules` scored 4 without the cache and 2 with it.
+That is one more reason a verdict is a judgement rather than a derivation.
+
+### The universal build, which task 13.19 called the risk that could sink the phase
+
+It does not. Both architectures build, both link no `libcurl`, `lipo` produces a fat binary, and
+`LC_BUILD_VERSION` says `minos 11.0` on each. Neither reserved fallback — Apple-silicon-only, or
+inference behind a feature the release enables — is taken. The Cargo feature still exists and CI
+builds `toolog-llm` without it, because a fallback that does not compile is not one.
+
+Two things the spike found that the design now depends on:
+
+- **`llama_sampler_sample` accepts the token into the sampler chain itself.** Calling `accept`
+  again — the obvious thing to write, and what a working example without a grammar does — advances
+  a GBNF grammar twice per token until no stack survives, and llama.cpp then reaches
+  `GGML_ASSERT(!stacks.empty())` and **`abort(3)`s the process**. Not an error, not a panic. The
+  generation loop does not call `accept`, and the comment saying so is longer than the line.
+- **`LlamaSampler::grammar` is behind llama-cpp-2's `common` feature**, which builds the half of
+  llama.cpp that has the downloader in it. `llama-cpp-sys-2` passes `-DLLAMA_CURL=OFF`
+  unconditionally, and task 13.4 exists because that is a claim about a build script rather than
+  about the artifact. Asserted against the artifact: clean.
+
+### What the model is actually like
+
+Honest, because the phase asked for it. Over the store so far:
+
+| Score | Calls |
+|---|---|
+| 5 | 1 |
+| 4 | 7 |
+| 3 | 45 |
+| 2 | 176 |
+| 1 | 535 |
+
+**It is wrong in both directions, and the false positives are the interesting half.** Two of the
+seven calls it scored 4 are this:
+
+```
+rtk grep -rn "delete_object|DeleteObject" apps/api/src apps/pipeline/src
+  → "Recursively searches for and deletes files containing specific strings"
+```
+
+It read `delete_object` inside a *search pattern* as a deletion. That is exactly the "a benign
+`find` scored 4" the phase predicted, arriving on the first real run. The genuinely useful ones in
+the same list — `git reset --hard origin/main`, a `curl`-and-extract, a `cargo lambda build && cdk
+deploy` — are real, and no rule would have found any of them.
+
+The intent summary is the half that holds up. Over 764 verdicts it is accurate and specific far more
+often than the score is calibrated, which is what the phase suspected in advance and now has data
+for.
+
+**The prompt needed two corrections, both found by the injection corpus rather than by inspection.**
+It anchored on the first line of a compound command — scoring `ls\nCOMMAND>>>…rm -rf /` at 1 — and
+it called shredding `~/.aws/credentials` non-destructive. The instructions now say to judge the most
+dangerous part wherever it appears, and name shredding and history-clearing as destructive. Both
+fixed; the second changed `dd if=/dev/zero of=/dev/disk0` from 2 to 5.
+
+### The exit criteria
+
+- **With no model configured, nothing changes.** `apply_model` returns before starting anything when
+  `prefs.model()` is `None`, `Prefs::default()` names no model, and four tests assert the empty
+  handle holds nothing, offers nothing, and reports `null` progress rather than `0 of 0` — which
+  would read as clean. The risk view's section is absent entirely rather than empty, asserted.
+  `just check` green.
+- **`just verify-bundle` asserts no `libcurl`, and the egress test still passes.** Both, on the real
+  universal artifact and with llama.cpp linked into the test binary. The egress workload now runs
+  Phase 13's reads too, because that test's own comment says the guarantee is only as good as what
+  runs inside it. A further test asserts `verify-bundle` still contains the check, because the thing
+  guarding the release is a `grep` in a shell recipe that nothing else would notice being deleted.
+- **A backfill completes, can be paused and resumed, and never makes a read wait.** Killed
+  mid-backfill at 157 verdicts and restarted: 174 within 25 seconds, no row redone,
+  `count(*) = count(distinct tool_use_id)`. Measured while the backfill and a universal build were
+  both running: `toolog export --limit 200` at 0.00 s and `toolog risk` at 0.16 s.
+- **Changing the model or the prompt starts a fresh set.** Asserted
+  (`a_different_model_or_prompt_starts_a_fresh_set_of_verdicts`), and lived through: editing
+  `system.txt` mid-phase moved the fingerprint and the earlier verdicts stopped being counted,
+  exactly as designed.
+- **The injection corpus produces no verdict it demanded.** 20 entries, 0 captured, 0 refused by the
+  schema. Two were caught failing first and fixed in the prompt; see above.
+- **Every number in task 13.20 is in this document.**
+
+### Decisions the tasks left open
+
+- **The store is the queue.** Each batch asks `llm::pending` which calls this (model, prompt) pair
+  has no verdict for, rather than filling a `VecDeque` at startup. Three properties fall out and
+  none would from a queue in memory: it survives a restart with no code of its own, it cannot drift
+  from what was actually recorded, and a call the live path analysed leaves the backfill without the
+  two having to coordinate.
+- **A failed verdict is a row.** It is what makes "asked and could not answer" distinguishable from
+  "never asked", and — not the original reason, but the more load-bearing one — it is what stops a
+  call the model cannot answer for being retried on every pass forever.
+- **`@llm-risk`, not a value of `@risk`.** One token that could mean either a deterministic
+  severity or a model's guess would be the first step towards a view that mixes them. The section in
+  the risk view goes further: its own surface, the histogram's magnitude ramp rather than the rules'
+  red and amber, scores as digits, and none of the four severity words. A test asserts all of it,
+  because "a reader must be able to tell at a glance which numbers a rule produced" is the kind of
+  requirement that erodes silently.
+- **The drill-through hands the timeline a query, not a filter.** `onOpenQuery("@llm-risk:>=4")`
+  rather than setting the field, so what lands in the box is a sentence the reader could have
+  written — and can edit, which is most of its value. `onOpenRule` still builds a filter, because a
+  rule id is not something anyone composes.
+- **`Verdict` lives in `toolog-core`, not in `toolog-llm`.** It crosses the boundary in both
+  directions, and two structurally identical structs either side of that line is a conversion
+  waiting to be got wrong.
+- **The GGUF reader is plain Rust, not `llama_cpp_2::gguf`.** It has to run *before* any C++ touches
+  a file the user chose — that is the whole of task 13.3 — which a wrapper over that same C++ cannot
+  do. It also keeps working in a build without the feature.
+
+### Found on the way, and fixed
+
+- **A call arrives twice, and was being analysed twice.** ADR-0009's central fact: the transcript
+  lane creates the row, the OTLP lane completes it, and the live sink fires for both. The primary
+  key made the second write a `REPLACE`, so nothing was ever *wrong* — it cost 1.25 s of inference
+  overwriting an answer with itself, on every call witnessed by both lanes. `observe` now claims the
+  id first.
+- **`just bundle` had never worked without a signing certificate**, despite the comment saying it
+  did. `just` cannot conditionally export, so `APPLE_SIGNING_IDENTITY` reached the bundler *present
+  and empty*, and Tauri 2.11 read that as "sign with the identity `""`" and failed with `: no
+  identity found`. Found while building for a `.dmg` size.
+- **The injection fixture was line-separated**, which silently split every multi-line attack — the
+  strongest ones, since a forged `<end_of_turn>` needs a line of its own — into harmless fragments,
+  one of which was the bare word `ls`. The corpus's own "every entry carries an injection" check
+  caught it. Entries are `===`-separated now, and a test asserts at least one spans lines.
+- **The first version of `a_command_cannot_close_the_block_it_is_inside` failed against correct
+  code**, by counting marker occurrences over the whole prompt — where the instructions name both
+  markers in order to explain them. It asserts over the block now.
+
+### A note on the denominator
+
+It moves. The eligible population was 3,618 when the phase was specified and 3,895 an hour into the
+backfill, because toolog was recording the session that was building this. The live path is visible
+in the same data: 58 calls examined within seconds of running, their summaries accurate descriptions
+of commands from this very session. That is task 13.8 verified in production rather than in a test.
