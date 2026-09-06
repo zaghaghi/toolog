@@ -1,22 +1,23 @@
 # Documentation
 
-**Status: v1.0 shipped, and Phase 9 has landed on top of it.** Capture works end to end and the
-record earns the word "audit": it says what it is missing, proves it has not been altered, keeps
-secrets out of what it shows, bounds itself, and fails the build if anything tries to leave the
-machine. It installs and uninstalls as one signed, notarized universal artifact — and ships with
-**no network call at all**, the update check ADR-0008 had reserved having been evaluated in Phase 8
-and declined.
+**Status: all twelve phases complete — this is v1.1.** Capture works end to end and the record
+earns the word "audit": it says what it is missing, proves it has not been altered, keeps secrets
+out of what it shows, bounds itself, and fails the build if anything tries to leave the machine. It
+installs and uninstalls as one signed, notarized universal artifact — and ships with **no network
+call at all**, the update check ADR-0008 had reserved having been evaluated in Phase 8 and declined.
 
-**v1.1 is in progress.** Living with v1.0 found four of its views to be two too many, and the risk
-review — the one worth keeping — to be slow and self-contradictory. Phase 9 took the two views away
-and Phase 10 rebuilt the timeline around one query bar and an activity histogram; Phase 11 is
-planned and not started.
+**v1.1 is the revision after living with v1.0.** Four views turned out to be two too many, the
+timeline asked the reader to work too hard, and the risk review — the one worth keeping — was slow
+and did not add up. Phase 9 removed the usage and live views and stopped reporting cost at all;
+Phase 10 rebuilt the timeline around one `@key:value` query bar and an activity histogram; Phase 11
+took the risk review from 2.3 seconds to 95 ms, made its summary reconcile with its table, and put
+every rule on the screen with what it looks for.
 
 ## Phases
 
-Nine phases shipped v1.0. Three more are the revision after living with it, of which **Phases 9 and
-10 are done and Phase 11 is not started**. Each phase ends in something runnable and checkable. **Phase 5 was
-the first usable release (v0.1); Phase 8 is v1.0; Phase 11 is v1.1.**
+Nine phases shipped v1.0; three more are the revision after living with it. Each phase ends in
+something runnable and checkable. **Phase 5 was the first usable release (v0.1); Phase 8 is v1.0;
+Phase 11 is v1.1.**
 
 | Phase | Goal | Milestone |
 |---|---|---|
@@ -31,7 +32,7 @@ the first usable release (v0.1); Phase 8 is v1.0; Phase 11 is v1.1.**
 | [08 — Packaging & distribution](phases/08-packaging-distribution.md) | Dead simple install | **v1.0** — done |
 | [09 — Subtraction](phases/09-subtraction.md) | The usage and live views are removed | done |
 | [10 — One lens](phases/10-one-lens.md) | The timeline's query bar, histogram and closable pane | done |
-| [11 — Risk, fast and legible](phases/11-risk-fast-and-legible.md) | A review that is fast, adds up, and can be read | **v1.1** — planned |
+| [11 — Risk, fast and legible](phases/11-risk-fast-and-legible.md) | A review that is fast, adds up, and can be read | **v1.1** — done |
 
 Phases 9–11 come from the owner's report after using v1.0: two views did not earn their place, the
 timeline asks the reader to work too hard, and the risk view — the one that is good — is slow, does
@@ -39,7 +40,9 @@ not reconcile with itself, and never shows what its rules actually look for. Pha
 decisions those three phases rest on and removed the two views; the window now has three tabs —
 Timeline, Risk, Status. Phase 10 made the timeline the one lens over the store: seven dropdowns
 became one `@key:value` box, and the one chart worth keeping from the usage view came back re-keyed
-onto the timeline's own filter.
+onto the timeline's own filter. Phase 11 finished the job on the risk view — 2,314 ms to 95 ms, a
+summary whose columns add up to it, and every rule visible with its conditions whether or not it
+matched.
 
 ## Releasing
 
@@ -48,7 +51,7 @@ and the clean-machine check that is the only real proof of the Phase 8 exit crit
 
 ## Decisions
 
-See [docs/adr/](adr/README.md) — ten ADRs, each with the alternative it rejected and why.
+See [docs/adr/](adr/README.md) — eleven ADRs, each with the alternative it rejected and why.
 
 ## Facts the design rests on
 
@@ -69,6 +72,8 @@ version moves substantially.
 | `prompt` and `response` attributes **are** present on OTLP records, with the literal value `<REDACTED>` | The privacy posture is measured, not assumed → [ADR-0008](adr/0008-local-only-zero-egress.md) |
 | The window's CSP (`style-src 'self'`) silently discards `style` **attributes**; CSSOM assignment is honoured | Chart geometry goes through `element.style` → [Phase 6](phases/06-risk-analytics-live.md) |
 | `foo:bar` is an ordinary thing to search for in a corpus that is two-thirds shell commands | The query bar's filter syntax needs a sigil: `@key:value`, not `key:value` → [Phase 10](phases/10-one-lens.md) |
+| Three of 4,295 stored calls are refusals, so a correlated `EXISTS` over "was this refused earlier?" re-scans thousands of rows to find three | The refusals are gathered once in a `MATERIALIZED` CTE: 1,265 ms → 2.5 ms → [Phase 11](phases/11-risk-fast-and-legible.md) |
+| `PRAGMA data_version` moves for another connection's insert, update **and** delete, and never for the connection's own write | The risk memo is guarded by it, on a connection of its own → [ADR-0011](adr/0011-memoize-the-risk-review.md) |
 | 48 of 3,506 stored results — 1.4% — hold 11 MB of the projection's 18 MB of result bodies | Bodies over 64 KiB are kept by reference → [Phase 7](phases/07-privacy-retention-integrity.md) |
 | `session.transcript_path` is the only link between a projection row and its evidence | Retention removes whole sessions, both halves together → [Phase 7](phases/07-privacy-retention-integrity.md) |
 | `plutil -lint` accepts an entitlements file that `codesign` rejects: XML forbids `--` inside a comment, and AMFI then signs the app **without** the entitlements rather than stopping | The plists are asserted by a test, not by a linter → [Phase 8](phases/08-packaging-distribution.md) |

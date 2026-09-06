@@ -81,7 +81,7 @@ fn full_workload() {
 
     let ruleset = rules::load(None).expect("rules");
     let findings = rules::evaluate(conn, &ruleset).expect("evaluate");
-    rules::by_project(conn, &ruleset, &findings).expect("by project");
+    rules::reconcile(conn, &ruleset, &findings).expect("reconcile");
     // The risk view's drill-through past a finding's examples.
     if let Some(rule) = ruleset.first() {
         rules::calls(conn, rule, Page::default()).expect("rule calls");

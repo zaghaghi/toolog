@@ -378,7 +378,7 @@ fn run_verify(cli: &Cli, chain: bool) -> anyhow::Result<i32> {
 fn run_risk(cli: &Cli) -> anyhow::Result<i32> {
     let db = toolog_core::Db::open(db_path(cli)?)?;
     let findings = commands::risk(&db)?;
-    print!("{}", commands::render_risk(&findings));
+    print!("{}", commands::render_risk(&db, &findings)?);
     if let Some(path) = commands::rules_path() {
         println!(
             "{} rules in force. Add your own in {}.",

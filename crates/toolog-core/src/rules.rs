@@ -140,6 +140,14 @@ pub struct Rule {
     pub scope: Scope,
     #[serde(default)]
     pub r#match: Match,
+    /// Whether this rule came from the user's file rather than the built-in set.
+    ///
+    /// Not read from the TOML — set by [`load`] — because it is a fact about
+    /// where a rule was found, not something a rules file gets to claim about
+    /// itself. The panel says it (task 11.12), because "a built-in you have
+    /// replaced" and "a built-in" are different things to be looking at.
+    #[serde(skip)]
+    pub from_user: bool,
 }
 
 fn default_scope() -> Scope {
@@ -159,7 +167,8 @@ struct RuleFile {
 pub fn load(user: Option<&str>) -> Result<Vec<Rule>> {
     let mut rules = parse(BUILT_IN)?;
     if let Some(text) = user {
-        for rule in parse(text)? {
+        for mut rule in parse(text)? {
+            rule.from_user = true;
             match rules.iter_mut().find(|r| r.id == rule.id) {
                 Some(existing) => *existing = rule,
                 None => rules.push(rule),
@@ -174,7 +183,7 @@ fn parse(text: &str) -> Result<Vec<Rule>> {
     Ok(file.rule)
 }
 
-/// One rule's hits, with the calls behind them.
+/// One rule and what it found — including a rule that found nothing.
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export_to = "unused/")]
 pub struct Finding {
@@ -183,16 +192,30 @@ pub struct Finding {
     pub explanation: String,
     pub severity: Severity,
     pub scope: Scope,
-    /// How many calls the rule matched.
+    /// What the rule looks for, in words (task 11.12).
+    ///
+    /// Rendered from [`Match`] by [`describe`], never written by hand: a
+    /// description a person maintains beside a rule is a description that
+    /// eventually describes a different rule.
+    pub conditions: Vec<String>,
+    /// Whether the user's rules file supplied or replaced this rule.
+    pub from_user: bool,
+    /// How many calls the rule matched. **Zero is a result**, not a reason to
+    /// be left out (task 11.11).
     pub calls: i64,
     /// Distinct sessions those calls fall in.
     pub sessions: i64,
     /// Distinct projects those calls fall in.
     pub projects: Vec<String>,
+    /// Matched calls whose session the store never learned a project for.
+    ///
+    /// The number that used to vanish: [`reconcile`]'s table dropped these and
+    /// the summary counted them, which is half of why the two disagreed (task
+    /// 11.8). Carried here so the "no project recorded" row can name the rules
+    /// behind it without a second pass over the store.
+    pub unattributed_calls: i64,
     pub first_at: Option<i64>,
     pub last_at: Option<i64>,
-    /// A handful of the matching calls, newest first, for the drill-through.
-    pub examples: Vec<ToolCall>,
     /// Set when someone has dismissed this rule, with what they said.
     pub dismissed: Option<Dismissal>,
 }
@@ -206,13 +229,46 @@ pub struct Dismissal {
     pub at: i64,
 }
 
-/// How many examples a finding carries.
-const EXAMPLES: u32 = 8;
-
 /// The SQL a rule's conditions compile to, with its bindings.
 struct Compiled {
     where_sql: String,
     binds: Vec<Box<dyn ToSql>>,
+    /// Whether the statement embedding this needs [`REFUSALS_CTE`] in front.
+    needs_refusals: bool,
+}
+
+/// The refused calls, gathered once instead of re-found per candidate row.
+///
+/// Measured, on the owner's store: 4,295 calls, of which **three** are
+/// refusals. `retry-after-refusal` was 2,125 ms of a 2,314 ms review — 92% of
+/// it — because its correlated `EXISTS` let SQLite seek `refused` by
+/// `tool_call_tool_name`, so every candidate Bash call re-scanned every earlier
+/// Bash call looking for a rejection among them. `MATERIALIZED` pins the shape:
+/// find the three rows once, then the `EXISTS` walks three rows rather than
+/// thousands. The same query drops to 2.5 ms.
+///
+/// It is a plain constant rather than a planner hint (`+refused.tool_name`)
+/// because a hint says "do not use this index" and leaves the rest to the
+/// planner's estimates; this says what is actually true about the data.
+const REFUSALS_CTE: &str = "WITH refusals AS MATERIALIZED (
+     SELECT session_id, tool_name, called_at, tool_use_id, input_summary
+     FROM tool_call
+     WHERE decision = 'reject' AND input_summary IS NOT NULL)
+";
+
+impl Compiled {
+    /// The `WITH` clause a statement using this fragment must carry.
+    fn with_sql(&self) -> &'static str {
+        if self.needs_refusals {
+            REFUSALS_CTE
+        } else {
+            ""
+        }
+    }
+
+    fn refs(&self) -> Vec<&dyn ToSql> {
+        self.binds.iter().map(AsRef::as_ref).collect()
+    }
 }
 
 /// `column IN (?, ?, …)`, or nothing when the list is empty.
@@ -366,7 +422,11 @@ fn compile(rule: &Rule) -> Compiled {
     } else {
         clauses.join(" AND ")
     };
-    Compiled { where_sql, binds }
+    Compiled {
+        where_sql,
+        binds,
+        needs_refusals: false,
+    }
 }
 
 /// The `WHERE` for a rule, including the shapes that are not row predicates.
@@ -399,15 +459,13 @@ fn where_for(rule: &Rule) -> Compiled {
         // command and would silently become wildcards. The eight-character
         // floor keeps `ls` from matching `ls -la`.
         compiled.where_sql = format!(
-            "({}) AND tc.decision IS NOT 'reject' AND EXISTS (
-                 SELECT 1 FROM tool_call refused
+            "({}) AND tc.decision IS NOT 'reject' AND tc.input_summary IS NOT NULL
+             AND EXISTS (
+                 SELECT 1 FROM refusals refused
                  WHERE refused.session_id = tc.session_id
-                   AND refused.decision = 'reject'
                    AND refused.tool_name = tc.tool_name
                    AND refused.called_at <= tc.called_at
                    AND refused.tool_use_id <> tc.tool_use_id
-                   AND refused.input_summary IS NOT NULL
-                   AND tc.input_summary IS NOT NULL
                    AND (
                      (length(refused.input_summary) >= 8
                       AND substr(tc.input_summary, 1, length(refused.input_summary))
@@ -419,51 +477,127 @@ fn where_for(rule: &Rule) -> Compiled {
                    ))",
             compiled.where_sql
         );
+        compiled.needs_refusals = true;
     }
     compiled
 }
 
+/// One rule's own numbers, sliced by project.
+///
+/// Task 11.1: the count, the project list and the per-project posture are the
+/// same scan looked at three ways. They used to be three queries plus a fourth
+/// in `by_project`, which is both four times the work and four chances for the
+/// summary and the list to disagree.
+struct RuleRollup {
+    /// `project_path` (`None` for a session the store never learned) to calls.
+    by_project: Vec<(Option<String>, i64)>,
+    calls: i64,
+    sessions: i64,
+    first_at: Option<i64>,
+    last_at: Option<i64>,
+}
+
+fn rollup(conn: &Connection, rule: &Rule) -> Result<RuleRollup> {
+    let compiled = where_for(rule);
+    let sql = format!(
+        "{}SELECT s.project_path,
+                 count(DISTINCT tc.tool_use_id),
+                 count(DISTINCT tc.session_id),
+                 min(tc.called_at), max(tc.called_at)
+         FROM tool_call tc
+         LEFT JOIN session s ON s.session_id = tc.session_id
+         WHERE {}
+         GROUP BY s.project_path",
+        compiled.with_sql(),
+        compiled.where_sql
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(compiled.refs().as_slice(), |r| {
+        Ok((
+            r.get::<_, Option<String>>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, Option<i64>>(3)?,
+            r.get::<_, Option<i64>>(4)?,
+        ))
+    })?;
+
+    let mut out = RuleRollup {
+        by_project: Vec::new(),
+        calls: 0,
+        sessions: 0,
+        first_at: None,
+        last_at: None,
+    };
+    for row in rows {
+        let (project, calls, sessions, first, last) = row?;
+        out.calls += calls;
+        // A session belongs to exactly one project, so grouping by project
+        // partitions the sessions and the per-group distinct counts add up.
+        out.sessions += sessions;
+        out.first_at = min_opt(out.first_at, first);
+        out.last_at = max_opt(out.last_at, last);
+        out.by_project.push((project, calls));
+    }
+    out.by_project
+        .sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    Ok(out)
+}
+
+fn min_opt(a: Option<i64>, b: Option<i64>) -> Option<i64> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (x, None) | (None, x) => x,
+    }
+}
+
+fn max_opt(a: Option<i64>, b: Option<i64>) -> Option<i64> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (x, None) | (None, x) => x,
+    }
+}
+
 /// Evaluate every rule against the store.
 ///
-/// Ordered by severity, then by how much each rule caught. Dismissed findings
-/// keep their place and carry the note, rather than vanishing — a review that
-/// hides what was waved through is not a review.
+/// Ordered by severity, then by how much each rule caught. Two things this
+/// deliberately does **not** do:
+///
+/// - **It does not skip a rule that matched nothing** (task 11.11). A rule
+///   that found nothing is a real result, the same way Phase 6's empty state
+///   is — and skipping it was exactly why a reader could not tell which rules
+///   exist without opening a file.
+/// - **It does not fetch example calls** (task 11.2). Eight rows were built
+///   for every rule on every tab activation and read for at most one. The
+///   frontend already pages [`calls`]; the first page is now the first eight.
 pub fn evaluate(conn: &Connection, rules: &[Rule]) -> Result<Vec<Finding>> {
     let dismissals = dismissals(conn)?;
     let mut findings = Vec::new();
 
     for rule in rules {
-        let compiled = where_for(rule);
-        let sql = format!(
-            "SELECT count(*), count(DISTINCT tc.session_id),
-                    min(tc.called_at), max(tc.called_at)
-             FROM tool_call tc
-             LEFT JOIN session s ON s.session_id = tc.session_id
-             WHERE {}",
-            compiled.where_sql
-        );
-        let refs: Vec<&dyn ToSql> = compiled.binds.iter().map(AsRef::as_ref).collect();
-        let (calls, sessions, first_at, last_at): (i64, i64, Option<i64>, Option<i64>) = conn
-            .query_row(&sql, refs.as_slice(), |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-            })?;
-
-        if calls == 0 {
-            continue;
-        }
-
+        let roll = rollup(conn, rule)?;
         findings.push(Finding {
             rule_id: rule.id.clone(),
             title: rule.title.clone(),
             explanation: rule.explanation.clone(),
             severity: rule.severity,
             scope: rule.scope,
-            calls,
-            sessions,
-            projects: projects_for(conn, &compiled)?,
-            first_at,
-            last_at,
-            examples: examples_for(conn, &compiled)?,
+            conditions: describe(&rule.r#match),
+            from_user: rule.from_user,
+            calls: roll.calls,
+            sessions: roll.sessions,
+            projects: roll
+                .by_project
+                .iter()
+                .filter_map(|(p, _)| p.clone())
+                .collect(),
+            unattributed_calls: roll
+                .by_project
+                .iter()
+                .find(|(p, _)| p.is_none())
+                .map_or(0, |(_, n)| *n),
+            first_at: roll.first_at,
+            last_at: roll.last_at,
             dismissed: dismissals.get(&rule.id).cloned(),
         });
     }
@@ -478,36 +612,103 @@ pub fn evaluate(conn: &Connection, rules: &[Rule]) -> Result<Vec<Finding>> {
     Ok(findings)
 }
 
-fn projects_for(conn: &Connection, compiled: &Compiled) -> Result<Vec<String>> {
-    let sql = format!(
-        "SELECT DISTINCT s.project_path
-         FROM tool_call tc
-         LEFT JOIN session s ON s.session_id = tc.session_id
-         WHERE ({}) AND s.project_path IS NOT NULL
-         ORDER BY s.project_path",
-        compiled.where_sql
-    );
-    let refs: Vec<&dyn ToSql> = compiled.binds.iter().map(AsRef::as_ref).collect();
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(refs.as_slice(), |r| r.get::<_, String>(0))?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-}
+// ---------------------------------------------------------------------------
+// Saying what a rule looks for (task 11.12)
+// ---------------------------------------------------------------------------
 
-fn examples_for(conn: &Connection, compiled: &Compiled) -> Result<Vec<ToolCall>> {
-    let sql = format!(
-        "SELECT {}
-         FROM tool_call tc
-         LEFT JOIN session s ON s.session_id = tc.session_id
-         WHERE {}
-         ORDER BY tc.called_at DESC, tc.rowid DESC
-         LIMIT {EXAMPLES}",
-        query::TOOL_CALL_COLUMNS,
-        compiled.where_sql
-    );
-    let refs: Vec<&dyn ToSql> = compiled.binds.iter().map(AsRef::as_ref).collect();
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(refs.as_slice(), query::map_tool_call)?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+/// One condition per phrase, in the order [`compile`] applies them.
+///
+/// Rendered here rather than in the window, and rendered from the struct rather
+/// than from prose, for one reason: it sits beside `compile`, so a new
+/// condition cannot be added to the vocabulary without a phrase for it. A test
+/// asserts every field of [`Match`] produces one.
+///
+/// `first_line` and `outside_cwd` in particular need saying. Neither is a
+/// column, and neither is guessable from a rule's title.
+#[must_use]
+pub fn describe(m: &Match) -> Vec<String> {
+    let list = |values: &[String]| values.join(", ");
+    let mut out = Vec::new();
+
+    if !m.tools.is_empty() {
+        out.push(format!("the tool is {}", list(&m.tools)));
+    }
+    if !m.kinds.is_empty() {
+        out.push(format!("the tool kind is {}", list(&m.kinds)));
+    }
+    if !m.decisions.is_empty() {
+        out.push(format!("the decision was {}", list(&m.decisions)));
+    }
+    if !m.decision_sources.is_empty() {
+        out.push(format!(
+            "the decision came from {}",
+            list(&m.decision_sources)
+        ));
+    }
+    if !m.permission_modes.is_empty() {
+        out.push(format!(
+            "the permission mode was {}",
+            list(&m.permission_modes)
+        ));
+    }
+    if let Some(success) = m.success {
+        out.push(if success {
+            "the call succeeded".to_string()
+        } else {
+            "the call failed".to_string()
+        });
+    }
+    if let Some(main) = m.main_thread {
+        out.push(if main {
+            "the call was on the main thread".to_string()
+        } else {
+            "the call was made by a subagent".to_string()
+        });
+    }
+
+    // Said once, in front of the patterns it changes, rather than repeated in
+    // each of them.
+    let where_looked = if m.first_line {
+        "the command's first line"
+    } else {
+        "the command"
+    };
+    if !m.summary_contains.is_empty() {
+        out.push(format!(
+            "{where_looked} contains any of: {}",
+            list(&m.summary_contains)
+        ));
+    }
+    if !m.summary_glob.is_empty() {
+        out.push(format!(
+            "{where_looked} matches any of: {}",
+            list(&m.summary_glob)
+        ));
+    }
+    if !m.path_glob.is_empty() {
+        out.push(format!(
+            "the target path matches any of: {}",
+            list(&m.path_glob)
+        ));
+    }
+    if m.first_line && m.summary_contains.is_empty() && m.summary_glob.is_empty() {
+        // `first_line` with nothing to look at changes nothing, and saying so
+        // is better than a phrase that quietly went missing.
+        out.push("only the command's first line is looked at".to_string());
+    }
+    if m.outside_cwd {
+        out.push("the call wrote outside its session's working directory".to_string());
+    }
+    if m.mode_changed {
+        out.push("the session's permission mode changed while it was running".to_string());
+    }
+
+    if out.is_empty() {
+        // `compile` turns a rule stating nothing into `WHERE 0`. Saying that
+        // out loud is how a typo in a rules file gets noticed.
+        out.push("nothing — this rule states no conditions and matches nothing".to_string());
+    }
+    out
 }
 
 /// Every call one rule matched, newest first (task 6.3's drill-through).
@@ -520,12 +721,13 @@ fn examples_for(conn: &Connection, compiled: &Compiled) -> Result<Vec<ToolCall>>
 pub fn calls(conn: &Connection, rule: &Rule, page: Page) -> Result<Vec<ToolCall>> {
     let compiled = where_for(rule);
     let sql = format!(
-        "SELECT {}
+        "{}SELECT {}
          FROM tool_call tc
          LEFT JOIN session s ON s.session_id = tc.session_id
          WHERE {}
          ORDER BY tc.called_at DESC, tc.rowid DESC
          LIMIT ? OFFSET ?",
+        compiled.with_sql(),
         query::TOOL_CALL_COLUMNS,
         compiled.where_sql
     );
@@ -553,10 +755,11 @@ pub fn calls(conn: &Connection, rule: &Rule, page: Page) -> Result<Vec<ToolCall>
 pub fn matches(conn: &Connection, rule: &Rule, tool_use_id: &str) -> Result<bool> {
     let compiled = where_for(rule);
     let sql = format!(
-        "SELECT EXISTS (
+        "{}SELECT EXISTS (
              SELECT 1 FROM tool_call tc
              LEFT JOIN session s ON s.session_id = tc.session_id
              WHERE ({}) AND tc.tool_use_id = ?)",
+        compiled.with_sql(),
         compiled.where_sql
     );
     let mut binds: Vec<&dyn ToSql> = compiled.binds.iter().map(AsRef::as_ref).collect();
@@ -564,69 +767,170 @@ pub fn matches(conn: &Connection, rule: &Rule, tool_use_id: &str) -> Result<bool
     Ok(conn.query_row(&sql, binds.as_slice(), |r| r.get(0))?)
 }
 
-/// One project's posture: what its calls tripped, worst first (task 6.4).
+// ---------------------------------------------------------------------------
+// Reconciliation: one unit for the summary and the table (tasks 11.7–11.10)
+// ---------------------------------------------------------------------------
+
+/// One project's posture, counted in the unit the summary uses (task 6.4).
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export_to = "unused/")]
 pub struct ProjectRisk {
-    pub project_path: String,
-    pub calls: i64,
-    /// Findings by severity, worst first: high, medium, low, info.
+    /// `None` is the **no project recorded** row.
+    ///
+    /// Those calls were dropped from this table and counted in the summary, so
+    /// the two could not be made to agree (task 11.8). A session the store
+    /// never learned a path for is a real row now, not a rounding error.
+    pub project_path: Option<String>,
+    /// **Distinct calls flagged** at each severity, worst first: high, medium,
+    /// low, info. A call two rules caught is one call.
     pub by_severity: [i64; 4],
     /// The rules this project tripped, worst first.
     pub rule_ids: Vec<String>,
 }
 
-/// Per-project risk, from findings already evaluated.
-///
-/// Built from the findings rather than by re-querying, so the summary and the
-/// list can never disagree about what was found.
-pub fn by_project(
-    conn: &Connection,
-    rules: &[Rule],
-    findings: &[Finding],
-) -> Result<Vec<ProjectRisk>> {
-    let mut out: HashMap<String, ProjectRisk> = HashMap::new();
+/// The four numbers a review opens with, and what they are counted in.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
+pub struct SeverityTally {
+    pub severity: Severity,
+    /// Distinct calls flagged by any live rule of this severity.
+    ///
+    /// The unit the table's column adds up to, exactly (task 11.7). It used to
+    /// be a count of *rules*, while the table counted *(rule, project) pairs* —
+    /// which is how one rule spanning three projects appeared three times.
+    pub calls: i64,
+    /// How many live rules of this severity matched anything.
+    ///
+    /// Kept as the secondary line under the number (task 11.10). Both are worth
+    /// having; only one of them can be the total.
+    pub rules: i64,
+}
 
-    for finding in findings.iter().filter(|f| f.dismissed.is_none()) {
-        let Some(rule) = rules.iter().find(|r| r.id == finding.rule_id) else {
+/// The whole reconciliation: the summary numbers and the table under them.
+///
+/// Built together, from one pass per severity, so they cannot disagree. What
+/// they still will **not** do is add to a grand total, and that is a property of
+/// the question rather than a defect (task 11.9): a call caught by a `high` rule
+/// and a `low` rule is one call at each severity, so the four numbers overlap.
+/// There is no grand total on the page because there is no honest one.
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
+pub struct Reconciled {
+    pub totals: Vec<SeverityTally>,
+    pub projects: Vec<ProjectRisk>,
+}
+
+/// Severities worst first, which is the order a review is read in.
+const SEVERITIES: [Severity; 4] = [
+    Severity::High,
+    Severity::Medium,
+    Severity::Low,
+    Severity::Info,
+];
+
+/// The summary and the per-project table, in one pass per severity.
+///
+/// Dismissed rules are left out of both: setting a rule aside is a judgement
+/// about what still needs answering, and Phase 6 decided the finding keeps its
+/// place in the list while dropping out of the posture.
+pub fn reconcile(conn: &Connection, rules: &[Rule], findings: &[Finding]) -> Result<Reconciled> {
+    let live: Vec<&Rule> = findings
+        .iter()
+        .filter(|f| f.dismissed.is_none() && f.calls > 0)
+        .filter_map(|f| rules.iter().find(|r| r.id == f.rule_id))
+        .collect();
+
+    let mut projects: HashMap<Option<String>, ProjectRisk> = HashMap::new();
+    let mut totals = Vec::new();
+
+    for (slot, severity) in SEVERITIES.into_iter().enumerate() {
+        let of_severity: Vec<&&Rule> = live.iter().filter(|r| r.severity == severity).collect();
+        totals.push(SeverityTally {
+            severity,
+            calls: 0,
+            rules: i64::try_from(of_severity.len()).unwrap_or(i64::MAX),
+        });
+        if of_severity.is_empty() {
             continue;
-        };
-        let compiled = where_for(rule);
+        }
+
+        // Every rule of this severity in one `OR`, so a call two of them caught
+        // is counted once — which is the whole of task 11.7. Counting per rule
+        // and summing is exactly the double-count being fixed.
+        let mut clauses = Vec::new();
+        let mut binds: Vec<Box<dyn ToSql>> = Vec::new();
+        let mut needs_refusals = false;
+        for rule in &of_severity {
+            let compiled = where_for(rule);
+            clauses.push(format!("({})", compiled.where_sql));
+            binds.extend(compiled.binds);
+            needs_refusals |= compiled.needs_refusals;
+        }
+
         let sql = format!(
-            "SELECT s.project_path, count(*)
+            "{}SELECT s.project_path, count(DISTINCT tc.tool_use_id)
              FROM tool_call tc
              LEFT JOIN session s ON s.session_id = tc.session_id
-             WHERE ({}) AND s.project_path IS NOT NULL
+             WHERE {}
              GROUP BY s.project_path",
-            compiled.where_sql
+            if needs_refusals { REFUSALS_CTE } else { "" },
+            clauses.join(" OR ")
         );
-        let refs: Vec<&dyn ToSql> = compiled.binds.iter().map(AsRef::as_ref).collect();
+        let refs: Vec<&dyn ToSql> = binds.iter().map(AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(refs.as_slice(), |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?))
         })?;
 
         for row in rows {
             let (project, calls) = row?;
-            let entry = out.entry(project.clone()).or_insert_with(|| ProjectRisk {
-                project_path: project,
-                calls: 0,
-                by_severity: [0; 4],
-                rule_ids: Vec::new(),
-            });
-            entry.calls += calls;
-            entry.by_severity[3 - usize::from(finding.severity.rank())] += 1;
+            // A call belongs to exactly one project group, so the column adds
+            // up to the number above it by construction rather than by luck.
+            totals[slot].calls += calls;
+            let entry = projects
+                .entry(project.clone())
+                .or_insert_with(|| ProjectRisk {
+                    project_path: project,
+                    by_severity: [0; 4],
+                    rule_ids: Vec::new(),
+                });
+            entry.by_severity[slot] += calls;
+        }
+    }
+
+    // Which rules each project tripped. Read off the findings rather than
+    // re-queried: `evaluate` already grouped every rule by project, and asking
+    // the store again for something it just said is nine more near-full scans
+    // per review — the exact waste this phase exists to remove.
+    for finding in findings
+        .iter()
+        .filter(|f| f.dismissed.is_none() && f.calls > 0)
+    {
+        for project in &finding.projects {
+            if let Some(entry) = projects.get_mut(&Some(project.clone())) {
+                entry.rule_ids.push(finding.rule_id.clone());
+            }
+        }
+        if finding.unattributed_calls > 0
+            && let Some(entry) = projects.get_mut(&None)
+        {
             entry.rule_ids.push(finding.rule_id.clone());
         }
     }
 
-    let mut list: Vec<ProjectRisk> = out.into_values().collect();
+    let mut list: Vec<ProjectRisk> = projects.into_values().collect();
     list.sort_by(|a, b| {
         b.by_severity
             .cmp(&a.by_severity)
-            .then(b.calls.cmp(&a.calls))
+            // The unattributed row sorts last among equals: it is the one row
+            // a reader cannot go and look at.
+            .then(a.project_path.is_none().cmp(&b.project_path.is_none()))
+            .then(a.project_path.cmp(&b.project_path))
     });
-    Ok(list)
+    Ok(Reconciled {
+        totals,
+        projects: list,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -730,6 +1034,7 @@ mod tests {
             severity: Severity::Info,
             scope: Scope::Call,
             r#match: Match::default(),
+            from_user: false,
         };
         assert_eq!(compile(&rule).where_sql, "0");
     }
@@ -746,6 +1051,7 @@ mod tests {
                 tools: vec!["Bash'; DROP TABLE tool_call; --".into()],
                 ..Match::default()
             },
+            from_user: false,
         };
         let compiled = compile(&rule);
         assert!(compiled.where_sql.contains("tc.tool_name IN (?)"));

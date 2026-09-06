@@ -85,6 +85,7 @@ pub(crate) fn generate() -> String {
         toolog_core::rules::Dismissal,
         toolog_core::rules::Finding,
         toolog_core::rules::ProjectRisk,
+        toolog_core::rules::SeverityTally,
         toolog_cli::prefs::Prefs,
         toolog_otlp::server::CounterSnapshot,
         toolog_cli::capture::Status,

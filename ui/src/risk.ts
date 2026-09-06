@@ -1,7 +1,7 @@
-//! The risk review (tasks 6.3 and 6.4).
+//! The risk review (tasks 6.3, 6.4, and 11.7–11.13).
 //!
 //! A review is read worst first, and it has to survive the reader disagreeing
-//! with it. Two consequences shape this view:
+//! with it. Four things shape this view, three of them from living with v1.0:
 //!
 //! - **A dismissal hides nothing.** Setting a rule aside keeps the finding in
 //!   the list, greyed and carrying the note someone wrote; what changes is the
@@ -12,14 +12,32 @@
 //!   a column — so the drill-through fetches the rule's own matches rather
 //!   than a filter that would quietly show a *similar* set. Any one of them
 //!   opens in the timeline, where the evidence is.
+//! - **The summary and the table are one unit: distinct calls flagged.** They
+//!   used to count different things — rules above, (rule, project) pairs below
+//!   — so one rule spanning three projects appeared three times and nothing
+//!   added up. Each severity column now sums to the number above it exactly.
+//!   The four numbers still do not add to a grand total, and the page says so
+//!   rather than letting a reader discover it (task 11.9).
+//! - **Every rule is here, including the ones that matched nothing.** A rule
+//!   that found nothing is a real result, and skipping it was exactly why a
+//!   reader could not tell from the window which rules exist.
 
 import type { Finding, ProjectRisk, RiskReview, Severity, ToolCall } from "./bindings";
-import { dismissRule, restoreRule, risk, ruleCalls } from "./bindings";
+import { dismissRule, restoreRule, revealRules, risk, ruleCalls } from "./bindings";
 import { append, el, fill, orDash } from "./dom";
 import { basename, clock, count, fullStamp, shortPath } from "./format";
 
 /** How many calls one page of a drill-through fetches. */
 const PAGE = 50;
+
+/**
+ * How many calls a finding shows before offering the rest.
+ *
+ * The same handful the finding used to carry on it — fetched on expand now
+ * (task 11.2), because eight rows were built for twelve rules on every tab
+ * activation and read for at most one.
+ */
+const FIRST_PAGE = 8;
 
 /** Worst first, which is the order a review is read in. */
 const SEVERITIES: Severity[] = ["high", "medium", "low", "info"];
@@ -77,26 +95,40 @@ export class RiskView {
     const review = this.review;
     if (review === null) return;
 
-    if (review.findings.length === 0) {
+    const matched = review.findings.filter((f) => f.calls > 0);
+
+    if (matched.length === 0) {
+      // Still the whole list underneath: task 11.11's point is that a rule
+      // which found nothing is a result, and a reader who cannot see the rules
+      // cannot tell "clean" from "not looking".
       fill(this.content, [
         el("p", { class: "empty" }, [
           el("strong", { text: "No rule matched anything in this store." }),
-          " That is a real result, not an empty screen: the rules ran and found nothing.",
+          ` That is a real result, not an empty screen: all ${count(review.findings.length)} rules ran and found nothing. Each is listed below with what it looks for.`,
         ]),
+        el("div", { class: "findings" }, review.findings.map((f) => this.finding(f))),
         this.rulesFooter(),
       ]);
       return;
     }
 
-    const live = review.findings.filter((f) => f.dismissed === null);
-    const aside = review.findings.length - live.length;
+    const aside = matched.filter((f) => f.dismissed !== null).length;
+    const quiet = review.findings.length - matched.length;
     fill(this.content, [
       el("div", { class: "risk-summary" }, [
-        el("div", { class: "risk-counts" }, SEVERITIES.map((s) => this.severityCount(s, live))),
+        el("div", { class: "risk-counts" }, review.totals.map((t) => this.severityCount(t))),
         el("p", { class: "note" }, [
-          aside === 0
-            ? `${count(live.length)} ${live.length === 1 ? "rule" : "rules"} matched something in this store.`
-            : `${count(live.length)} of ${count(review.findings.length)} matching rules are live; the other ${count(aside)} were set aside with a note, and are still listed below.`,
+          `${count(matched.length - aside)} of ${count(review.findings.length)} rules matched something` +
+            (aside === 0
+              ? ". "
+              : `; ${count(aside)} more were set aside with a note and still count against nothing. `) +
+            (quiet === 0
+              ? ""
+              : `${count(quiet)} matched nothing, and are listed below with what they look for. `),
+          // Task 11.9: said here rather than discovered by adding four numbers
+          // that were never meant to be added.
+          el("strong", { text: "The four numbers do not add up to a total" }),
+          " — a call caught by a high rule and a low rule is one call at each severity — so there is not one.",
         ]),
       ]),
       this.projects(review.projects),
@@ -105,12 +137,22 @@ export class RiskView {
     ]);
   }
 
-  private severityCount(severity: Severity, live: Finding[]): HTMLElement {
-    const findings = live.filter((f) => f.severity === severity);
-    return el("div", { class: `risk-count ${severity}` }, [
-      el("span", { class: "risk-count-n", text: count(findings.length) }),
-      el("span", { class: "risk-count-label", text: severity }),
-      el("span", { class: "risk-count-note", text: SEVERITY_WORDS[severity] }),
+  /**
+   * One hero number: distinct calls flagged, with the rule count under it.
+   *
+   * Both numbers are worth having and only one of them can be the total
+   * (task 11.10). The calls are the total, because that is the unit the table
+   * below adds up in.
+   */
+  private severityCount(tally: RiskReview["totals"][number]): HTMLElement {
+    return el("div", { class: `risk-count ${tally.severity}` }, [
+      el("span", { class: "risk-count-n", text: count(tally.calls) }),
+      el("span", { class: "risk-count-label", text: tally.severity }),
+      el("span", {
+        class: "risk-count-rules",
+        text: `${count(tally.rules)} ${tally.rules === 1 ? "rule" : "rules"}, ${count(tally.calls)} ${tally.calls === 1 ? "call" : "calls"}`,
+      }),
+      el("span", { class: "risk-count-note", text: SEVERITY_WORDS[tally.severity] }),
     ]);
   }
 
@@ -122,7 +164,7 @@ export class RiskView {
         el("span", { class: "chart-title", text: "By project" }),
         el("span", {
           class: "chart-caption",
-          text: "Live findings only — a rule set aside stops counting against the project that tripped it.",
+          text: "Distinct calls flagged, so each column adds up to the number above it. Live findings only — a rule set aside stops counting against the project that tripped it.",
         }),
       ]),
       el("table", { class: "chart-table risk-projects" }, [
@@ -130,22 +172,32 @@ export class RiskView {
           el("tr", {}, [
             el("th", { text: "Project" }),
             ...SEVERITIES.map((s) => el("th", { class: "num", text: s })),
-            el("th", { class: "num", text: "Calls" }),
           ]),
         ]),
         el(
           "tbody",
           {},
           projects.map((p) =>
-            el("tr", {}, [
-              el("th", { attrs: { scope: "row", title: p.project_path }, text: basename(p.project_path) }),
+            el("tr", { class: p.project_path === null ? "unattributed" : "" }, [
+              // Task 11.8: these calls were dropped from this table and counted
+              // in the summary above it, which is half of why the two could not
+              // be made to agree.
+              p.project_path === null
+                ? el("th", {
+                    attrs: { scope: "row" },
+                    text: "No project recorded",
+                    title: "Calls whose session the store never learned a project path for",
+                  })
+                : el("th", {
+                    attrs: { scope: "row", title: p.project_path },
+                    text: basename(p.project_path),
+                  }),
               ...p.by_severity.map((n, i) =>
                 el("td", {
                   class: n === 0 ? "num none" : `num sev ${SEVERITIES[i] ?? ""}`,
                   text: n === 0 ? "—" : count(n),
                 }),
               ),
-              el("td", { class: "num", text: count(p.calls) }),
             ]),
           ),
         ),
@@ -188,21 +240,56 @@ export class RiskView {
   }
 
   private fillBody(f: Finding, body: HTMLElement): void {
+    const projects = f.projects.map((p) => basename(p));
+    if (f.unattributed_calls > 0) {
+      projects.push(`${count(f.unattributed_calls)} with no project recorded`);
+    }
+
+    const calls = el("div", { class: "finding-calls" });
     fill(body, [
       el("p", { class: "finding-why", text: f.explanation }),
+      this.conditions(f),
       el("dl", { class: "kv" }, [
         el("dt", { text: "First" }),
         el("dd", { text: f.first_at === null ? "—" : fullStamp(f.first_at) }),
         el("dt", { text: "Last" }),
         el("dd", { text: f.last_at === null ? "—" : fullStamp(f.last_at) }),
         el("dt", { text: "Projects" }),
-        el("dd", { text: f.projects.length === 0 ? "—" : f.projects.map((p) => basename(p)).join(", ") }),
+        el("dd", { text: projects.length === 0 ? "—" : projects.join(", ") }),
         el("dt", { text: "Rule" }),
-        el("dd", { class: "mono", text: f.rule_id }),
+        el("dd", { class: "mono", text: `${f.rule_id}${f.from_user ? " · from your rules file" : ""}` }),
       ]),
-      el("div", { class: "finding-calls" }, f.examples.map((c) => this.callRow(c))),
-      this.moreCalls(f),
+      f.calls === 0
+        ? el("p", { class: "note", text: "This rule matched nothing in this store." })
+        : calls,
+      f.calls === 0 ? null : this.moreCalls(f),
       this.judgement(f),
+    ]);
+
+    // Task 11.2: the calls arrive when a finding is opened, not for all twelve
+    // rules on every tab activation.
+    if (f.calls > 0) {
+      fill(calls, [el("div", { class: "empty small", text: "Loading…" })]);
+      void ruleCalls(f.rule_id, { limit: FIRST_PAGE, offset: 0 })
+        .then((rows) => fill(calls, rows.map((c) => this.callRow(c))))
+        .catch((error: unknown) => {
+          fill(calls, [el("p", { class: "problem", text: String(error) })]);
+        });
+    }
+  }
+
+  /**
+   * What the rule looks for, in words (task 11.12).
+   *
+   * Rendered in Rust from the `Match` struct and carried here, rather than
+   * written by hand beside the rule: a description a person maintains is a
+   * description that eventually describes a different rule. `first_line` and
+   * `outside_cwd` in particular are not columns and not guessable from a title.
+   */
+  private conditions(f: Finding): HTMLElement {
+    return el("div", { class: "finding-conditions" }, [
+      el("span", { class: "cond-label", text: "Matches when" }),
+      el("ul", {}, f.conditions.map((c) => el("li", { text: c }))),
     ]);
   }
 
@@ -225,9 +312,9 @@ export class RiskView {
     return row;
   }
 
-  /** "Show the rest" — the drill-through past the eight examples. */
+  /** "Show the rest" — the drill-through past the first page. */
   private moreCalls(f: Finding): HTMLElement | null {
-    const shown = f.examples.length;
+    const shown = Math.min(f.calls, FIRST_PAGE);
     if (f.calls <= shown) return null;
 
     const list = el("div", { class: "finding-calls" });
@@ -306,16 +393,41 @@ export class RiskView {
     return el("div", { class: "actions" }, [note, save]);
   }
 
+  /**
+   * Where the rules live and how to change them (task 11.13).
+   *
+   * "Rules are data you can edit" was true in v1.0 and unusable: the only
+   * handle was a path in a footnote. The path is still stated — you cannot
+   * paste a button into a terminal — but there is now a button beside it, and
+   * the file's format is named rather than left to be guessed.
+   */
   private rulesFooter(): HTMLElement {
     const review = this.review;
-    return el("p", { class: "footnote" }, [
-      "Rules are data, not code. ",
-      review?.rules_path === undefined || review.rules_path === null
-        ? "A rules file can sit beside the database and add to or replace any rule here."
-        : review.rules_customized
-          ? `Your own rules are being read from ${shortPath(review.rules_path)}, on top of the built-in set.`
-          : `Put a rules file at ${shortPath(review.rules_path)} to add rules, retune one, or switch one off — an id that matches a built-in replaces it.`,
-      " Findings are recomputed every time; nothing here is stored except the notes above.",
+    const path = review?.rules_path ?? null;
+
+    const reveal = el("button", {
+      class: "link",
+      text: review?.rules_customized === true ? "Show the file" : "Show the folder",
+      attrs: { type: "button" },
+    });
+    reveal.addEventListener("click", () => {
+      void revealRules().catch((error: unknown) =>
+        this.opts.onNotice(`That could not be opened: ${String(error)}`),
+      );
+    });
+
+    return el("div", { class: "rules-note" }, [
+      el("p", { class: "footnote" }, [
+        el("strong", { text: "Rules are data, not code. " }),
+        path === null
+          ? "A rules file can sit beside the database and add to or replace any rule above."
+          : review?.rules_customized === true
+            ? `Your own rules are read from ${shortPath(path)}, on top of the built-in set.`
+            : `Put a TOML file at ${shortPath(path)} to add a rule, retune one, or switch one off — an id that matches a built-in replaces it.`,
+        " Every rule above is listed with what it looks for, whether or not it matched. ",
+        "Findings are recomputed whenever the store or the rules change; nothing here is stored except the notes.",
+      ]),
+      el("div", { class: "actions" }, [reveal]),
     ]);
   }
 }

@@ -65,6 +65,21 @@ fn decide(conn: &Connection, id: &str, session_id: &str, decision: &str, source:
     .expect("decision");
 }
 
+/// The calls behind a rule, newest first.
+///
+/// Phase 11 dropped `Finding.examples`: eight rows were built for every rule on
+/// every tab activation and read for at most one. These assertions moved to the
+/// drill-through the window itself now uses, which is the point — one source of
+/// truth for "which calls did this rule catch".
+fn matched(
+    conn: &Connection,
+    rules: &[rules::Rule],
+    id: &str,
+) -> Vec<toolog_core::model::ToolCall> {
+    let rule = rules.iter().find(|r| r.id == id).expect("rule exists");
+    rules::calls(conn, rule, Page::default()).expect("calls")
+}
+
 fn finding<'a>(findings: &'a [rules::Finding], id: &str) -> Option<&'a rules::Finding> {
     findings.iter().find(|f| f.rule_id == id)
 }
@@ -106,14 +121,15 @@ fn an_auto_approved_rm_rf_is_flagged_and_leads_back_to_the_call() {
     assert_eq!(hit.sessions, 1);
     assert_eq!(hit.projects, ["/work/scratch"]);
 
-    // Drill-through: the finding carries the exact call, not just a count.
-    assert_eq!(hit.examples.len(), 1);
-    assert_eq!(hit.examples[0].tool_use_id, "toolu_rm");
+    // Drill-through: the rule leads to the exact call, not just a count.
+    let calls = matched(conn, &rules, "auto-approved-destructive-bash");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].tool_use_id, "toolu_rm");
     assert_eq!(
-        hit.examples[0].input_summary.as_deref(),
+        calls[0].input_summary.as_deref(),
         Some("rm -rf /work/scratch/build")
     );
-    assert_eq!(hit.examples[0].decision_source.as_deref(), Some("config"));
+    assert_eq!(calls[0].decision_source.as_deref(), Some("config"));
 
     // And the highest severity sorts first, which is the order it is read in.
     assert_eq!(findings[0].severity, Severity::High);
@@ -163,7 +179,10 @@ fn a_refused_call_that_then_went_through_is_the_finding_that_matters_most() {
         hit.calls, 1,
         "the call that ran, not the one that was refused"
     );
-    assert_eq!(hit.examples[0].tool_use_id, "toolu_yes");
+    assert_eq!(
+        matched(conn, &rules, "retry-after-refusal")[0].tool_use_id,
+        "toolu_yes"
+    );
 }
 
 #[test]
@@ -197,8 +216,11 @@ fn an_unrelated_call_after_a_refusal_is_not_a_workaround() {
 
     let rules = rules::load(None).expect("rules");
     let findings = rules::evaluate(conn, &rules).expect("evaluate");
-    assert!(
-        finding(&findings, "retry-after-refusal").is_none(),
+    assert_eq!(
+        finding(&findings, "retry-after-refusal")
+            .expect("listed even when it matched nothing")
+            .calls,
+        0,
         "a different command is not the refused one going through"
     );
 }
@@ -235,7 +257,10 @@ fn a_write_outside_the_session_directory_is_flagged_and_one_inside_is_not() {
 
     let hit = finding(&findings, "write-outside-the-working-directory").expect("flagged");
     assert_eq!(hit.calls, 1);
-    assert_eq!(hit.examples[0].tool_use_id, "toolu_out");
+    assert_eq!(
+        matched(conn, &rules, "write-outside-the-working-directory")[0].tool_use_id,
+        "toolu_out"
+    );
 }
 
 #[test]
@@ -266,7 +291,10 @@ fn a_session_with_no_recorded_directory_is_not_judged() {
     let rules = rules::load(None).expect("rules");
     let findings = rules::evaluate(conn, &rules).expect("evaluate");
     assert!(
-        finding(&findings, "write-outside-the-working-directory").is_none(),
+        finding(&findings, "write-outside-the-working-directory")
+            .expect("listed even when it matched nothing")
+            .calls
+            == 0,
         "with no cwd there is nothing to be outside of"
     );
 }
@@ -355,7 +383,10 @@ fn a_curl_piped_into_a_shell_is_flagged_and_a_plain_curl_is_not() {
 
     let piped = finding(&findings, "curl-piped-to-a-shell").expect("flagged");
     assert_eq!(piped.calls, 1);
-    assert_eq!(piped.examples[0].tool_use_id, "toolu_pipe");
+    assert_eq!(
+        matched(conn, &rules, "curl-piped-to-a-shell")[0].tool_use_id,
+        "toolu_pipe"
+    );
 
     // Both are network-reaching, which is a separate, quieter finding.
     assert_eq!(
@@ -407,7 +438,12 @@ fn a_session_whose_mode_changed_is_flagged_through_its_calls() {
 
     let hit = finding(&findings, "permission-mode-changed-mid-session").expect("flagged");
     assert_eq!(hit.calls, 1, "only the session that actually changed");
-    assert_eq!(hit.examples[0].session_id.as_deref(), Some("s1"));
+    assert_eq!(
+        matched(conn, &rules, "permission-mode-changed-mid-session")[0]
+            .session_id
+            .as_deref(),
+        Some("s1")
+    );
 }
 
 #[test]
@@ -423,7 +459,10 @@ fn calls_made_with_prompts_turned_off_are_flagged() {
 
     let hit = finding(&findings, "unattended-permission-mode").expect("flagged");
     assert_eq!(hit.calls, 1);
-    assert_eq!(hit.examples[0].tool_use_id, "toolu_a");
+    assert_eq!(
+        matched(conn, &rules, "unattended-permission-mode")[0].tool_use_id,
+        "toolu_a"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -499,9 +538,15 @@ fn per_project_risk_counts_findings_and_leaves_out_the_dismissed() {
 
     let rules = rules::load(None).expect("rules");
     let findings = rules::evaluate(conn, &rules).expect("evaluate");
-    let posture = rules::by_project(conn, &rules, &findings).expect("by project");
+    let posture = rules::reconcile(conn, &rules, &findings)
+        .expect("reconcile")
+        .projects;
 
-    assert_eq!(posture[0].project_path, "/work/risky", "worst first");
+    assert_eq!(
+        posture[0].project_path.as_deref(),
+        Some("/work/risky"),
+        "worst first"
+    );
     assert!(posture[0].by_severity[0] >= 1, "a high-severity finding");
     assert!(
         posture[0]
@@ -509,14 +554,18 @@ fn per_project_risk_counts_findings_and_leaves_out_the_dismissed() {
             .contains(&"auto-approved-destructive-bash".to_string())
     );
     assert!(
-        posture.iter().all(|p| p.project_path != "/work/quiet"),
+        posture
+            .iter()
+            .all(|p| p.project_path.as_deref() != Some("/work/quiet")),
         "a project that tripped nothing does not appear"
     );
 
     // Dismissing the rule takes it out of the posture, without deleting a call.
     rules::dismiss(conn, "auto-approved-destructive-bash", "known", 1).expect("dismiss");
     let findings = rules::evaluate(conn, &rules).expect("evaluate");
-    let posture = rules::by_project(conn, &rules, &findings).expect("by project");
+    let posture = rules::reconcile(conn, &rules, &findings)
+        .expect("reconcile")
+        .projects;
     assert!(posture.iter().all(|p| {
         !p.rule_ids
             .contains(&"auto-approved-destructive-bash".to_string())
@@ -560,7 +609,10 @@ fn an_underscore_in_a_pattern_is_a_character_not_a_wildcard() {
         hit.calls, 1,
         "the real key, and nothing that merely looks like it"
     );
-    assert_eq!(hit.examples[0].tool_use_id, "toolu_key");
+    assert_eq!(
+        matched(conn, &rules, "secrets-read-by-command")[0].tool_use_id,
+        "toolu_key"
+    );
 }
 
 /// A heredoc puts its whole body in the command; the body is data, not a
@@ -601,19 +653,26 @@ fn a_heredoc_body_is_not_treated_as_the_command() {
     let hit = finding(&findings, "auto-approved-destructive-bash").expect("flagged");
     assert_eq!(hit.calls, 1);
     assert_eq!(
-        hit.examples[0].tool_use_id, "toolu_real",
+        matched(conn, &rules, "auto-approved-destructive-bash")[0].tool_use_id,
+        "toolu_real",
         "writing about a command is not running it"
     );
 }
 
 #[test]
-fn an_empty_store_produces_no_findings_rather_than_an_error() {
+fn an_empty_store_lists_every_rule_with_nothing_against_it() {
+    // Task 11.11: a rule that matched nothing is a real result. Before this,
+    // `evaluate` skipped them, which is exactly why a reader could not tell
+    // from the window which rules exist.
     let db = Db::open_in_memory().expect("open");
     let rules = rules::load(None).expect("rules");
+    let findings = rules::evaluate(db.conn(), &rules).expect("evaluate");
+    assert_eq!(findings.len(), rules.len(), "every rule is listed");
     assert!(
-        rules::evaluate(db.conn(), &rules)
-            .expect("evaluate")
-            .is_empty()
+        findings
+            .iter()
+            .all(|f| f.calls == 0 && f.projects.is_empty()),
+        "and every one of them found nothing"
     );
 }
 
@@ -648,13 +707,15 @@ fn a_rules_calls_are_reachable_past_the_examples_it_carries() {
     let findings = rules::evaluate(conn, &rules).expect("evaluate");
     let hit = finding(&findings, "auto-approved-destructive-bash").expect("flagged");
     assert_eq!(hit.calls, 12);
-    assert_eq!(hit.examples.len(), 8, "a finding carries a handful");
 
     let rule = rules
         .iter()
         .find(|r| r.id == "auto-approved-destructive-bash")
         .expect("the rule");
 
+    // Task 11.2: the first page *is* the handful a finding used to carry, so
+    // there is one source of truth for "which calls did this rule catch"
+    // rather than two that can drift.
     let first = rules::calls(
         conn,
         rule,
@@ -664,13 +725,10 @@ fn a_rules_calls_are_reachable_past_the_examples_it_carries() {
         },
     )
     .expect("page");
+    assert_eq!(first.len(), 8, "a first page is a handful");
     assert_eq!(
-        first.iter().map(|c| &c.tool_use_id).collect::<Vec<_>>(),
-        hit.examples
-            .iter()
-            .map(|c| &c.tool_use_id)
-            .collect::<Vec<_>>(),
-        "the first page is the examples, in the same order"
+        first[0].tool_use_id, "toolu_11",
+        "newest first, the way the finding read"
     );
 
     let rest = rules::calls(
@@ -759,4 +817,291 @@ fn a_session_scoped_rule_matches_the_call_that_stands_for_the_session() {
         !rules::matches(conn, rule, "toolu_2").expect("matches"),
         "and a later call does not notify a second time"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation (tasks 11.7–11.10)
+// ---------------------------------------------------------------------------
+
+/// A store holding every case that used to make the summary and the table
+/// disagree, all at once:
+///
+/// - a rule spanning three projects (it counted once in the hero and three
+///   times in the table);
+/// - a session-scoped rule, whose unit is a session rather than a call;
+/// - one call two rules catch, at two different severities;
+/// - a call whose session has no `project_path`, which the table dropped and
+///   the hero counted.
+fn awkward() -> Db {
+    let db = Db::open_in_memory().expect("open");
+    let conn = db.conn();
+
+    // One rule (`auto-approved-destructive-bash`) across three projects.
+    for (i, path) in ["/work/a", "/work/b", "/work/c"].into_iter().enumerate() {
+        let sid = format!("s{i}");
+        session(conn, &sid, path, path);
+        let id = format!("toolu_rm{i}");
+        call(
+            conn,
+            &id,
+            &sid,
+            "Bash",
+            "rm -rf ./build",
+            None,
+            1_000 + i64::try_from(i).unwrap_or(0),
+            "default",
+        );
+        decide(conn, &id, &sid, "accept", "config");
+    }
+
+    // A call two rules catch at the same severity: destroying a secret is both
+    // `auto-approved-destructive-bash` and `secrets-read-by-command`, and both
+    // are high. Counted per rule it is two; it is one call.
+    session(conn, "s-both", "/work/a", "/work/a");
+    call(
+        conn,
+        "toolu_twice",
+        "s-both",
+        "Bash",
+        "rm -rf /work/a/.env",
+        None,
+        1_900,
+        "dontAsk",
+    );
+    decide(conn, "toolu_twice", "s-both", "accept", "config");
+
+    // And one caught at two *different* severities, which is why the four
+    // numbers do not add to a grand total (task 11.9).
+    call(
+        conn,
+        "toolu_both",
+        "s-both",
+        "Bash",
+        "rm -rf /work/a/dist",
+        None,
+        2_000,
+        "dontAsk",
+    );
+    decide(conn, "toolu_both", "s-both", "accept", "config");
+
+    // A session the store never learned a project for.
+    project::upsert_session(
+        conn,
+        &Session {
+            session_id: "s-none".to_string(),
+            project_path: None,
+            cwd: None,
+            ..Session::default()
+        },
+    )
+    .expect("session");
+    call(
+        conn,
+        "toolu_orphan",
+        "s-none",
+        "Bash",
+        "rm -rf /tmp/whatever",
+        None,
+        3_000,
+        "dontAsk",
+    );
+    decide(conn, "toolu_orphan", "s-none", "accept", "config");
+
+    // And a mid-session mode change, which is the session-scoped rule.
+    project::insert_permission_mode_change(
+        conn,
+        &PermissionModeChange {
+            session_id: Some("s-both".to_string()),
+            from_mode: Some("default".to_string()),
+            to_mode: Some("dontAsk".to_string()),
+            trigger: Some("permission-mode".to_string()),
+            ts: Some(1_500),
+        },
+    )
+    .expect("mode change");
+
+    db
+}
+
+#[test]
+fn every_severity_column_adds_up_to_the_number_above_it() {
+    // The complaint this closes: "hero numbers don't add up to the table".
+    // They counted different things — rules above, (rule, project) pairs
+    // below — so one rule spanning three projects appeared three times.
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+    let findings = rules::evaluate(conn, &rules).expect("evaluate");
+    let r = rules::reconcile(conn, &rules, &findings).expect("reconcile");
+
+    for (slot, tally) in r.totals.iter().enumerate() {
+        let column: i64 = r.projects.iter().map(|p| p.by_severity[slot]).sum();
+        assert_eq!(
+            column, tally.calls,
+            "the {:?} column does not add up to the {:?} number above it",
+            tally.severity, tally.severity
+        );
+    }
+}
+
+#[test]
+fn a_call_two_rules_caught_is_one_call() {
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+    let findings = rules::evaluate(conn, &rules).expect("evaluate");
+    let r = rules::reconcile(conn, &rules, &findings).expect("reconcile");
+
+    let high = r
+        .totals
+        .iter()
+        .find(|t| t.severity == Severity::High)
+        .expect("a high tally");
+
+    // Five calls exist and all five trip something high; the rules between them
+    // report more than five hits, which is exactly the double count.
+    let hits: i64 = findings
+        .iter()
+        .filter(|f| f.severity == Severity::High && f.dismissed.is_none())
+        .map(|f| f.calls)
+        .sum();
+    assert!(
+        hits > high.calls,
+        "this fixture must contain a call more than one high rule catches \
+         (rule hits {hits}, distinct calls {})",
+        high.calls
+    );
+    assert_eq!(high.calls, 6, "six distinct calls carry a high finding");
+    assert!(high.rules >= 2, "reported by more than one rule");
+
+    // The overlap across severities is the other half of task 11.9: this call
+    // is one call at `high` and one at `medium`, and adding the two numbers
+    // would count it twice. That is why the page has no grand total.
+    let medium = r
+        .totals
+        .iter()
+        .find(|t| t.severity == Severity::Medium)
+        .expect("a medium tally");
+    assert!(medium.calls > 0 && high.calls > 0);
+}
+
+#[test]
+fn a_call_whose_session_has_no_project_is_a_row_rather_than_a_rounding_error() {
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+    let findings = rules::evaluate(conn, &rules).expect("evaluate");
+    let r = rules::reconcile(conn, &rules, &findings).expect("reconcile");
+
+    let orphan = r
+        .projects
+        .iter()
+        .find(|p| p.project_path.is_none())
+        .expect("a 'no project recorded' row");
+    assert!(orphan.by_severity.iter().sum::<i64>() > 0);
+    assert_eq!(
+        r.projects.last().map(|p| p.project_path.is_none()),
+        Some(true),
+        "and it sorts last, being the one row nobody can go and look at"
+    );
+}
+
+#[test]
+fn a_session_scoped_rule_contributes_one_call_per_session() {
+    // Task 11.9: why the two scopes that are not plain calls still reconcile.
+    // A session rule is already narrowed to the session's first call, so it
+    // contributes exactly one `tool_use_id` per session.
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+    let findings = rules::evaluate(conn, &rules).expect("evaluate");
+
+    let mode = finding(&findings, "permission-mode-changed-mid-session").expect("listed");
+    assert_eq!(
+        mode.calls, mode.sessions,
+        "one call stands for each session"
+    );
+}
+
+#[test]
+fn the_summary_leaves_out_a_rule_that_was_set_aside() {
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+
+    let before = {
+        let findings = rules::evaluate(conn, &rules).expect("evaluate");
+        rules::reconcile(conn, &rules, &findings).expect("reconcile")
+    };
+    rules::dismiss(conn, "auto-approved-destructive-bash", "known", 1).expect("dismiss");
+    let after = {
+        let findings = rules::evaluate(conn, &rules).expect("evaluate");
+        rules::reconcile(conn, &rules, &findings).expect("reconcile")
+    };
+
+    let high = |r: &rules::Reconciled| {
+        r.totals
+            .iter()
+            .find(|t| t.severity == Severity::High)
+            .expect("high")
+            .rules
+    };
+    assert!(high(&after) < high(&before), "one fewer live high rule");
+
+    // And it still adds up afterwards, which is the property that matters.
+    for (slot, tally) in after.totals.iter().enumerate() {
+        let column: i64 = after.projects.iter().map(|p| p.by_severity[slot]).sum();
+        assert_eq!(column, tally.calls);
+    }
+}
+
+#[test]
+fn every_condition_a_rule_can_state_can_be_said_in_words() {
+    // Task 11.12's anti-drift property: the vocabulary and its description sit
+    // in one file, and a condition with no phrase fails here rather than
+    // rendering as a rule that looks like it checks nothing.
+    let every = rules::Match {
+        tools: vec!["Bash".into()],
+        kinds: vec!["mcp".into()],
+        decisions: vec!["accept".into()],
+        decision_sources: vec!["config".into()],
+        permission_modes: vec!["dontAsk".into()],
+        success: Some(false),
+        main_thread: Some(true),
+        first_line: true,
+        summary_contains: vec!["rm -rf".into()],
+        summary_glob: vec!["*curl*".into()],
+        path_glob: vec!["*id_rsa*".into()],
+        outside_cwd: true,
+        mode_changed: true,
+    };
+    let said = rules::describe(&every).join(" | ");
+    for needle in [
+        "Bash",
+        "mcp",
+        "accept",
+        "config",
+        "dontAsk",
+        "failed",
+        "main thread",
+        "first line",
+        "rm -rf",
+        "*curl*",
+        "*id_rsa*",
+        "working directory",
+        "permission mode changed",
+    ] {
+        assert!(said.contains(needle), "no phrase mentions {needle}: {said}");
+    }
+
+    // And the built-in set is all sayable, with nothing left blank.
+    for rule in rules::load(None).expect("rules") {
+        let conditions = rules::describe(&rule.r#match);
+        assert!(!conditions.is_empty(), "{} says nothing", rule.id);
+        assert!(
+            !conditions.iter().any(|c| c.contains("no conditions")),
+            "{} states no conditions and would match nothing",
+            rule.id
+        );
+    }
 }

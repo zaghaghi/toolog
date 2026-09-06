@@ -14,14 +14,22 @@ const state = {
   dismissed: [] as [string, string][],
   restored: [] as string[],
   extraCalls: [] as ToolCall[],
+  firstPage: [] as ToolCall[],
   asked: [] as [string, number][],
+  revealed: 0,
 };
 
 vi.mock("./bindings", () => ({
   risk: vi.fn(() => Promise.resolve(state.review)),
+  revealRules: vi.fn(() => {
+    state.revealed += 1;
+    return Promise.resolve(null);
+  }),
   ruleCalls: vi.fn((ruleId: string, page: { limit: number; offset: number }) => {
     state.asked.push([ruleId, page.offset]);
-    return Promise.resolve(state.extraCalls);
+    // The first page is what a finding used to carry; later pages are the
+    // drill-through past it.
+    return Promise.resolve(page.offset === 0 ? state.firstPage : state.extraCalls);
   }),
   dismissRule: vi.fn((ruleId: string, note: string) => {
     state.dismissed.push([ruleId, note]);
@@ -90,7 +98,9 @@ function finding(over: Partial<Finding> = {}): Finding {
     projects: ["/work/scratch"],
     first_at: Date.parse("2026-03-02T09:00:00Z"),
     last_at: Date.parse("2026-03-02T09:00:00Z"),
-    examples: [call()],
+    conditions: ["the tool is Bash", "the command's first line contains any of: rm -rf"],
+    from_user: false,
+    unattributed_calls: 0,
     dismissed: null,
     ...over,
   };
@@ -99,10 +109,15 @@ function finding(over: Partial<Finding> = {}): Finding {
 function review(over: Partial<RiskReview> = {}): RiskReview {
   return {
     findings: [finding()],
+    totals: [
+      { severity: "high", calls: 1, rules: 1 },
+      { severity: "medium", calls: 0, rules: 0 },
+      { severity: "low", calls: 0, rules: 0 },
+      { severity: "info", calls: 0, rules: 0 },
+    ],
     projects: [
       {
         project_path: "/work/scratch",
-        calls: 1,
         by_severity: [1, 0, 0, 0],
         rule_ids: ["auto-approved-destructive-bash"],
       },
@@ -113,6 +128,14 @@ function review(over: Partial<RiskReview> = {}): RiskReview {
   };
 }
 
+/** Let the pending promises run — a finding fetches its calls when opened. */
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 4; i += 1) {
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+};
+
 async function mount(data: RiskReview, onOpenCall: (id: string) => void = () => {}) {
   state.review = data;
   const view = new RiskView({ onNotice: () => {}, onOpenCall });
@@ -122,6 +145,8 @@ async function mount(data: RiskReview, onOpenCall: (id: string) => void = () => 
 
 beforeEach(() => {
   state.review = null;
+  state.firstPage = [call()];
+  state.revealed = 0;
   state.dismissed = [];
   state.restored = [];
   state.extraCalls = [];
@@ -137,8 +162,12 @@ describe("the exit criterion", () => {
     expect(head?.textContent).toContain("Destructive shell commands approved by a rule");
     expect(node.querySelector(".sev-chip")?.textContent).toBe("high");
 
-    // Open the finding, and the call behind it is right there.
+    // Open the finding, and the call behind it arrives.
     node.querySelector<HTMLButtonElement>(".finding-head")?.click();
+    await settle();
+    // Task 11.2: fetched on expand, not carried on all twelve findings.
+    expect(state.asked).toEqual([["auto-approved-destructive-bash", 0]]);
+
     const call = node.querySelector<HTMLButtonElement>(".finding-call");
     expect(call?.textContent).toContain("rm -rf /tmp/scratch");
 
@@ -148,25 +177,44 @@ describe("the exit criterion", () => {
 });
 
 describe("severity", () => {
-  test("findings are counted by severity, worst first", async () => {
+  test("the hero number is distinct calls, with the rule count under it", async () => {
+    // Task 11.7: the summary used to count *rules*, while the table counted
+    // (rule, project) pairs — so nothing added up. Both numbers are still
+    // worth having; only one of them can be the total.
     const node = await mount(
       review({
         findings: [
           finding(),
           finding({ rule_id: "mcp-tool-usage", severity: "info", title: "MCP tools", calls: 62 }),
         ],
+        totals: [
+          { severity: "high", calls: 1, rules: 1 },
+          { severity: "medium", calls: 0, rules: 0 },
+          { severity: "low", calls: 0, rules: 0 },
+          { severity: "info", calls: 62, rules: 1 },
+        ],
       }),
     );
     const counts = [...node.querySelectorAll(".risk-count")].map((n) => [
       n.querySelector(".risk-count-label")?.textContent,
       n.querySelector(".risk-count-n")?.textContent,
+      n.querySelector(".risk-count-rules")?.textContent,
     ]);
     expect(counts).toEqual([
-      ["high", "1"],
-      ["medium", "0"],
-      ["low", "0"],
-      ["info", "1"],
+      ["high", "1", "1 rule, 1 call"],
+      ["medium", "0", "0 rules, 0 calls"],
+      ["low", "0", "0 rules, 0 calls"],
+      ["info", "62", "1 rule, 62 calls"],
     ]);
+  });
+
+  test("says the four numbers do not add to a total, rather than letting it be found out", async () => {
+    // Task 11.9: each column reconciles with its own number; the four do not
+    // sum, because a call caught at two severities is one call at each.
+    const node = await mount(review());
+    expect(node.querySelector(".risk-summary")?.textContent).toContain(
+      "The four numbers do not add up to a total",
+    );
   });
 
   test("a session-scoped finding counts sessions, because it is about sessions", async () => {
@@ -236,25 +284,30 @@ describe("setting a rule aside", () => {
 });
 
 describe("the drill-through", () => {
-  test("offers the rest of the calls past the examples", async () => {
+  test("offers the rest of the calls past the first page", async () => {
     const node = await mount(review({ findings: [finding({ calls: 12 })] }));
     node.querySelector<HTMLButtonElement>(".finding-head")?.click();
+    await settle();
 
     const more = node.querySelector<HTMLButtonElement>(".finding-more");
-    expect(more?.textContent).toBe("Show the other 11");
+    expect(more?.textContent).toBe("Show the other 4");
 
     state.extraCalls = [call({ tool_use_id: "toolu_2", input_summary: "rm -rf build" })];
     more?.click();
-    await Promise.resolve();
-    await Promise.resolve();
+    await settle();
 
-    // Asked for the rule's own matches, from after the examples.
-    expect(state.asked).toEqual([["auto-approved-destructive-bash", 1]]);
+    // The rule's own matches, continuing from where the first page stopped —
+    // one source of truth for "which calls did this rule catch".
+    expect(state.asked).toEqual([
+      ["auto-approved-destructive-bash", 0],
+      ["auto-approved-destructive-bash", 8],
+    ]);
   });
 
-  test("no button when the examples are all of them", async () => {
+  test("no button when the first page is all of them", async () => {
     const node = await mount(review());
     node.querySelector<HTMLButtonElement>(".finding-head")?.click();
+    await settle();
     expect(node.querySelector(".finding-more")).toBeNull();
   });
 });
@@ -264,20 +317,123 @@ describe("per-project posture", () => {
     const node = await mount(review());
     const row = node.querySelector(".risk-projects tbody tr");
     expect(row?.querySelector("th")?.textContent).toBe("scratch");
+    // Four severity columns and no row total: a call caught at two severities
+    // is one call at each, so a row total would not be one either.
     const cells = [...(row?.querySelectorAll("td") ?? [])].map((c) => c.textContent);
-    expect(cells).toEqual(["1", "—", "—", "—", "1"]);
+    expect(cells).toEqual(["1", "—", "—", "—"]);
+  });
+
+  test("gives calls with no recorded project a row of their own", async () => {
+    // Task 11.8: these were dropped from the table and counted in the summary,
+    // which is half of why the two could not be made to agree.
+    const node = await mount(
+      review({
+        totals: [
+          { severity: "high", calls: 2, rules: 1 },
+          { severity: "medium", calls: 0, rules: 0 },
+          { severity: "low", calls: 0, rules: 0 },
+          { severity: "info", calls: 0, rules: 0 },
+        ],
+        projects: [
+          {
+            project_path: "/work/scratch",
+            by_severity: [1, 0, 0, 0],
+            rule_ids: ["auto-approved-destructive-bash"],
+          },
+          {
+            project_path: null,
+            by_severity: [1, 0, 0, 0],
+            rule_ids: ["auto-approved-destructive-bash"],
+          },
+        ],
+      }),
+    );
+
+    const rows = [...node.querySelectorAll(".risk-projects tbody tr")];
+    expect(rows.at(-1)?.querySelector("th")?.textContent).toBe("No project recorded");
+
+    // And the column adds up to the number above it, which is the whole point.
+    const column = rows
+      .map((r) => Number(r.querySelector("td")?.textContent))
+      .reduce((a, b) => a + b, 0);
+    expect(column).toBe(2);
+  });
+});
+
+describe("the rules panel (tasks 11.11–11.13)", () => {
+  test("lists a rule that matched nothing, with what it looks for", async () => {
+    const node = await mount(
+      review({
+        findings: [finding({ rule_id: "curl-piped-to-a-shell", title: "Curl into a shell", calls: 0 })],
+        totals: [
+          { severity: "high", calls: 0, rules: 0 },
+          { severity: "medium", calls: 0, rules: 0 },
+          { severity: "low", calls: 0, rules: 0 },
+          { severity: "info", calls: 0, rules: 0 },
+        ],
+        projects: [],
+      }),
+    );
+
+    expect(node.querySelector(".finding-head")?.textContent).toContain("Curl into a shell");
+    node.querySelector<HTMLButtonElement>(".finding-head")?.click();
+    await settle();
+
+    // Its conditions are there whether or not it matched — that is the point.
+    expect(node.querySelector(".finding-conditions")?.textContent).toContain(
+      "the command's first line contains any of: rm -rf",
+    );
+    expect(node.textContent).toContain("This rule matched nothing in this store.");
+    // And nothing was fetched for it.
+    expect(state.asked).toEqual([]);
+  });
+
+  test("says a rule came from the user's file", async () => {
+    const node = await mount(review({ findings: [finding({ from_user: true })] }));
+    node.querySelector<HTMLButtonElement>(".finding-head")?.click();
+    await settle();
+    expect(node.querySelector(".kv")?.textContent).toContain("from your rules file");
+  });
+
+  test("opens the rules file rather than only naming it", async () => {
+    const node = await mount(review());
+    const buttons = [...node.querySelectorAll<HTMLButtonElement>(".rules-note button")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["Show the folder"]);
+    buttons[0]?.click();
+    expect(state.revealed).toBe(1);
   });
 });
 
 describe("nothing found", () => {
+  /** Every rule ran and none matched — which is not the same as no rules. */
+  const clean = () =>
+    review({
+      findings: [
+        finding({ calls: 0, projects: [] }),
+        finding({ rule_id: "curl-piped-to-a-shell", title: "Curl into a shell", calls: 0, projects: [] }),
+      ],
+      totals: [
+        { severity: "high", calls: 0, rules: 0 },
+        { severity: "medium", calls: 0, rules: 0 },
+        { severity: "low", calls: 0, rules: 0 },
+        { severity: "info", calls: 0, rules: 0 },
+      ],
+      projects: [],
+    });
+
   test("is a result, not an empty screen", async () => {
-    const node = await mount(review({ findings: [], projects: [] }));
+    const node = await mount(clean());
     expect(node.querySelector(".empty")?.textContent).toContain("No rule matched");
     expect(node.querySelector(".empty")?.textContent).toContain("That is a real result");
   });
 
+  test("still lists every rule, so 'clean' can be told from 'not looking'", async () => {
+    const node = await mount(clean());
+    expect(node.querySelectorAll(".finding")).toHaveLength(2);
+  });
+
   test("and still says where a rules file would go", async () => {
-    const node = await mount(review({ findings: [], projects: [] }));
+    const node = await mount(clean());
     expect(node.querySelector(".footnote")?.textContent).toContain("rules.toml");
   });
 });

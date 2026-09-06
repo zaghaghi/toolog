@@ -19,7 +19,7 @@ use toolog_cli::capture;
 use toolog_cli::commands::{self as cli, Format};
 use toolog_cli::prefs::Prefs;
 use toolog_core::model::{FileChange, Page, Session, TimelineFilter, ToolCall};
-use toolog_core::rules::{Finding, ProjectRisk};
+use toolog_core::rules::{Finding, ProjectRisk, SeverityTally};
 use toolog_core::{query, raw, rules};
 use ts_rs::TS;
 
@@ -80,17 +80,22 @@ fn line_at(path: &std::path::Path, offset: i64) -> std::io::Result<u32> {
     Ok(lines)
 }
 
-/// Everything the risk view opens with (tasks 6.3 and 6.4).
+/// Everything the risk view opens with (tasks 6.3, 6.4, 11.7–11.12).
 ///
-/// The findings and the per-project posture are computed in one pass over one
-/// rule set. Two commands would let the summary describe a different set of
-/// rules from the list below it, which is exactly the disagreement a review
-/// cannot have.
+/// The findings, the summary and the per-project table are computed in one
+/// pass over one rule set. Two commands would let the summary describe a
+/// different set of rules from the list below it, which is exactly the
+/// disagreement a review cannot have — and in v1.0 it did have one, because
+/// the summary counted rules and the table counted (rule, project) pairs.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export_to = "unused/")]
 pub(crate) struct RiskReview {
-    /// Worst first, dismissed findings kept in place and marked.
+    /// Every rule, worst first — including the ones that matched nothing
+    /// (task 11.11). Dismissed findings keep their place and are marked.
     pub(crate) findings: Vec<Finding>,
+    /// The four numbers the page opens with, in distinct calls flagged.
+    pub(crate) totals: Vec<SeverityTally>,
+    /// One row per project, whose severity columns add up to those numbers.
     pub(crate) projects: Vec<ProjectRisk>,
     /// Where a user rules file would go, whether or not one is there. The view
     /// says so, because "rules are data you can edit" is only true if you can
@@ -100,19 +105,51 @@ pub(crate) struct RiskReview {
     pub(crate) rules_customized: bool,
 }
 
+/// When the user's rules file was last written, or `None` if there is none.
+///
+/// One of the three things the memo is guarded by. "No file" is itself a state
+/// that can change — writing a rules file for the first time must retire the
+/// memo — so this is `Option<Option<_>>` collapsed: `None` means no file, and
+/// that is a value that compares unequal to any mtime.
+fn rules_mtime() -> Option<std::time::SystemTime> {
+    cli::rules_path()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok())
+}
+
+/// The review, computed or remembered (task 11.3).
+///
+/// Re-opening the tab with nothing newly captured issues one `PRAGMA
+/// data_version` and reads an atomic, rather than running twelve rules over
+/// the whole store. The pragma is read on the risk connection, which is the
+/// reason that connection exists: it reports commits by *other* connections,
+/// and would never move on the one doing the writing.
 fn risk_review(app: &AppState) -> anyhow::Result<RiskReview> {
+    let mtime = rules_mtime();
+    if let Some(cached) = app.cached_risk(mtime) {
+        return Ok(cached);
+    }
+
+    // Taken before the evaluation, so a write that lands while the rules run
+    // expires the memo rather than being stamped into it.
+    let watermark = app.risk_watermark()?;
     let path = cli::rules_path();
     let customized = path.as_ref().is_some_and(|p| p.is_file());
     let rules = cli::rules()?;
-    app.read(|c| {
+    let review = app.read_risk(|c| {
         let findings = rules::evaluate(c, &rules)?;
+        let reconciled = rules::reconcile(c, &rules, &findings)?;
         Ok(RiskReview {
-            projects: rules::by_project(c, &rules, &findings)?,
             findings,
+            totals: reconciled.totals,
+            projects: reconciled.projects,
             rules_path: path.map(|p| p.display().to_string()),
             rules_customized: customized,
         })
-    })
+    })?;
+
+    app.remember_risk(watermark, mtime, &review);
+    Ok(review)
 }
 
 /// What the first-run wizard and the Preferences pane show.
@@ -461,6 +498,7 @@ commands! {
                 .map_err(|e| anyhow::anyhow!("{e}"))?
                 .map_err(anyhow::Error::from)
         })?;
+        app.note_dismissal();
         risk_review(app)
     }
 
@@ -473,6 +511,7 @@ commands! {
                 .map_err(|e| anyhow::anyhow!("{e}"))?
                 .map_err(anyhow::Error::from)
         })?;
+        app.note_dismissal();
         risk_review(app)
     }
 
@@ -550,6 +589,25 @@ commands! {
         let dir = toolog_cli::logging::log_dir()?;
         std::fs::create_dir_all(&dir)?;
         window::reveal(&handle, &dir)
+    }
+
+    /// Show the rules file in the file manager (task 11.13).
+    ///
+    /// "Rules are data you can edit" is only true if you can find them, and a
+    /// footnote naming a path is not finding them. Where no file exists yet
+    /// this reveals the directory it would go in, which is the answer to the
+    /// question actually being asked.
+    reveal_rules() -> () {
+        let path = cli::rules_path()
+            .ok_or_else(|| anyhow::anyhow!("no rules file location on this machine"))?;
+        if path.is_file() {
+            return window::reveal(&handle, &path);
+        }
+        let dir = path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("the rules path has no directory"))?;
+        std::fs::create_dir_all(dir)?;
+        window::reveal(&handle, dir)
     }
 
     /// Show a transcript in the file manager.

@@ -15,6 +15,7 @@ numbered in the order decided, not in dependency order.
 | [0008](0008-local-only-zero-egress.md) | Local-only: loopback bind, zero egress, opt-in content capture | Accepted |
 | [0009](0009-correlate-on-tool-use-id.md) | Correlate on `tool_use_id`; treat lane disagreement as a finding | Accepted |
 | [0010](0010-no-cost-reporting.md) | toolog captures cost and does not report it | Accepted |
+| [0011](0011-memoize-the-risk-review.md) | Memoize the risk review in memory; never store findings | Accepted |
 
 ## The two that drive everything else
 

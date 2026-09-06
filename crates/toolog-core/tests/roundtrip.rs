@@ -586,3 +586,79 @@ fn a_refused_call_is_counted_even_when_both_lanes_saw_it() {
         "which rule denied it lives only in the OTLP lane"
     );
 }
+
+/// The assumption ADR-0011's memo rests on, asserted rather than described.
+///
+/// The risk review is cached in memory and retired by `PRAGMA data_version`.
+/// That is only sound if the pragma moves for every write that could change a
+/// finding — and, just as importantly, if it does **not** move for the writing
+/// connection's own write, which is why the review reads it on a connection of
+/// its own.
+#[test]
+fn data_version_moves_for_another_connections_writes_and_not_for_its_own() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("watermark.db");
+    let writer = Db::open(&path).expect("writer");
+    let reader = Db::open(&path).expect("reader");
+    let (w, r) = (writer.conn(), reader.conn());
+
+    let version = |c: &Connection| -> i64 {
+        c.query_row("PRAGMA data_version", [], |row| row.get(0))
+            .expect("pragma")
+    };
+
+    let start = version(r);
+    assert_eq!(version(r), start, "reading it does not move it");
+
+    let insert = |id: &str, at: i64| {
+        project::upsert_transcript(
+            w,
+            id,
+            &TranscriptFacts {
+                session_id: Some("s".into()),
+                tool_name: Some("Bash".into()),
+                called_at: Some(at),
+                ..TranscriptFacts::default()
+            },
+        )
+        .expect("insert");
+    };
+
+    insert("t1", 1_000);
+    let after_insert = version(r);
+    assert_ne!(after_insert, start, "an insert by the writer moves it");
+
+    // The case `max(rowid)` misses: the OTEL lane completing a row the
+    // transcript created, which is the arrival that adds the `decision` most
+    // of the risk rules read (ADR-0009).
+    project::upsert_otel(
+        w,
+        "t1",
+        &OtelFacts {
+            decision: Some("reject".into()),
+            ..OtelFacts::default()
+        },
+    )
+    .expect("otel");
+    let after_update = version(r);
+    assert_ne!(
+        after_update, after_insert,
+        "an update of an existing row moves it"
+    );
+
+    // The case the writer's update hook misses: it ignores SQLITE_DELETE.
+    w.execute("DELETE FROM tool_call WHERE tool_use_id = 't1'", [])
+        .expect("delete");
+    assert_ne!(version(r), after_update, "a delete moves it");
+
+    // And the property that makes a separate read connection necessary rather
+    // than merely tidy: a connection never sees its own writes here, so a memo
+    // guarded on the writing connection would never expire.
+    let before_own = version(w);
+    insert("t2", 2_000);
+    assert_eq!(
+        version(w),
+        before_own,
+        "a connection's own write must not move its own data_version"
+    );
+}

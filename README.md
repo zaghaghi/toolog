@@ -1,20 +1,23 @@
 # Toolog
 
-> **Status: v1.0 — all nine phases done.** The timeline is a virtualized list over every tool call
-> with full-text search, filters that live in the URL, diffs for every `Edit`, and export to JSON,
-> CSV or Markdown. The risk review runs rules written as data and drills through to the calls behind
-> each finding, and can notify on refusals and high-severity rule hits, off by default. And the
-> record earns its name: `toolog verify` says what it is missing and when nothing was watching,
-> `toolog verify --chain` shows it has not been altered, secrets are stripped from everything the
-> views show, and `toolog purge` bounds the store without deleting anything you have not seen listed
-> first. It ships as one signed, notarized universal artifact, and removes itself as carefully as it
-> installs: `toolog uninstall` puts `~/.claude/settings.json` back byte for byte and keeps your
-> history unless you say otherwise. See [docs/](docs/README.md).
+> **Status: v1.1 — all twelve phases done.** The timeline is a virtualized list over every tool
+> call, filtered and searched from one `@key:value` box, with an activity histogram you can drag a
+> time range out of, diffs for every `Edit`, a view that lives in the URL, and export to JSON, CSV
+> or Markdown. The risk review runs rules written as data, shows every rule and what it looks for
+> whether or not it matched, drills through to the calls behind each finding, and can notify on
+> refusals and high-severity rule hits, off by default. And the record earns its name: `toolog
+> verify` says what it is missing and when nothing was watching, `toolog verify --chain` shows it
+> has not been altered, secrets are stripped from everything the views show, and `toolog purge`
+> bounds the store without deleting anything you have not seen listed first. It ships as one signed,
+> notarized universal artifact, and removes itself as carefully as it installs: `toolog uninstall`
+> puts `~/.claude/settings.json` back byte for byte and keeps your history unless you say otherwise.
+> See [docs/](docs/README.md).
 >
-> **Next (v1.1, planned):** v1.0 shipped four views and two of them did not earn their place. The
-> usage analytics and the live tail are gone — toolog captures cost and reports none of it
-> ([ADR-0010](docs/adr/0010-no-cost-reporting.md)) — leaving three. Nothing in
-> [Phases 9–11](docs/README.md) is built yet.
+> **v1.1 is what living with v1.0 changed.** Four views turned out to be two too many: the usage
+> analytics and the live tail are gone, and toolog now captures cost and reports none of it
+> ([ADR-0010](docs/adr/0010-no-cost-reporting.md)). Seven filter dropdowns became one query box. And
+> the risk review went from 2.3 seconds to 95 ms, with a summary whose columns add up to it
+> ([ADR-0011](docs/adr/0011-memoize-the-risk-review.md)).
 
 A local audit trail for Claude Code tool calls.
 

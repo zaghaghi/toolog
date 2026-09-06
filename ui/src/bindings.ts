@@ -138,7 +138,20 @@ export type Dismissal = { rule_id: string, note: string, at: number, };
 
 export type Finding = { rule_id: string, title: string, explanation: string, severity: Severity, scope: Scope, 
 /**
- * How many calls the rule matched.
+ * What the rule looks for, in words (task 11.12).
+ *
+ * Rendered from [`Match`] by [`describe`], never written by hand: a
+ * description a person maintains beside a rule is a description that
+ * eventually describes a different rule.
+ */
+conditions: Array<string>, 
+/**
+ * Whether the user's rules file supplied or replaced this rule.
+ */
+from_user: boolean, 
+/**
+ * How many calls the rule matched. **Zero is a result**, not a reason to
+ * be left out (task 11.11).
  */
 calls: number, 
 /**
@@ -148,25 +161,56 @@ sessions: number,
 /**
  * Distinct projects those calls fall in.
  */
-projects: Array<string>, first_at: number | null, last_at: number | null, 
+projects: Array<string>, 
 /**
- * A handful of the matching calls, newest first, for the drill-through.
+ * Matched calls whose session the store never learned a project for.
+ *
+ * The number that used to vanish: [`reconcile`]'s table dropped these and
+ * the summary counted them, which is half of why the two disagreed (task
+ * 11.8). Carried here so the "no project recorded" row can name the rules
+ * behind it without a second pass over the store.
  */
-examples: Array<ToolCall>, 
+unattributed_calls: number, first_at: number | null, last_at: number | null, 
 /**
  * Set when someone has dismissed this rule, with what they said.
  */
 dismissed: Dismissal | null, };
 
-export type ProjectRisk = { project_path: string, calls: number, 
+export type ProjectRisk = { 
 /**
- * Findings by severity, worst first: high, medium, low, info.
+ * `None` is the **no project recorded** row.
+ *
+ * Those calls were dropped from this table and counted in the summary, so
+ * the two could not be made to agree (task 11.8). A session the store
+ * never learned a path for is a real row now, not a rounding error.
+ */
+project_path: string | null, 
+/**
+ * **Distinct calls flagged** at each severity, worst first: high, medium,
+ * low, info. A call two rules caught is one call.
  */
 by_severity: [number, number, number, number], 
 /**
  * The rules this project tripped, worst first.
  */
 rule_ids: Array<string>, };
+
+export type SeverityTally = { severity: Severity, 
+/**
+ * Distinct calls flagged by any live rule of this severity.
+ *
+ * The unit the table's column adds up to, exactly (task 11.7). It used to
+ * be a count of *rules*, while the table counted *(rule, project) pairs* —
+ * which is how one rule spanning three projects appeared three times.
+ */
+calls: number, 
+/**
+ * How many live rules of this severity matched anything.
+ *
+ * Kept as the secondary line under the number (task 11.10). Both are worth
+ * having; only one of them can be the total.
+ */
+rules: number, };
 
 export type Prefs = { 
 /**
@@ -251,9 +295,18 @@ body: string, };
 
 export type RiskReview = { 
 /**
- * Worst first, dismissed findings kept in place and marked.
+ * Every rule, worst first — including the ones that matched nothing
+ * (task 11.11). Dismissed findings keep their place and are marked.
  */
-findings: Array<Finding>, projects: Array<ProjectRisk>, 
+findings: Array<Finding>, 
+/**
+ * The four numbers the page opens with, in distinct calls flagged.
+ */
+totals: Array<SeverityTally>, 
+/**
+ * One row per project, whose severity columns add up to those numbers.
+ */
+projects: Array<ProjectRisk>, 
 /**
  * Where a user rules file would go, whether or not one is there. The view
  * says so, because "rules are data you can edit" is only true if you can
@@ -389,6 +442,10 @@ export function uninstallRun(deleteData: boolean): Promise<UninstallOutcome> {
 
 export function revealLogs(): Promise<null> {
   return invoke("reveal_logs");
+}
+
+export function revealRules(): Promise<null> {
+  return invoke("reveal_rules");
 }
 
 export function revealTranscript(path: string): Promise<null> {

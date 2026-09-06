@@ -553,16 +553,26 @@ pub fn risk(db: &Db) -> Result<Vec<toolog_core::rules::Finding>> {
 }
 
 /// Render findings the way a review is read: worst first, with examples.
-#[must_use]
-pub fn render_risk(findings: &[toolog_core::rules::Finding]) -> String {
+pub fn render_risk(db: &Db, findings: &[toolog_core::rules::Finding]) -> Result<String> {
     use std::fmt::Write as _;
+    use toolog_core::model::Page;
+
+    let rules = rules()?;
     let mut out = String::new();
 
-    if findings.is_empty() {
-        return "No rule matched anything in this store.\n".to_string();
+    // Phase 11 made `evaluate` return every rule, matching or not, so the
+    // window can show what it looks for. A terminal report is read top to
+    // bottom, so here the ones that found nothing are a closing line rather
+    // than twelve empty stanzas.
+    let (matched, quiet): (Vec<_>, Vec<_>) = findings.iter().partition(|f| f.calls > 0);
+    if matched.is_empty() {
+        return Ok(format!(
+            "No rule matched anything in this store. All {} ran.\n",
+            findings.len()
+        ));
     }
 
-    for f in findings {
+    for f in matched {
         let severity = format!("{:?}", f.severity).to_uppercase();
         let _ = writeln!(out, "[{severity}] {}", f.title);
         let _ = writeln!(
@@ -581,18 +591,41 @@ pub fn render_risk(findings: &[toolog_core::rules::Finding]) -> String {
         if let Some(d) = &f.dismissed {
             let _ = writeln!(out, "  dismissed: {}", d.note);
         }
-        for call in f.examples.iter().take(3) {
-            let summary = call
-                .input_summary
-                .as_deref()
-                .or(call.target_path.as_deref())
-                .unwrap_or("");
-            let summary: String = summary.chars().take(90).collect();
-            let _ = writeln!(out, "    {} {summary}", call.tool_use_id);
+        // Fetched rather than carried on the finding: a review that built
+        // eight example rows for every rule and read them for one was 8× the
+        // work for the reading (task 11.2). Three is what a terminal shows.
+        if let Some(rule) = rules.iter().find(|r| r.id == f.rule_id) {
+            let page = Page {
+                limit: 3,
+                offset: 0,
+            };
+            for call in toolog_core::rules::calls(db.conn(), rule, page)? {
+                let summary = call
+                    .input_summary
+                    .as_deref()
+                    .or(call.target_path.as_deref())
+                    .unwrap_or("");
+                let summary: String = summary.chars().take(90).collect();
+                let _ = writeln!(out, "    {} {summary}", call.tool_use_id);
+            }
         }
         let _ = writeln!(out);
     }
-    out
+
+    if !quiet.is_empty() {
+        let _ = writeln!(
+            out,
+            "{} of {} rules matched nothing: {}",
+            quiet.len(),
+            findings.len(),
+            quiet
+                .iter()
+                .map(|f| f.rule_id.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
