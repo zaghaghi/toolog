@@ -1,10 +1,14 @@
-//! The status page's uninstall section (task 8.6).
+//! The status page's uninstall section (task 8.6) and its notification
+//! switches (task 6.12, moved here by task 9.3).
 //!
-//! The one control in the window that destroys something, so what is asserted
-//! here is not that it works but that it is **hard to trigger by accident**:
-//! folded away, costing nothing until opened, with history kept unless a
-//! separate box is ticked, and never acting on a preview the disk has moved
-//! on from.
+//! What is asserted about uninstall is not that it works but that it is **hard
+//! to trigger by accident**: folded away, costing nothing until opened, with
+//! history kept unless a separate box is ticked, and never acting on a preview
+//! the disk has moved on from.
+//!
+//! The switches carry the assertions the deleted live view held: both start
+//! off, and turning one on sends the whole `Prefs` back rather than a patch —
+//! it is the resident process that acts on them, and it reads the file.
 
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -38,6 +42,14 @@ const uninstallRun = vi.fn(
     Promise.resolve({ done: ["Removed the login agent"], failed: [] }),
 );
 
+interface Prefs {
+  notify_refusals: boolean;
+  notify_high_risk: boolean;
+  redact_evidence: boolean;
+  excluded_projects: string[];
+}
+const setPrefs = vi.fn((prefs: Prefs) => Promise.resolve(prefs));
+
 vi.mock("./bindings", () => ({
   doctorStatus: vi.fn(() => Promise.resolve(doctor)),
   collectorStatus: vi.fn(() =>
@@ -58,7 +70,7 @@ vi.mock("./bindings", () => ({
       excluded_projects: [],
     }),
   ),
-  setPrefs: vi.fn(),
+  setPrefs,
   applyDoctorFix: vi.fn(),
   runBackfill: vi.fn(),
   setLoginAgent: vi.fn(),
@@ -157,5 +169,53 @@ describe("the uninstall section", () => {
 
     const problem = details.querySelector(".problem");
     expect(problem?.textContent).toBe("Could not write settings");
+  });
+});
+
+describe("the notification switches (task 9.3)", () => {
+  beforeEach(() => {
+    setPrefs.mockClear();
+  });
+
+  /** The two notification boxes, in the order the page draws them. */
+  function switches(node: HTMLElement): HTMLInputElement[] {
+    return [...node.querySelectorAll<HTMLInputElement>("input[id^='pref-notify']")];
+  }
+
+  test("are on the status page, both off, and both enabled once prefs arrive", async () => {
+    const node = await mount();
+    const boxes = switches(node);
+
+    expect(boxes.map((b) => b.id)).toEqual(["pref-notify_refusals", "pref-notify_high_risk"]);
+    expect(boxes.every((b) => !b.checked)).toBe(true);
+    expect(boxes.every((b) => !b.disabled)).toBe(true);
+  });
+
+  test("turning one on sends the whole Prefs, leaving the other alone", async () => {
+    const node = await mount();
+    const [refusals] = switches(node);
+
+    refusals!.checked = true;
+    refusals!.dispatchEvent(new Event("change"));
+    await settle();
+
+    expect(setPrefs).toHaveBeenCalledWith({
+      notify_refusals: true,
+      notify_high_risk: false,
+      redact_evidence: false,
+      excluded_projects: [],
+    });
+  });
+
+  test("a switch that could not be saved goes back to what the store holds", async () => {
+    setPrefs.mockImplementationOnce(() => Promise.reject(new Error("disk full")));
+    const node = await mount();
+    const [, highRisk] = switches(node);
+
+    highRisk!.checked = true;
+    highRisk!.dispatchEvent(new Event("change"));
+    await settle();
+
+    expect(highRisk!.checked).toBe(false);
   });
 });

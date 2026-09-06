@@ -15,6 +15,11 @@ The application is, structurally, four views over one table: a virtualized timel
 list, a small set of charts, and a live tail. It needs a menu-bar presence and must stay resident
 so the OTLP listener is up whenever Claude Code runs (see ADR-0007).
 
+> **Phase 9: three views, not four.** The charts and the live tail were removed after use — see
+> [ADR-0010](0010-no-cost-reporting.md) and [Phase 9](../phases/09-subtraction.md). This changes
+> nothing here except to make the argument shorter: three views over a table justify a heavy
+> component framework even less than four did.
+
 Three candidates were weighed.
 
 **Tauri 2** — mature and stable, with official plugins (`autostart`, `single-instance`,
@@ -37,8 +42,8 @@ work to escape, and "beautiful" is an explicit requirement rather than a nice-to
 
 **Use Tauri 2.**
 
-The frontend is TypeScript with Vite and no heavy component framework — the UI is four views over a
-table, and keeping the dependency surface small keeps the bundle and the `.app` honest.
+The frontend is TypeScript with Vite and no heavy component framework — the UI is a few views over
+a table, and keeping the dependency surface small keeps the bundle and the `.app` honest.
 
 ## Consequences
 

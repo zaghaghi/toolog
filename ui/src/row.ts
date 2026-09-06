@@ -13,7 +13,7 @@
 
 import type { AgentGroup, SessionGroup, TimelineRow } from "./bindings";
 import { el, orDash, span } from "./dom";
-import { basename, clock, cost, count, duration, EM_DASH, fullStamp, lanes } from "./format";
+import { basename, clock, count, duration, EM_DASH, fullStamp, lanes } from "./format";
 import type { RowBlock } from "./plan";
 
 /** The delimiters `snippet()` puts around a match — see `query::MATCH_OPEN`. */
@@ -196,7 +196,6 @@ export function renderSessionHeader(group: SessionGroup, collapsed: boolean): HT
     parts.push(`${clock(group.first_at)}–${clock(group.last_at)}`);
     parts.push(duration(group.last_at - group.first_at));
   }
-  parts.push(group.cost_usd_micros === null ? "no cost recorded" : cost(group.cost_usd_micros));
 
   node.append(
     span("caret", collapsed ? "›" : "‹"),

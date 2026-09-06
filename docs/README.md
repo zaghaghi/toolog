@@ -1,16 +1,21 @@
 # Documentation
 
-**Status: all nine phases complete — this is v1.0.** Capture works end to end, all four views are
-built, and the record earns the word "audit": it says what it is missing, proves it has not been
-altered, keeps secrets out of what it shows, bounds itself, and fails the build if anything tries
-to leave the machine. It now also installs and uninstalls as one signed, notarized universal
-artifact — and ships with **no network call at all**, the update check ADR-0008 had reserved
-having been evaluated in Phase 8 and declined.
+**Status: v1.0 shipped, and Phase 9 has landed on top of it.** Capture works end to end and the
+record earns the word "audit": it says what it is missing, proves it has not been altered, keeps
+secrets out of what it shows, bounds itself, and fails the build if anything tries to leave the
+machine. It installs and uninstalls as one signed, notarized universal artifact — and ships with
+**no network call at all**, the update check ADR-0008 had reserved having been evaluated in Phase 8
+and declined.
+
+**v1.1 is in progress.** Living with v1.0 found four of its views to be two too many, and the risk
+review — the one worth keeping — to be slow and self-contradictory. Phase 9 has taken the two views
+away; Phases 10 and 11 are planned and not started.
 
 ## Phases
 
-Nine phases. Each ends in something runnable and checkable. **Phase 5 was the first usable release
-(v0.1); Phase 8 is v1.0.**
+Nine phases shipped v1.0. Three more are the revision after living with it, of which **Phase 9 is
+done and 10–11 are not started**. Each phase ends in something runnable and checkable. **Phase 5 was
+the first usable release (v0.1); Phase 8 is v1.0; Phase 11 is v1.1.**
 
 | Phase | Goal | Milestone |
 |---|---|---|
@@ -23,6 +28,15 @@ Nine phases. Each ends in something runnable and checkable. **Phase 5 was the fi
 | [06 — Risk, analytics & live](phases/06-risk-analytics-live.md) | The other three surfaces | done |
 | [07 — Privacy, retention, integrity](phases/07-privacy-retention-integrity.md) | Earn the word "audit" | done |
 | [08 — Packaging & distribution](phases/08-packaging-distribution.md) | Dead simple install | **v1.0** — done |
+| [09 — Subtraction](phases/09-subtraction.md) | The usage and live views are removed | done |
+| [10 — One lens](phases/10-one-lens.md) | The timeline's query bar, histogram and closable pane | planned |
+| [11 — Risk, fast and legible](phases/11-risk-fast-and-legible.md) | A review that is fast, adds up, and can be read | **v1.1** — planned |
+
+Phases 9–11 come from the owner's report after using v1.0: two views did not earn their place, the
+timeline asks the reader to work too hard, and the risk view — the one that is good — is slow, does
+not reconcile with itself, and never shows what its rules actually look for. Phase 9 stated the
+decisions those three phases rest on and removed the two views; the window now has three tabs —
+Timeline, Risk, Status.
 
 ## Releasing
 
@@ -31,7 +45,7 @@ and the clean-machine check that is the only real proof of the Phase 8 exit crit
 
 ## Decisions
 
-See [docs/adr/](adr/README.md) — nine ADRs, each with the alternative it rejected and why.
+See [docs/adr/](adr/README.md) — ten ADRs, each with the alternative it rejected and why.
 
 ## Facts the design rests on
 
@@ -74,8 +88,11 @@ can be looked at in a browser without driving the window.
 | Page | What it pins |
 |---|---|
 | [timeline.html](design/timeline.html) | Row anatomy, the detail pane, the states a list can be in (task 5.2) |
-| [analytics.html](design/analytics.html) | Chart forms and mark geometry, at the numbers a real store produces (task 6.6) |
 
-Both are worth opening after a change to `ui/src/styles/`. Neither replaces looking at the
+`analytics.html` pinned the chart forms and their mark geometry; it went with the view it described
+(task 9.8). The column chart it also pinned survives in `ui/src/chart.ts` for Phase 10's histogram,
+and [Phase 10](phases/10-one-lens.md) puts it back on the timeline mockup.
+
+The page is worth opening after a change to `ui/src/styles/`. It does not replace looking at the
 application: a `file://` page has no Content Security Policy, and the window does — which is how a
 chart came to render correctly in Chrome and not at all in the app.

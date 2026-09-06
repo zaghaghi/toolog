@@ -1,17 +1,20 @@
 # Toolog
 
-> **Status: v1.0 — all nine phases done.** All four views are built. The timeline is a virtualized list
-> over every tool call with full-text search, filters that live in the URL, diffs for every `Edit`,
-> and export to JSON, CSV or Markdown. The risk review runs rules written as data and drills through
-> to the calls behind each finding. Usage analytics report cost, tokens, latency and active time —
-> and say plainly which sessions the cost lane actually saw. The live view shows concurrent sessions
-> as lanes with a running cost meter, and can notify on refusals and high-severity rule hits, off by
-> default. And the record earns its name: `toolog verify` says what it is missing and when nothing
-> was watching, `toolog verify --chain` shows it has not been altered, secrets are stripped from
-> everything the views show, and `toolog purge` bounds the store without deleting anything you have
-> not seen listed first. It ships as one signed, notarized universal artifact, and removes itself
-> as carefully as it installs: `toolog uninstall` puts `~/.claude/settings.json` back byte for
-> byte and keeps your history unless you say otherwise. See [docs/](docs/README.md).
+> **Status: v1.0 — all nine phases done.** The timeline is a virtualized list over every tool call
+> with full-text search, filters that live in the URL, diffs for every `Edit`, and export to JSON,
+> CSV or Markdown. The risk review runs rules written as data and drills through to the calls behind
+> each finding, and can notify on refusals and high-severity rule hits, off by default. And the
+> record earns its name: `toolog verify` says what it is missing and when nothing was watching,
+> `toolog verify --chain` shows it has not been altered, secrets are stripped from everything the
+> views show, and `toolog purge` bounds the store without deleting anything you have not seen listed
+> first. It ships as one signed, notarized universal artifact, and removes itself as carefully as it
+> installs: `toolog uninstall` puts `~/.claude/settings.json` back byte for byte and keeps your
+> history unless you say otherwise. See [docs/](docs/README.md).
+>
+> **Next (v1.1, planned):** v1.0 shipped four views and two of them did not earn their place. The
+> usage analytics and the live tail are gone — toolog captures cost and reports none of it
+> ([ADR-0010](docs/adr/0010-no-cost-reporting.md)) — leaving three. Nothing in
+> [Phases 9–11](docs/README.md) is built yet.
 
 A local audit trail for Claude Code tool calls.
 
@@ -20,8 +23,8 @@ no way to answer *"what did the agent actually do, when, in which repo, and who 
 without scrolling a terminal that has already gone.
 
 Toolog captures every tool call, stores it in an embedded database on your machine, and gives you
-four views over it: a forensic timeline, permission and risk review, usage analytics, and live
-session monitoring.
+three views over it: a forensic timeline, a permission and risk review, and the state of capture
+itself.
 
 ## Nothing leaves your machine
 
@@ -51,7 +54,7 @@ Two ingestion lanes, because neither is complete alone:
 └──────────────┘        ▲                       │  transcript tailer         │
                         │ fsevents tail         │  normalizer + joiner       │
                         └───────────────────────┼─ SQLite (WAL + FTS5)       │
-                                                │  WebView UI (4 views)      │
+                                                │  WebView UI (3 views)      │
                                                 └────────────────────────────┘
 ```
 
@@ -59,9 +62,9 @@ Two ingestion lanes, because neither is complete alone:
 truncates tool inputs at 512 characters, which is not evidence.
 
 **OTEL** carries what transcripts never record: **who approved or refused each call, and under
-which rule**, how long it took, and what it cost. A refused call does appear in the transcript — but
-only as a sentence inside a result body, with nothing to query. `decision` and `decision_source`
-exist in one place.
+which rule**, and how long it took. A refused call does appear in the transcript — but only as a
+sentence inside a result body, with nothing to query. `decision` and `decision_source` exist in one
+place.
 
 The two are joined exactly on `tool_use_id`, and where they disagree, that is a finding rather than
 an inconsistency to paper over: a call only the transcript saw is a gap in collection, and a call
@@ -136,7 +139,6 @@ The window is TypeScript compiled by Vite and **embedded in the binary**, so it 
 | `toolog verify --chain` | Walk the integrity chain over stored evidence, and print its head |
 | `toolog purge` | Show what retention would remove. `--apply` to remove it |
 | `toolog risk` | Evaluate the risk rules: what got approved, and how |
-| `toolog usage` | What was run, what it cost, and how much of that is known |
 | `toolog export` | JSON, JSONL, CSV or Markdown, with filters |
 | `toolog agent install` | A login agent so capture survives a restart |
 | `toolog uninstall` | Undo the install. Restores `settings.json`; keeps your history |
@@ -151,11 +153,14 @@ your existing telemetry pipeline is not ours to redirect. See
 - **macOS only.** Linux `.AppImage`/`.deb` was a Phase 8 stretch goal and was cut, not
   attempted. Nothing in the code assumes macOS except the LaunchAgent, so the port is open —
   it would need a systemd user unit for both the install and the uninstall path.
-- **Cost, tokens and latency exist only for sessions captured live.** They arrive on the OTEL
+- **Decisions and latency exist only for sessions captured live.** They arrive on the OTEL
   lane, which is not replayable: a session that ran while toolog was not listening has its
-  commands and results, from the transcript, and no decision or cost layer ever. `toolog
-  verify` reports exactly which sessions those are and over what windows, rather than
-  averaging across a gap as if it were not there.
+  commands and results, from the transcript, and no decision layer ever. `toolog verify`
+  reports exactly which sessions those are and over what windows, rather than averaging
+  across a gap as if it were not there.
+- **Cost is captured and never shown.** `api_request` records are stored and counted, and
+  nothing in the window or the CLI reports spend or tokens. That is a scope decision, not an
+  omission — see [ADR-0010](docs/adr/0010-no-cost-reporting.md).
 - **Quitting from the menu bar stops capture**, and it is meant to — the LaunchAgent restarts a
   crash but respects a deliberate exit. Anything Claude Code runs while toolog is quit is
   recoverable from transcripts by a later `toolog backfill`, minus the decision layer above.

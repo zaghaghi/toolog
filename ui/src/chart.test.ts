@@ -1,13 +1,18 @@
 //! The chart primitives, against the rules they were built to (task 6.6).
 //!
 //! These are the checks the `dataviz` procedure makes falsifiable: axis ticks
-//! land on round numbers, every plot has a real table behind it, a zero is
-//! drawn as a zero rather than as absence, and a value nobody measured is a
-//! dash rather than an empty track.
+//! land on round numbers, every plot has a real table behind it, and a zero is
+//! drawn as a zero rather than as absence.
+//!
+//! The last two cases are the ones task 9.6 would not let go of. A `style`
+//! **attribute** is discarded by the window's Content Security Policy and the
+//! mark then renders at its natural size — silently, and in the application
+//! only, which cost Phase 6 a day. And a chart's labels come out of a
+//! transcript, so they are data.
 
 import { describe, expect, test } from "vitest";
 
-import { barChart, columnChart, dataTable, meter, scaleTop, statTile, ticks } from "./chart";
+import { columnChart, scaleTop, ticks } from "./chart";
 
 describe("ticks", () => {
   test("land on numbers a reader does not have to do arithmetic on", () => {
@@ -124,103 +129,6 @@ describe("a column chart", () => {
   });
 });
 
-describe("a bar chart", () => {
-  const spec = {
-    title: "Tools by use",
-    columns: ["Tool", "Calls"] as [string, string],
-    format: (v: number) => String(v),
-    data: [
-      { key: "Bash", value: 40 },
-      { key: "Read", value: 10 },
-    ],
-  };
-
-  test("labels the value at the tip rather than inside the bar", () => {
-    const node = barChart(spec);
-    const row = node.querySelector<HTMLElement>(".chart-bar-row");
-    expect(row?.querySelector(".chart-bar-value")?.textContent).toBe("40");
-    // Nothing is written inside the mark, so nothing can be clipped by it.
-    expect(row?.querySelector(".chart-bar-mark")?.textContent).toBe("");
-  });
-
-  test("scales bars against the same axis top", () => {
-    const node = barChart(spec);
-    const marks = node.querySelectorAll<HTMLElement>(".chart-bar-mark");
-    expect(marks[0]?.style.width).toBe("100.00%");
-    expect(marks[1]?.style.width).toBe("25.00%");
-  });
-});
-
-describe("a meter", () => {
-  test("shows a fraction of its track", () => {
-    const node = meter({ label: "Cache hits", ratio: 0.75, value: "75.0%" });
-    expect(node.querySelector<HTMLElement>(".meter-fill")?.style.width).toBe("75%");
-    expect(node.querySelector(".meter-value")?.textContent).toBe("75.0%");
-  });
-
-  test("an unmeasured ratio has no fill and says why", () => {
-    const node = meter({
-      label: "Cache hits",
-      ratio: null,
-      value: "—",
-      note: "No token counts in this period.",
-    });
-    expect(node.querySelector(".meter-fill")).toBeNull();
-    expect(node.querySelector(".meter-track")?.className).toContain("empty");
-    expect(node.querySelector(".meter-note")?.textContent).toContain("No token counts");
-  });
-});
-
-describe("a stat tile", () => {
-  test("colours a delta only when the direction means something", () => {
-    const neutral = statTile({
-      label: "Tool calls",
-      value: "1,284",
-      delta: { text: "12% vs the period before", direction: "up", tone: "neutral" },
-    });
-    expect(neutral.querySelector(".tile-delta")?.className).toContain("neutral");
-    expect(neutral.querySelector(".tile-delta")?.textContent).toContain("↑");
-
-    const bad = statTile({
-      label: "Error rate",
-      value: "4.0%",
-      delta: { text: "50% vs the period before", direction: "up", tone: "bad" },
-    });
-    expect(bad.querySelector(".tile-delta")?.className).toContain("bad");
-  });
-
-  test("a trend is a sparkline, and one point is not a trend", () => {
-    const withTrend = statTile({ label: "Calls per minute", value: "3", trend: [1, 2, 3] });
-    expect(withTrend.querySelector(".spark-line")?.getAttribute("points")).toBeTruthy();
-
-    const tooShort = statTile({ label: "Calls per minute", value: "3", trend: [3] });
-    expect(tooShort.querySelector(".spark")).toBeNull();
-  });
-});
-
-describe("a data table", () => {
-  test("puts the first column in a row header and the rest in cells", () => {
-    const node = dataTable({
-      title: "Models",
-      head: ["Model", "Requests"],
-      rows: [["claude-opus-5", "12"]],
-    });
-    expect(node.querySelector("tbody th")?.textContent).toBe("claude-opus-5");
-    expect(node.querySelector("tbody td")?.textContent).toBe("12");
-  });
-
-  test("an empty table says what is missing", () => {
-    const node = dataTable({
-      title: "Models",
-      head: ["Model"],
-      rows: [],
-      empty: "Nothing was captured live.",
-    });
-    expect(node.querySelector(".chart-empty")?.textContent).toBe("Nothing was captured live.");
-    expect(node.querySelector("table")).toBeNull();
-  });
-});
-
 describe("the content security policy", () => {
   test("a mark's size is set on the element, never as a style attribute", () => {
     // `style-src 'self'` discards a `style` attribute and the bar then renders
@@ -237,33 +145,18 @@ describe("the content security policy", () => {
     for (const mark of node.querySelectorAll<HTMLElement>(".chart-col-mark")) {
       expect(mark.style.height).not.toBe("");
     }
-
-    const bars = barChart({
-      title: "Tools",
-      format: (v) => String(v),
-      data: [
-        { key: "Bash", value: 40 },
-        { key: "Read", value: 10 },
-      ],
-    });
-    for (const mark of bars.querySelectorAll<HTMLElement>(".chart-bar-mark")) {
-      expect(mark.style.width).not.toBe("");
-    }
-
-    const gauge = meter({ label: "Cache hits", ratio: 0.5, value: "50%" });
-    expect(gauge.querySelector<HTMLElement>(".meter-fill")?.style.width).toBe("50%");
   });
 });
 
 describe("untrusted labels", () => {
   test("a key that looks like markup is text, not markup", () => {
     // Tool names and project paths come from a transcript, so they are data.
-    const node = barChart({
-      title: "Tools",
+    const node = columnChart({
+      title: "Calls",
       format: (v) => String(v),
       data: [{ key: "<img src=x onerror=alert(1)>", value: 1 }],
     });
     expect(node.querySelector("img")).toBeNull();
-    expect(node.querySelector(".chart-bar-key")?.textContent).toBe("<img src=x onerror=alert(1)>");
+    expect(node.querySelector(".chart-xtick")?.textContent).toBe("<img src=x onerror=alert(1)>");
   });
 });

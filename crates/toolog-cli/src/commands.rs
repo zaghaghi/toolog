@@ -7,7 +7,6 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use toolog_core::analytics;
 use toolog_core::model::{Page, TimelineFilter, ToolCall};
 use toolog_core::{Connection, Db, Result, project, query};
 use toolog_ingest::Backfill;
@@ -110,6 +109,11 @@ pub fn render_verify(c: &toolog_core::verify::Completeness) -> String {
         out,
         "\n  refused         {:>8}   calls a permission rule or a person denied",
         r.rejected
+    );
+    let _ = writeln!(
+        out,
+        "  API requests    {:>8}   the OTLP lane's other half, captured and not displayed",
+        c.api_requests
     );
 
     if let Some(ratio) = c.decided_ratio() {
@@ -588,214 +592,6 @@ pub fn render_risk(findings: &[toolog_core::rules::Finding]) -> String {
         }
         let _ = writeln!(out);
     }
-    out
-}
-
-// ---------------------------------------------------------------------------
-// Usage (tasks 6.5-6.8)
-// ---------------------------------------------------------------------------
-
-/// Everything `toolog usage` reports, in one pass over one window.
-#[derive(Debug)]
-pub struct UsageReport {
-    pub analytics: analytics::Analytics,
-    pub comparison: analytics::Comparison,
-}
-
-/// Resolve `--days` and `--project` into a window.
-///
-/// Days back from now rather than calendar days, and absolute once resolved,
-/// for the same reason the UI's presets are: a window that means something
-/// different tomorrow is not a window a report can be checked against.
-#[must_use]
-pub fn usage_window(days: Option<u32>, project: Option<String>) -> analytics::Period {
-    let now = jiff::Zoned::now();
-    let since = days.map(|d| now.timestamp().as_millisecond() - i64::from(d) * 86_400_000);
-    analytics::Period {
-        since,
-        until: since.map(|_| now.timestamp().as_millisecond()),
-        project_path: project,
-        utc_offset_minutes: now.offset().seconds() / 60,
-    }
-}
-
-/// Compute the report.
-pub fn usage(db: &Db, window: &analytics::Period) -> Result<UsageReport> {
-    Ok(UsageReport {
-        analytics: analytics::analytics(db.conn(), window)?,
-        comparison: analytics::compare(db.conn(), window)?,
-    })
-}
-
-/// A cost in micro-dollars.
-///
-/// Sub-cent spend was still *measured*, so it must not render as `$0.00`: the
-/// only thing in this report that means "not measured" is the words.
-fn money(micros: i64) -> String {
-    if micros > 0 && micros < 10_000 {
-        return "<$0.01".to_string();
-    }
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "micro-dollars for display; a 2^53 total would be $9bn"
-    )]
-    let dollars = micros as f64 / 1_000_000.0;
-    format!("${dollars:.2}")
-}
-
-/// A ratio as a percentage, or a dash when nothing was measured.
-fn pct(ratio: Option<f64>) -> String {
-    ratio.map_or_else(|| "—".to_string(), |r| format!("{:.1}%", r * 100.0))
-}
-
-/// A duration, or a dash when the OTLP lane never timed these calls.
-fn ms(value: Option<i64>) -> String {
-    value.map_or_else(|| "—".to_string(), |v| format!("{v} ms"))
-}
-
-/// Render the report the way it is read: headline first, then where it went.
-///
-/// Cost has three states here, not two. `not captured` is not `$0.00`, and the
-/// coverage line says which of the two this store is in (task 6.8).
-#[must_use]
-pub fn render_usage(report: &UsageReport) -> String {
-    use std::fmt::Write as _;
-    let a = &report.analytics;
-    let mut out = String::new();
-
-    if a.calls.calls == 0 {
-        return "No calls in this window.\n".to_string();
-    }
-
-    let mins = |ms: i64| {
-        let minutes = ms / 60_000;
-        if minutes < 60 {
-            format!("{minutes}m")
-        } else {
-            format!("{}h {:02}m", minutes / 60, minutes % 60)
-        }
-    };
-
-    let _ = writeln!(
-        out,
-        "{} in {} across {}, {} active",
-        plural(a.calls.calls, "call"),
-        plural(a.calls.sessions, "session"),
-        plural(a.calls.projects, "project"),
-        mins(a.calls.active_ms),
-    );
-    let _ = writeln!(
-        out,
-        "  {} failed of {} with a recorded outcome ({}), {} refused",
-        a.calls.failures,
-        a.calls.with_outcome,
-        pct(a.calls.error_rate),
-        a.calls.refused,
-    );
-    let _ = writeln!(
-        out,
-        "  p50 {}, p95 {}, {} from subagents",
-        ms(a.calls.p50_ms),
-        ms(a.calls.p95_ms),
-        pct(a.calls.sidechain_share),
-    );
-
-    if a.coverage.measured {
-        let _ = writeln!(
-            out,
-            "\n{} over {} requests, {} tokens, {} from cache",
-            money(a.cost.cost_usd_micros),
-            a.cost.requests,
-            a.cost.total_tokens,
-            pct(a.cost.cache_hit_ratio),
-        );
-    } else {
-        let _ = writeln!(out, "\nNo cost captured.");
-    }
-    if !a.coverage.complete {
-        let _ = writeln!(
-            out,
-            "  Cost covers {} of {} sessions ({} of {} calls). The rest were \
-             imported from transcripts, which record no cost.",
-            a.coverage.sessions_with_cost,
-            a.coverage.sessions,
-            a.coverage.calls_with_cost,
-            a.coverage.calls,
-        );
-    }
-
-    if let (Some(previous), Some(window)) = (
-        &report.comparison.previous,
-        &report.comparison.previous_window,
-    ) {
-        let _ = writeln!(
-            out,
-            "\nAgainst the period before ({}, {}, {}):",
-            plural(previous.calls, "call"),
-            plural(previous.sessions, "session"),
-            if previous.sessions_with_cost > 0 {
-                money(previous.cost_usd_micros)
-            } else {
-                "no cost captured".to_string()
-            },
-        );
-        let _ = writeln!(
-            out,
-            "  {} to {}",
-            stamp(window.since),
-            stamp(report.comparison.current_window.since),
-        );
-    }
-
-    out.push_str(&render_breakdowns(a));
-    out
-}
-
-/// The three "where it went" tables.
-fn render_breakdowns(a: &analytics::Analytics) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::new();
-
-    let _ = writeln!(out, "\nBy project");
-    for bucket in a.by_project.iter().take(10) {
-        let _ = writeln!(
-            out,
-            "  {:<40} {:>6} calls  {:>12}",
-            bucket.key.as_deref().unwrap_or("(unknown)"),
-            bucket.calls,
-            if bucket.requests > 0 {
-                money(bucket.cost_usd_micros)
-            } else {
-                "not captured".to_string()
-            },
-        );
-    }
-
-    if !a.by_model.is_empty() {
-        let _ = writeln!(out, "\nBy model");
-        for bucket in &a.by_model {
-            let _ = writeln!(
-                out,
-                "  {:<40} {:>6} reqs   {:>12}",
-                bucket.key.as_deref().unwrap_or("(unknown)"),
-                bucket.requests,
-                money(bucket.cost_usd_micros),
-            );
-        }
-    }
-
-    let _ = writeln!(out, "\nBy tool");
-    for tool in a.tools.iter().take(10) {
-        let _ = writeln!(
-            out,
-            "  {:<40} {:>6} calls  {:>4} failed  p50 {}",
-            tool.tool_name,
-            tool.calls,
-            tool.failures,
-            ms(tool.p50_ms),
-        );
-    }
-
     out
 }
 
@@ -1331,45 +1127,6 @@ mod tests {
         let n = export(db.conn(), &rejected_only(), None, Format::Jsonl, &mut out).expect("export");
         assert_eq!(n, 1, "a refusal is a decision, not a provenance");
         assert!(String::from_utf8(out).expect("utf8").contains("toolu_no"));
-    }
-
-    /// Task 6.8 as an assertion on the words, not on a number: a store with no
-    /// cost data must not be rendered as one that cost nothing.
-    #[test]
-    fn a_store_with_no_cost_says_so_rather_than_reporting_zero() {
-        let db = seeded();
-        let window = usage_window(None, None);
-        let report = usage(&db, &window).expect("usage");
-        let text = render_usage(&report);
-
-        assert!(text.contains("No cost captured."), "{text}");
-        assert!(!text.contains("$0.00"), "{text}");
-        assert!(
-            text.contains("imported from transcripts, which record no cost"),
-            "{text}"
-        );
-    }
-
-    #[test]
-    fn an_empty_window_reports_nothing_rather_than_a_table_of_zeroes() {
-        let db = Db::open_in_memory().expect("db");
-        let report = usage(&db, &usage_window(Some(7), None)).expect("usage");
-        assert_eq!(render_usage(&report), "No calls in this window.\n");
-    }
-
-    #[test]
-    fn a_window_of_days_is_absolute_once_resolved() {
-        let bounded = usage_window(Some(7), Some("/work/app".to_string()));
-        let since = bounded.since.expect("since");
-        let until = bounded.until.expect("until");
-        assert_eq!(until - since, 7 * 86_400_000);
-        assert_eq!(bounded.project_path.as_deref(), Some("/work/app"));
-
-        let all = usage_window(None, None);
-        assert!(
-            all.since.is_none() && all.until.is_none(),
-            "the whole store has no bounds, so it has nothing to compare with"
-        );
     }
 
     /// Task 7.4's whole point: the preview names what would go, and nothing

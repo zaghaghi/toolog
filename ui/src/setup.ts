@@ -211,6 +211,8 @@ export class SetupView {
       }
     }
 
+    view.append(el("h2", { text: "Notifications" }), this.notifications());
+
     view.append(el("h2", { text: "Privacy" }), this.privacy());
 
     view.append(
@@ -320,6 +322,90 @@ export class SetupView {
   }
 
   /**
+   * Task 6.12's two switches, moved here by task 9.3.
+   *
+   * They were on the live view, which is gone. Nothing about them belonged to
+   * that view: they are preferences, they persist across restarts, and this is
+   * where the other preference already lives. Same `Prefs` round-trip, same
+   * defaults — both off, because a tool that starts by interrupting you is a
+   * tool you turn off.
+   */
+  private notifications(): HTMLElement {
+    const card = el("div", { class: "card" }, [
+      el("p", { class: "note" }, [
+        "Off until you turn them on, and each one on its own. ",
+        el("strong", { text: "Nothing leaves this machine either way." }),
+      ]),
+    ]);
+
+    const boxes = [
+      this.toggle(
+        "notify_refusals",
+        "When a call is refused",
+        "A denial by a person, a hook or a permission rule. This is the event the tool exists for.",
+      ),
+      this.toggle(
+        "notify_high_risk",
+        "When a call trips a high-severity rule",
+        "The same rules the Risk tab runs, asked about the one call as it lands.",
+      ),
+    ];
+    card.append(...boxes.map((b) => b.node));
+
+    void getPrefs()
+      .then((prefs) => {
+        for (const box of boxes) box.load(prefs);
+      })
+      .catch((error: unknown) => this.options.onNotice(String(error)));
+
+    return card;
+  }
+
+  /**
+   * One notification switch. Narrowed to the boolean fields so a non-boolean
+   * preference cannot be handed to a checkbox.
+   *
+   * The element is built before the preferences arrive and enabled when they
+   * do: a checkbox that renders unchecked and then flips is a checkbox that
+   * has lied to whoever was already reading it.
+   */
+  private toggle(
+    key: "notify_refusals" | "notify_high_risk",
+    label: string,
+    why: string,
+  ): { node: HTMLElement; load: (prefs: Prefs) => void } {
+    const box = el("input", { type: "checkbox", attrs: { id: `pref-${key}` } });
+    box.disabled = true;
+
+    const load = (prefs: Prefs): void => {
+      let current = prefs;
+      box.checked = current[key];
+      box.disabled = false;
+      box.addEventListener("change", () => {
+        const next: Prefs = { ...current, [key]: box.checked };
+        void setPrefs(next)
+          .then((saved) => {
+            current = saved;
+            box.checked = saved[key];
+          })
+          .catch((error: unknown) => {
+            box.checked = current[key];
+            this.options.onNotice(`That switch could not be saved: ${String(error)}`);
+          });
+      });
+    };
+
+    const node = el("div", { class: "switch" }, [
+      box,
+      el("div", {}, [
+        el("label", { attrs: { for: `pref-${key}` }, class: "switch-label", text: label }),
+        span("switch-why", why),
+      ]),
+    ]);
+    return { node, load };
+  }
+
+  /**
    * Task 7.3, stated rather than defaulted.
    *
    * Secrets are always stripped from the projection — the rows the four views
@@ -331,7 +417,7 @@ export class SetupView {
   private privacy(): HTMLElement {
     const card = el("div", { class: "card" }, [
       el("p", { class: "note" }, [
-        "Secrets are removed from what the timeline, risk and usage views show — commands, ",
+        "Secrets are removed from what the timeline and risk views show — commands, ",
         "arguments and results — using patterns you can extend. ",
         el("strong", { text: "That much is not optional." }),
       ]),

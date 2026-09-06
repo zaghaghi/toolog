@@ -98,6 +98,15 @@ pub struct Completeness {
     /// Calls with a timestamp, which gap detection needs. A call with none is
     /// counted in the lanes and left out of the windows rather than guessed at.
     pub placed: i64,
+    /// `api_request` records held, the OTLP lane's other half.
+    ///
+    /// Counted and never rendered as spend: toolog does not report cost
+    /// ([ADR-0010]). The count is here because a lane nothing displays is a
+    /// lane that can stop arriving unnoticed, and this report exists to say
+    /// what is missing.
+    ///
+    /// [ADR-0010]: ../../../docs/adr/0010-no-cost-reporting.md
+    pub api_requests: i64,
 }
 
 impl Completeness {
@@ -153,6 +162,7 @@ pub fn completeness(conn: &Connection) -> Result<Completeness> {
             [],
             |r| r.get(0),
         )?,
+        api_requests: conn.query_row("SELECT count(*) FROM api_request", [], |r| r.get(0))?,
     })
 }
 

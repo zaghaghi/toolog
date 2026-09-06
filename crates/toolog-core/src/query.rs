@@ -163,6 +163,26 @@ fn selection(f: &TimelineFilter) -> Selection {
     }
 }
 
+/// `date(…)` over an epoch-millisecond column, shifted into the local day.
+///
+/// Days are the reader's days. A day boundary is a local fact; bucketing in
+/// UTC would put an evening's work on tomorrow's bar for anyone east of
+/// Greenwich, so the caller passes its own offset — `-new
+/// Date().getTimezoneOffset()` in the browser — and the timestamp is shifted
+/// before the date is taken.
+///
+/// The one piece of the deleted usage analytics worth keeping (task 9.5): the
+/// timeline's activity histogram buckets by the same rule. Public rather than
+/// private only because nothing in this module calls it yet, and a phase does
+/// not close on an `#[allow(dead_code)]`.
+#[must_use]
+pub fn local_day(column: &str, offset_minutes: i32) -> String {
+    format!(
+        "date({column} / 1000 + {}, 'unixepoch')",
+        offset_minutes * 60
+    )
+}
+
 /// Marks where a match starts inside [`TimelineRow::snippet`].
 ///
 /// A control character, because the corpus is shell commands and file paths:
@@ -337,11 +357,6 @@ pub struct SessionGroup {
     pub refusals: i64,
     pub first_at: Option<i64>,
     pub last_at: Option<i64>,
-    /// Sum of `api_request.cost_usd_micros` for the session.
-    ///
-    /// `None`, never `0`, when the OTLP lane never saw this session: imported
-    /// history has no cost data at all, and a zero would read as free.
-    pub cost_usd_micros: Option<i64>,
     pub agents: Vec<AgentGroup>,
 }
 
@@ -379,7 +394,6 @@ pub fn timeline_groups(conn: &Connection, filter: &TimelineFilter) -> Result<Vec
             refusals: row.get(8)?,
             first_at: row.get(9)?,
             last_at: row.get(10)?,
-            cost_usd_micros: None,
             agents: Vec::new(),
         })
     })?;
@@ -420,26 +434,6 @@ pub fn timeline_groups(conn: &Connection, filter: &TimelineFilter) -> Result<Vec
         let (session_id, agent) = row?;
         if let Some(g) = groups.iter_mut().find(|g| g.session_id == session_id) {
             g.agents.push(agent);
-        }
-    }
-
-    // Cost is a property of the session, not of the filtered slice: narrowing
-    // to one tool must not make a session look cheaper than it was.
-    let mut stmt = conn.prepare(
-        "SELECT session_id, sum(cost_usd_micros) FROM api_request
-         WHERE session_id IS NOT NULL AND cost_usd_micros IS NOT NULL
-         GROUP BY session_id",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?;
-    for row in rows {
-        let (session_id, cost) = row?;
-        if let Some(g) = groups
-            .iter_mut()
-            .find(|g| g.session_id.as_deref() == Some(session_id.as_str()))
-        {
-            g.cost_usd_micros = Some(cost);
         }
     }
 

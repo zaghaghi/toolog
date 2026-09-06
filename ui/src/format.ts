@@ -1,10 +1,10 @@
 //! Turning stored values into the strings a row shows.
 //!
 //! Two rules run through all of it. Missing is not zero: a call the OTLP lane
-//! never saw has no duration and no cost, and rendering either as `0` would
-//! claim a measurement that was never made (task 5.5). And a number a person
-//! compares against its neighbours is tabular — the CSS supplies the figures,
-//! this supplies the same number of them.
+//! never saw has no duration, and rendering that as `0` would claim a
+//! measurement that was never made (task 5.5). And a number a person compares
+//! against its neighbours is tabular — the CSS supplies the figures, this
+//! supplies the same number of them.
 
 const TIME = new Intl.DateTimeFormat(undefined, {
   hour: "2-digit",
@@ -95,20 +95,6 @@ export function elapsed(ms: number): string {
 /** A fraction as a percentage, or a dash when nothing was measured. */
 export function percent(ratio: number | null, digits = 1): string {
   return ratio === null ? EM_DASH : `${(ratio * 100).toFixed(digits)}%`;
-}
-
-/**
- * A cost in micro-dollars.
- *
- * `null` means the OTLP lane never saw this session, which is the ordinary
- * case for imported history — so it renders as "no cost recorded", never as
- * free.
- */
-export function cost(micros: number | null): string {
-  if (micros === null) return EM_DASH;
-  const dollars = micros / 1_000_000;
-  if (dollars === 0) return "$0.00";
-  return dollars < 0.01 ? "<$0.01" : `$${dollars.toFixed(2)}`;
 }
 
 export function bytes(n: number | null): string {

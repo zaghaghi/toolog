@@ -18,8 +18,7 @@ use serde::{Deserialize, Serialize};
 use toolog_cli::capture;
 use toolog_cli::commands::{self as cli, Format};
 use toolog_cli::prefs::Prefs;
-use toolog_core::analytics::{self, Analytics, Comparison, Period};
-use toolog_core::model::{FileChange, Page, Reconciliation, Session, TimelineFilter, ToolCall};
+use toolog_core::model::{FileChange, Page, Session, TimelineFilter, ToolCall};
 use toolog_core::rules::{Finding, ProjectRisk};
 use toolog_core::{query, raw, rules};
 use ts_rs::TS;
@@ -81,16 +80,6 @@ fn line_at(path: &std::path::Path, offset: i64) -> std::io::Result<u32> {
     Ok(lines)
 }
 
-/// Everything the analytics view opens with.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export_to = "unused/")]
-pub(crate) struct Stats {
-    pub(crate) totals: query::Totals,
-    pub(crate) tools: Vec<query::ToolUsage>,
-    /// Lane divergence. Not a footnote: OTEL-only calls are refusals.
-    pub(crate) reconciliation: Reconciliation,
-}
-
 /// Everything the risk view opens with (tasks 6.3 and 6.4).
 ///
 /// The findings and the per-project posture are computed in one pass over one
@@ -124,16 +113,6 @@ fn risk_review(app: &AppState) -> anyhow::Result<RiskReview> {
             rules_customized: customized,
         })
     })
-}
-
-/// Everything the analytics view opens with (tasks 6.5-6.8).
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export_to = "unused/")]
-pub(crate) struct Usage {
-    pub(crate) analytics: Analytics,
-    /// The same window against the period before it. Fetched together because
-    /// a delta the user has to wait for is a delta they read as a number.
-    pub(crate) comparison: Comparison,
 }
 
 /// What the first-run wizard and the Preferences pane show.
@@ -353,17 +332,6 @@ commands! {
         app.read(|c| query::list_sessions(c, page))
     }
 
-    /// Totals, per-tool usage and lane reconciliation.
-    stats() -> Stats {
-        app.read(|c| {
-            Ok(Stats {
-                totals: query::stats_totals(c)?,
-                tools: query::stats_tool_usage(c)?,
-                reconciliation: query::reconcile(c)?,
-            })
-        })
-    }
-
     /// Whether capture is running, and how much it has taken in.
     collector_status() -> capture::Status {
         app.with_capture(|capture| Ok(capture.status()?))
@@ -496,26 +464,6 @@ commands! {
                 .map_err(anyhow::Error::from)
         })?;
         risk_review(app)
-    }
-
-    /// Usage over a window, and the same window against the one before it.
-    usage(window: Period) -> Usage {
-        app.read(|c| {
-            Ok(Usage {
-                analytics: analytics::analytics(c, &window)?,
-                comparison: analytics::compare(c, &window)?,
-            })
-        })
-    }
-
-    /// The sessions with recent activity, and what each is doing.
-    ///
-    /// `withinMs` is how far back counts as recent. The store records no
-    /// session end — Claude Code does not announce one — so "live" is a window
-    /// the caller chooses and can explain, not a flag on a row.
-    live_sessions(within_ms: i64) -> Vec<analytics::LiveSession> {
-        let now = raw::now_ms();
-        app.read(|c| analytics::live_sessions(c, now - within_ms.max(0), now))
     }
 
     /// Which notifications are switched on. Both off until someone says so.

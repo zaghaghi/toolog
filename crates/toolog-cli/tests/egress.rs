@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 
 use support::{Socket, census, workspace_root};
 use toolog_core::model::{Page, TimelineFilter};
-use toolog_core::{Db, analytics, chain, query, rules, verify};
+use toolog_core::{Db, chain, query, rules, verify};
 use toolog_ingest::Backfill;
 
 /// Ingest both lanes and run every query the window issues.
@@ -52,7 +52,9 @@ fn full_workload() {
     ];
     toolog_otlp::ingest_records(conn, "otlp:egress", &records).expect("otlp");
 
-    // Every read the four views make.
+    // Every read the three views make. Phase 9 took two views away; the list
+    // that replaced theirs is the current one, not the old one minus three —
+    // the guarantee is only as good as what actually runs here.
     let filter = TimelineFilter::default();
     query::timeline_rows(conn, &filter, Page::default()).expect("timeline");
     query::timeline_count(conn, &filter).expect("count");
@@ -65,14 +67,23 @@ fn full_workload() {
     query::ingest_summary(conn).expect("ingest summary");
     query::search(conn, "rm", Page::default()).expect("search");
 
-    let period = analytics::Period::default();
-    analytics::analytics(conn, &period).expect("analytics");
-    analytics::compare(conn, &period).expect("compare");
-    analytics::live_sessions(conn, 0, i64::MAX).expect("live");
+    // The detail pane, which reads a call, its session, its diffs and the
+    // transcript line behind it.
+    if let Some(call) = query::tool_call_detail(conn, "toolu_egress").expect("detail") {
+        if let Some(id) = call.session_id.as_deref() {
+            query::session(conn, id).expect("session");
+        }
+        query::file_changes(conn, &call.tool_use_id).expect("file changes");
+        query::source_record(conn, &call).expect("source record");
+    }
 
     let ruleset = rules::load(None).expect("rules");
     let findings = rules::evaluate(conn, &ruleset).expect("evaluate");
     rules::by_project(conn, &ruleset, &findings).expect("by project");
+    // The risk view's drill-through past a finding's examples.
+    if let Some(rule) = ruleset.first() {
+        rules::calls(conn, rule, Page::default()).expect("rule calls");
+    }
 
     verify::completeness(conn).expect("completeness");
     chain::verify(conn).expect("chain");

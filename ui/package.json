@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "The toolog window. No component framework: four views over a table do not justify one (ADR-0001).",
+  "description": "The toolog window. No component framework: three views over a table do not justify one (ADR-0001).",
   "scripts": {
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit",

@@ -1,11 +1,11 @@
-//! Chart primitives (task 6.6).
+//! The column chart (task 6.6, trimmed to one form by task 9.6).
 //!
 //! Built to the `dataviz` skill's procedure rather than to taste, and the
 //! decisions that procedure forces are worth stating because they are not the
 //! obvious ones:
 //!
-//! - **Every chart here plots one measure.** Calls and spend are different
-//!   scales, so they are two charts. A second y-axis would let the reader see a
+//! - **A chart plots one measure.** Calls and spend are different scales, so
+//!   they would be two charts. A second y-axis would let the reader see a
 //!   correlation the data does not contain, which on an audit tool is not a
 //!   cosmetic problem.
 //! - **One hue, light to dark.** Colour's job here is magnitude, never
@@ -17,6 +17,10 @@
 //!   an enhancement; it is never the only way to read a value.
 //! - **Marks are hit targets, not painted pixels.** A column's hover area is
 //!   the full height of its slot, so aiming at a date is enough.
+//!
+//! The bars, the table card, the meter and the stat tile went with the cost
+//! analytics they were drawn for. What is left is what Phase 10's activity
+//! histogram is built from.
 //!
 //! The marks are HTML rather than SVG. A `<div>` with a height in percent
 //! resizes with the window for free, and text inside it stays at the size the
@@ -51,35 +55,6 @@ export interface ChartSpec {
   columns?: [string, string] | undefined;
   /** What to say when there is nothing to plot. Never an empty frame. */
   empty?: string | undefined;
-}
-
-/** A value against a limit: cache hits, coverage, a share. */
-export interface MeterSpec {
-  label: string;
-  /** 0 to 1. `null` when the thing was never measured — which is not zero. */
-  ratio: number | null;
-  /** The number beside the label. */
-  value: string;
-  /** Why the meter is empty, when it is. */
-  note?: string | undefined;
-}
-
-export interface TileSpec {
-  label: string;
-  value: string;
-  /**
-   * The comparison line: a signed change against a named period.
-   *
-   * `tone` is deliberately separate from `direction`. More tool calls is not
-   * better or worse, and colouring it green would be this interface having an
-   * opinion it has no basis for. Only a metric with a real direction — an
-   * error rate — gets a colour.
-   */
-  delta?: { text: string; direction: "up" | "down" | "flat"; tone: "good" | "bad" | "neutral" } | undefined;
-  /** A dozen points of history, ending with the current period. */
-  trend?: number[] | undefined;
-  /** Shown under the value when the number needs qualifying. */
-  note?: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -309,204 +284,9 @@ export function columnChart(spec: ChartSpec): HTMLElement {
   return figure(spec, el("div", { class: "chart-body" }, [plot, axis]), summarize(spec));
 }
 
-// ---------------------------------------------------------------------------
-// Bars — magnitude across categories
-// ---------------------------------------------------------------------------
-
-/**
- * Horizontal bars, value labelled at the tip.
- *
- * Horizontal because the categories here are named things — tools, project
- * paths — and a name reads along a row rather than rotated under a column.
- * Each bar carries its own tooltip; there is no crosshair, because the mark is
- * already the width of the row.
- */
-export function barChart(spec: ChartSpec): HTMLElement {
-  const top = scaleTop(spec.data.map((d) => d.value));
-  const tip = tooltip();
-
-  const rows = spec.data.map((d) => {
-    const row = el(
-      "div",
-      { class: "chart-bar-row", attrs: { tabindex: "0", "aria-label": `${d.key}: ${spec.format(d.value)}` } },
-      [
-        el("span", { class: "chart-bar-key", text: d.key, title: d.key }),
-        el("span", { class: "chart-bar-track" }, [
-          el("span", {
-            class: "chart-bar-mark",
-            style: { width: `${Math.max((d.value / top) * 100, d.value > 0 ? 1 : 0).toFixed(2)}%` },
-          }),
-        ]),
-        // Labelled at the tip rather than inside the bar: a short bar has no
-        // room, and a clipped label is worse than none.
-        el("span", { class: "chart-bar-value", text: spec.format(d.value) }),
-      ],
-    );
-    const enter = (): void => {
-      row.classList.add("on");
-      if ((d.detail ?? []).length > 0) tip.show(d, spec.format);
-    };
-    const leave = (): void => {
-      row.classList.remove("on");
-      tip.node.hidden = true;
-    };
-    row.addEventListener("pointerenter", enter);
-    row.addEventListener("pointerleave", leave);
-    row.addEventListener("focus", enter);
-    row.addEventListener("blur", leave);
-    return row;
-  });
-
-  return figure(spec, el("div", { class: "chart-bars" }, [...rows, tip.node]), summarize(spec));
-}
-
 /** The `aria-label` a screen reader gets before it reaches the table. */
 function summarize(spec: ChartSpec): string {
   if (spec.data.length === 0) return `${spec.title}: nothing to show.`;
   const top = spec.data.reduce((a, b) => (b.value > a.value ? b : a));
   return `${spec.title}. ${spec.data.length} values, highest ${top.key} at ${spec.format(top.value)}. The table below has all of them.`;
-}
-
-// ---------------------------------------------------------------------------
-// Figures
-// ---------------------------------------------------------------------------
-
-/**
- * A card whose form is a table, not a chart.
- *
- * Three measures across four rows is a table. Rendering it as a chart would
- * mean either three charts or a dual axis, and the skill's own heuristic sends
- * more than about seven meaningful classes — or more than one measure per
- * row — here instead.
- */
-export function dataTable(spec: {
-  title: string;
-  caption?: string | undefined;
-  head: string[];
-  rows: string[][];
-  empty?: string | undefined;
-}): HTMLElement {
-  return el("figure", { class: "chart" }, [
-    el("figcaption", { class: "chart-head" }, [
-      el("div", { class: "chart-titles" }, [
-        el("span", { class: "chart-title", text: spec.title }),
-        spec.caption === undefined
-          ? null
-          : el("span", { class: "chart-caption", text: spec.caption }),
-      ]),
-    ]),
-    spec.rows.length === 0
-      ? el("p", { class: "chart-empty", text: spec.empty ?? "Nothing in this window." })
-      : el("table", { class: "chart-table" }, [
-          el("thead", {}, [
-            el(
-              "tr",
-              {},
-              spec.head.map((h, i) =>
-                el("th", i === 0 ? { text: h } : { class: "num", text: h }),
-              ),
-            ),
-          ]),
-          el(
-            "tbody",
-            {},
-            spec.rows.map((row) =>
-              el(
-                "tr",
-                {},
-                row.map((cell, i) =>
-                  i === 0
-                    ? el("th", { attrs: { scope: "row" }, text: cell })
-                    : el("td", { class: "num", text: cell }),
-                ),
-              ),
-            ),
-          ),
-        ]),
-  ]);
-}
-
-/** A ratio against its limit, on a track of the same ramp. */
-export function meter(spec: MeterSpec): HTMLElement {
-  const pct = spec.ratio === null ? 0 : Math.min(100, Math.max(0, spec.ratio * 100));
-  return el("div", { class: "meter" }, [
-    el("div", { class: "meter-head" }, [
-      el("span", { class: "meter-label", text: spec.label }),
-      el("span", { class: "meter-value", text: spec.value }),
-    ]),
-    el(
-      "div",
-      {
-        class: spec.ratio === null ? "meter-track empty" : "meter-track",
-        role: "meter",
-        attrs: {
-          "aria-label": spec.label,
-          "aria-valuenow": spec.ratio === null ? "" : pct.toFixed(0),
-          "aria-valuetext": spec.value,
-        },
-      },
-      [spec.ratio === null ? null : el("div", { class: "meter-fill", style: { width: `${pct}%` } })],
-    ),
-    spec.note === undefined ? null : el("p", { class: "meter-note", text: spec.note }),
-  ]);
-}
-
-/**
- * A twelve-point sparkline: history in the de-emphasis step, now in the mark.
- *
- * Fixed pixel geometry rather than a stretched `viewBox`, so the 2px stroke is
- * 2px wherever the tile ends up.
- */
-function sparkline(values: number[]): SVGElement | null {
-  if (values.length < 2) return null;
-  const [w, h, pad] = [76, 20, 3];
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values, 0);
-  const span = Math.max(max - min, 1);
-  const points = values.map((v, i) => {
-    const x = pad + (i / (values.length - 1)) * (w - pad * 2);
-    const y = h - pad - ((v - min) / span) * (h - pad * 2);
-    return [x, y] as const;
-  });
-
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("class", "spark");
-  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  svg.setAttribute("width", String(w));
-  svg.setAttribute("height", String(h));
-  svg.setAttribute("aria-hidden", "true");
-
-  const line = document.createElementNS(ns, "polyline");
-  line.setAttribute("class", "spark-line");
-  line.setAttribute("points", points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" "));
-  svg.appendChild(line);
-
-  const last = points[points.length - 1];
-  if (last !== undefined) {
-    const dot = document.createElementNS(ns, "circle");
-    dot.setAttribute("class", "spark-dot");
-    dot.setAttribute("cx", last[0].toFixed(1));
-    dot.setAttribute("cy", last[1].toFixed(1));
-    dot.setAttribute("r", "2.5");
-    svg.appendChild(dot);
-  }
-  return svg;
-}
-
-/** Label, value, optional delta and sparkline — the figure contract. */
-export function statTile(spec: TileSpec): HTMLElement {
-  const arrow = { up: "↑", down: "↓", flat: "→" };
-  return el("div", { class: "tile" }, [
-    el("span", { class: "tile-label", text: spec.label }),
-    el("span", { class: "tile-value", text: spec.value }),
-    spec.delta === undefined
-      ? null
-      : el("span", {
-          class: `tile-delta ${spec.delta.tone}`,
-          text: `${arrow[spec.delta.direction]} ${spec.delta.text}`,
-        }),
-    spec.note === undefined ? null : el("span", { class: "tile-note", text: spec.note }),
-    spec.trend === undefined ? null : sparkline(spec.trend),
-  ]);
 }

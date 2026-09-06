@@ -1,18 +1,11 @@
 import { describe, expect, test } from "vitest";
 
-import { basename, bytes, cost, duration, EM_DASH, lanes, shortPath } from "./format";
+import { basename, bytes, duration, EM_DASH, lanes, shortPath } from "./format";
 
 describe("missing is not zero (task 5.5)", () => {
   test("a duration nobody measured is a dash", () => {
     expect(duration(null)).toBe(EM_DASH);
     expect(duration(0)).toBe("0 ms");
-  });
-
-  test("a session OTEL never saw has no cost, not a free one", () => {
-    expect(cost(null)).toBe(EM_DASH);
-    expect(cost(0)).toBe("$0.00");
-    expect(cost(4_200)).toBe("<$0.01");
-    expect(cost(1_500_000)).toBe("$1.50");
   });
 
   test("a result with no recorded size is a dash", () => {

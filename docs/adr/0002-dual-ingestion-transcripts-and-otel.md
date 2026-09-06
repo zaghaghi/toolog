@@ -47,6 +47,13 @@ or token data. Most importantly, **a tool call that was denied carries no record
 why** — that exists only as a `claude_code.tool_decision` with `decision=reject`. An audit tool that cannot
 show what was refused is missing half the security story.
 
+> **Amended in Phase 9 — the cost argument is withdrawn.** toolog captures cost and reports none of
+> it ([ADR-0010](0010-no-cost-reporting.md)). Cost and tokens were never the reason for this lane
+> and are struck from the case for it. What is left is the reason that was always doing the work:
+> `decision` and `decision_source` exist in no other lane, and `duration_ms` is measured in no other
+> lane. `api_request` is still ingested and still counted by `toolog verify` — a lane that stops
+> arriving is a capture failure whether or not anything renders it.
+
 The two sources are complementary in exactly the places each is weak. Neither is sufficient alone.
 
 A third source, **HTTP hooks** (`"type": "http"`, POSTing the full payload to a local URL), was
@@ -92,7 +99,7 @@ tail dropping calls.
 | Alternative | Why rejected |
 |---|---|
 | OTEL only (as the brief sketched) | Evidence too lossy — 512-char truncation on tool inputs, result content off by default. Single point of failure with no fallback if the `env` block is clobbered. |
-| Transcripts only | No permission decisions, no decision source, no duration or cost. A refusal appears only as English prose inside a result string. Loses the entire risk-review and analytics surface. |
+| Transcripts only | No permission decisions, no decision source, no duration. A refusal appears only as English prose inside a result string. Loses the entire risk-review surface. (Cost was listed here too until [ADR-0010](0010-no-cost-reporting.md); the row stands without it.) |
 | Add hooks as a third lane | Real tamper-evidence value from a third independent witness, but it sits on the tool-execution path and mostly duplicates transcript content. Deferred, not dismissed. |
 
 ## Correction — Phase 4

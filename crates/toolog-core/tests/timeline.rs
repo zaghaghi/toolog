@@ -390,18 +390,8 @@ fn groups_carry_the_sizes_a_collapsible_list_needs() {
 }
 
 #[test]
-fn groups_narrow_with_the_filter_but_cost_does_not() {
+fn groups_narrow_with_the_filter() {
     let db = seeded();
-    project::upsert_api_request(
-        db.conn(),
-        &toolog_core::model::ApiRequest {
-            request_id: "r1".to_string(),
-            session_id: Some("s-app".to_string()),
-            cost_usd_micros: Some(4_200),
-            ..toolog_core::model::ApiRequest::default()
-        },
-    )
-    .expect("api request");
 
     let filter = TimelineFilter {
         tool_name: Some("Edit".to_string()),
@@ -410,20 +400,6 @@ fn groups_narrow_with_the_filter_but_cost_does_not() {
     let groups = query::timeline_groups(db.conn(), &filter).expect("groups");
     assert_eq!(groups.len(), 1, "only sessions the filter still touches");
     assert_eq!(groups[0].calls, 1);
-    assert_eq!(
-        groups[0].cost_usd_micros,
-        Some(4_200),
-        "narrowing the view must not make a session look cheaper than it was"
-    );
-
-    let groups = query::timeline_groups(db.conn(), &TimelineFilter::default()).expect("groups");
-    assert!(
-        groups
-            .iter()
-            .filter(|g| g.session_id.as_deref() != Some("s-app"))
-            .all(|g| g.cost_usd_micros.is_none()),
-        "a session OTEL never saw has no cost — not a cost of zero, which reads as free"
-    );
 }
 
 // ---------------------------------------------------------------------------

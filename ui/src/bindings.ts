@@ -63,30 +63,6 @@ provenance: number | null, };
 
 export type Page = { limit: number, offset: number, };
 
-export type Reconciliation = { 
-/**
- * Seen by both lanes.
- */
-both: number, 
-/**
- * Transcript only: the OTLP lane missed it. A gap in collection.
- */
-transcript_only: number, 
-/**
- * OTLP only: no transcript body was ever written for this call.
- */
-otel_only: number, 
-/**
- * Calls the OTLP lane recorded a refusal for.
- *
- * Counted from `decision`, not from provenance. Phase 4 measured a real
- * denial and found it in **both** lanes: the transcript keeps the
- * `tool_use` block and a `tool_result` whose body is the refusal message.
- * Only OTEL says *who* refused and *why*, as structured data — so a
- * rejection is identified by this column, never by a missing transcript.
- */
-rejected: number, };
-
 export type TimelineRow = { call: ToolCall, project_path: string | null, git_branch: string | null, 
 /**
  * An FTS `snippet()` with the match bracketed. `None` unless the filter
@@ -117,29 +93,9 @@ export type SessionGroup = {
  * `None` for calls whose session the store never learned — an OTLP event
  * that arrived before any transcript line named the session.
  */
-session_id: string | null, project_path: string | null, git_branch: string | null, slug: string | null, cc_version: string | null, calls: number, main_thread_calls: number, failures: number, refusals: number, first_at: number | null, last_at: number | null, 
-/**
- * Sum of `api_request.cost_usd_micros` for the session.
- *
- * `None`, never `0`, when the OTLP lane never saw this session: imported
- * history has no cost data at all, and a zero would read as free.
- */
-cost_usd_micros: number | null, agents: Array<AgentGroup>, };
+session_id: string | null, project_path: string | null, git_branch: string | null, slug: string | null, cc_version: string | null, calls: number, main_thread_calls: number, failures: number, refusals: number, first_at: number | null, last_at: number | null, agents: Array<AgentGroup>, };
 
 export type Facets = { projects: Array<string>, tools: Array<string>, decision_sources: Array<string>, permission_modes: Array<string>, agents: Array<string>, };
-
-export type Totals = { raw_events: number, sessions: number, tool_calls: number, file_changes: number, api_requests: number, 
-/**
- * Sum of `cost_usd_micros`. OTLP only — always zero for backfilled history,
- * which the UI must say rather than render as a real zero.
- */
-cost_usd_micros: number, input_tokens: number, output_tokens: number, first_call_at: number | null, last_call_at: number | null, };
-
-export type ToolUsage = { tool_name: string, calls: number, failures: number, 
-/**
- * Null until the OTLP lane has seen these calls.
- */
-p50_ms: number | null, p95_ms: number | null, };
 
 export type IngestSummary = { 
 /**
@@ -150,136 +106,6 @@ transcript_files: number, transcript_records: number, otlp_records: number,
  * When anything was last stored, in milliseconds since the epoch.
  */
 last_ingest_at: number | null, };
-
-export type Period = { 
-/**
- * Inclusive lower bound in epoch milliseconds.
- */
-since: number | null, 
-/**
- * Exclusive upper bound in epoch milliseconds.
- */
-until: number | null, 
-/**
- * One project, or every project.
- */
-project_path: string | null, 
-/**
- * Minutes east of UTC, for bucketing days the way the reader's calendar
- * does. `-new Date().getTimezoneOffset()` in the browser.
- */
-utc_offset_minutes: number, };
-
-export type CallStats = { calls: number, 
-/**
- * Calls the store knows failed. Not `calls - successes`: a call the
- * transcript never reached has no outcome at all.
- */
-failures: number, 
-/**
- * Calls with a recorded outcome, which is what a failure rate divides by.
- */
-with_outcome: number, refused: number, 
-/**
- * Calls made by a subagent rather than the main thread.
- */
-sidechain: number, sessions: number, projects: number, 
-/**
- * Null until the OTLP lane has timed these calls.
- */
-p50_ms: number | null, p95_ms: number | null, 
-/**
- * Wall-clock time with a call at least every [`IDLE_CUTOFF_MS`].
- */
-active_ms: number, first_at: number | null, last_at: number | null, 
-/**
- * Failures as a fraction of the calls with a recorded outcome. `None`
- * when none of them has one — which is not an error rate of zero.
- */
-error_rate: number | null, 
-/**
- * Subagent calls as a fraction of all calls.
- */
-sidechain_share: number | null, };
-
-export type CostStats = { requests: number, cost_usd_micros: number, input_tokens: number, output_tokens: number, cache_read_tokens: number, cache_creation_tokens: number, 
-/**
- * Cached input as a fraction of all input the model was given.
- *
- * Cache creation counts as input here because it was billed as input; the
- * ratio answers "how much of what I sent was already known", which is the
- * question the number is read for.
- */
-cache_hit_ratio: number | null, 
-/**
- * Every token the requests were billed for.
- */
-total_tokens: number, };
-
-export type Coverage = { sessions: number, 
-/**
- * Sessions with at least one `api_request` row.
- */
-sessions_with_cost: number, calls: number, 
-/**
- * Calls belonging to a session that has cost data.
- */
-calls_with_cost: number, 
-/**
- * Whether any cost was captured in this window at all. The UI needs this
- * to choose between "$0.00" and "we were not watching".
- */
-measured: boolean, 
-/**
- * Whether every session in the window carries cost data.
- */
-complete: boolean, };
-
-export type Bucket = { 
-/**
- * The value grouped on. `None` is a real group — calls whose session the
- * store never learned, or requests with no model recorded — and is not
- * folded into the others.
- */
-key: string | null, 
-/**
- * A second line for the bucket: a session's project, a day's weekday.
- */
-label: string | null, calls: number, failures: number, cost_usd_micros: number, input_tokens: number, output_tokens: number, cache_read_tokens: number, requests: number, first_at: number | null, last_at: number | null, };
-
-export type Analytics = { window: Period, calls: CallStats, cost: CostStats, coverage: Coverage, 
-/**
- * One bucket per day in the window that had activity. Gaps are absent
- * rather than zero-filled; the chart fills them, because only the chart
- * knows how wide a bar is.
- */
-by_day: Array<Bucket>, 
-/**
- * Projects, most expensive first, then busiest — the leaderboard of task
- * 6.7.
- */
-by_project: Array<Bucket>, by_model: Array<Bucket>, 
-/**
- * Sessions, newest first.
- */
-by_session: Array<Bucket>, 
-/**
- * Per-tool frequency, failures and latency, scoped to the window.
- */
-tools: Array<ToolUsage>, };
-
-export type Headline = { calls: number, failures: number, sessions: number, active_ms: number, cost_usd_micros: number, tokens: number, 
-/**
- * Sessions in this window that carry cost data, so a fall in spend can be
- * told apart from a fall in coverage.
- */
-sessions_with_cost: number, };
-
-export type Comparison = { current: Headline, current_window: Period, 
-/**
- * `None` when the current window is open-ended and has no "before".
- */
-previous: Headline | null, previous_window: Period | null, };
 
 export type Severity = "info" | "low" | "medium" | "high";
 
@@ -318,27 +144,6 @@ by_severity: [number, number, number, number],
  * The rules this project tripped, worst first.
  */
 rule_ids: Array<string>, };
-
-export type LiveSession = { session_id: string, project_path: string | null, git_branch: string | null, 
-/**
- * The most recent call's tool — "what it is doing right now".
- */
-current_tool: string | null, 
-/**
- * Whether that call has an outcome yet. `None` means it is still running,
- * or that no lane has reported one.
- */
-current_success: boolean | null, last_call_at: number | null, first_call_at: number | null, calls: number, failures: number, refused: number, 
-/**
- * Spend so far. `0` with `priced = false` means "not being watched", which
- * is not the same as free.
- */
-cost_usd_micros: number, priced: boolean, permission_mode: string | null, 
-/**
- * Calls per minute over the last twelve minutes, oldest first — the
- * sparkline on the lane.
- */
-recent: Array<number>, };
 
 export type Prefs = { 
 /**
@@ -421,12 +226,6 @@ exists: boolean,
  */
 body: string, };
 
-export type Stats = { totals: Totals, tools: Array<ToolUsage>, 
-/**
- * Lane divergence. Not a footnote: OTEL-only calls are refusals.
- */
-reconciliation: Reconciliation, };
-
 export type RiskReview = { 
 /**
  * Worst first, dismissed findings kept in place and marked.
@@ -442,13 +241,6 @@ rules_path: string | null,
  * Whether that file exists and was loaded.
  */
 rules_customized: boolean, };
-
-export type Usage = { analytics: Analytics, 
-/**
- * The same window against the period before it. Fetched together because
- * a delta the user has to wait for is a delta they read as a number.
- */
-comparison: Comparison, };
 
 export type Setup = { configured: boolean, listening: boolean, endpoint: string, settings_path: string, transcripts_dir: string, transcript_files: number, ingested_files: number, agent_supported: boolean, agent_installed: boolean, problems: Array<string>, 
 /**
@@ -504,10 +296,6 @@ export function listSessions(page: Page): Promise<Array<Session>> {
   return invoke("list_sessions", { page });
 }
 
-export function stats(): Promise<Stats> {
-  return invoke("stats");
-}
-
 export function collectorStatus(): Promise<Status> {
   return invoke("collector_status");
 }
@@ -542,14 +330,6 @@ export function dismissRule(ruleId: string, note: string): Promise<RiskReview> {
 
 export function restoreRule(ruleId: string): Promise<RiskReview> {
   return invoke("restore_rule", { ruleId });
-}
-
-export function usage(window: Period): Promise<Usage> {
-  return invoke("usage", { window });
-}
-
-export function liveSessions(withinMs: number): Promise<Array<LiveSession>> {
-  return invoke("live_sessions", { withinMs });
 }
 
 export function getPrefs(): Promise<Prefs> {

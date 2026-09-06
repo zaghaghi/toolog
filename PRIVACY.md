@@ -52,7 +52,7 @@ contains three booleans and nothing else — no history, no identifiers.
 Claude Code runs shell commands, and shell commands carry keys. A tool that keeps a durable record
 of what ran would, left alone, keep a durable record of every credential that went past.
 
-**Secrets are removed from the projection** — the rows the timeline, risk and usage views read, and
+**Secrets are removed from the projection** — the rows the timeline and risk views read, and
 what an export contains. API keys, bearer tokens, `Authorization` headers, private keys, passwords
 in connection strings, AWS and Google credentials, JWTs. The pattern set lives in the binary and is
 listed in `crates/toolog-core/src/redact/default.toml`; a `redaction.toml` beside the database adds
@@ -121,7 +121,7 @@ addendum to [ADR-0008](docs/adr/0008-local-only-zero-egress.md).
 | Remove history by age or size | `toolog purge --older-than N` / `--max-size MB` |
 | Remove one session, or one project | `toolog purge --session ID` / `--project PATH` |
 | Redact the evidence store as well as the projection | Status → Privacy |
-| Notifications on refusals and high-severity rule hits | The Live tab. Off by default |
+| Notifications on refusals and high-severity rule hits | Status → Notifications. Off by default |
 | Add or retune redaction patterns | `redaction.toml`, beside the database |
 | Add or retune risk rules | `rules.toml`, beside the database |
 | Remove toolog and put `settings.json` back | `toolog uninstall`, or Status → Remove toolog |

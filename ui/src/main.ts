@@ -1,41 +1,36 @@
-//! The window: five screens, one URL.
+//! The window: three screens, one URL.
 //!
 //! The address bar is the application's state (task 5.6). Every filter, the
 //! grouping and the open call live in the hash, so a view can be copied out of
 //! the window and pasted back into it — and the back button undoes a filter,
 //! which is the behaviour anyone who has used a browser already expects.
 //!
-//! Each screen is built once and kept. Three of them hold fetched state and
-//! two of them poll, so switching tabs shows what was there rather than
-//! reloading it, and the live view's timer runs only while it is on screen.
+//! Each screen is built once and kept, so switching tabs shows what was there
+//! rather than reloading it.
 //!
-//! The live event stream reaches both the timeline (which counts what it has
-//! not shown yet) and the live view (which is the stream). A call arrives more
-//! than once by design — the transcript creates the row, OTEL completes it —
-//! so both of them key on `tool_use_id` rather than counting arrivals.
+//! The live event stream reaches the timeline, which counts what it has not
+//! shown yet. A call arrives more than once by design — the transcript creates
+//! the row, OTEL completes it — so the count keys on `tool_use_id` rather than
+//! counting arrivals (task 9.2: the pill is what survives of the live view).
 
 import "./styles/tokens.css";
 import "./styles/app.css";
 
 import { listen } from "@tauri-apps/api/event";
 
-import { AnalyticsView } from "./analytics";
 import type { ToolCall } from "./bindings";
 import { el, fill, span } from "./dom";
-import { LiveView } from "./live";
 import { RiskView } from "./risk";
 import { SetupView } from "./setup";
 import { TimelineView } from "./timeline";
 import type { ViewState } from "./view";
 import { fromHash, toHash } from "./view";
 
-type Screen = "timeline" | "risk" | "usage" | "live" | "setup";
+type Screen = "timeline" | "risk" | "setup";
 
 const SCREENS: [Screen, string][] = [
   ["timeline", "Timeline"],
   ["risk", "Risk"],
-  ["usage", "Usage"],
-  ["live", "Live"],
   ["setup", "Status"],
 ];
 
@@ -113,10 +108,8 @@ function openCall(toolUseId: string): void {
 }
 
 const risk = new RiskView({ onNotice: notice, onOpenCall: openCall });
-const usage = new AnalyticsView({ onNotice: notice });
-const live = new LiveView({ onNotice: notice, onOpenCall: openCall });
 
-const screens: Record<Screen, { node: HTMLElement }> = { timeline, risk, usage, live, setup };
+const screens: Record<Screen, { node: HTMLElement }> = { timeline, risk, setup };
 
 function drawTabs(): void {
   fill(tabs, [
@@ -140,12 +133,8 @@ function show(next: Screen): void {
   screen = next;
   drawTabs();
   fill(body, [screens[next].node]);
-  // The live view polls, so its timer follows the tab rather than the process.
-  if (next !== "live") live.stop();
   if (next === "setup") setup.refresh();
   if (next === "risk") void risk.refresh();
-  if (next === "usage") void usage.refresh();
-  if (next === "live") live.start();
   writeHash();
 }
 
@@ -170,7 +159,6 @@ window.addEventListener("keydown", (event) => {
 // The event stream (task 6.9): a call has just been committed.
 void listen<ToolCall>("live_tool_call", (event) => {
   timeline.noteLiveCall(event.payload);
-  live.noteCall(event.payload);
 });
 
 root.className = "";

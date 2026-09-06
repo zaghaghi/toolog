@@ -21,7 +21,6 @@ function group(id: string, calls: number, mainThread: number, agents: AgentGroup
     refusals: 0,
     first_at: 1,
     last_at: 2,
-    cost_usd_micros: null,
     agents,
   };
 }

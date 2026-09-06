@@ -954,6 +954,10 @@ pre.report {
  * Built to the `dataviz` skill: thin marks, hairline solid grid, one hue,
  * 2px surface gaps doing the separating, and a table twin behind every plot.
  * The mark colours are validated tokens — see tokens.css.
+ *
+ * One form is left. Bars, meters and stat tiles went with the cost analytics
+ * they were drawn for (task 9.6); the columns stay because Phase 10's activity
+ * histogram is the same chart over a `TimelineFilter`.
  */
 
 .chart {
@@ -1084,7 +1088,7 @@ pre.report {
    allows no inline styles, so a `style` attribute is discarded and every bar
    renders at its natural size — which is how the first build of this view drew
    thirty-one hairlines under a y-axis that went to 800. See `el`'s `style`
-   option, and docs/design/analytics.html. */
+   option, and the assertion in chart.test.ts that keeps it that way. */
 .chart-col-mark {
   position: absolute;
   bottom: 0;
@@ -1126,63 +1130,6 @@ pre.report {
   color: var(--ink-faint);
   white-space: nowrap;
   overflow: hidden;
-}
-
-/* --- bars --------------------------------------------------------------- */
-
-.chart-bars {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s2);
-}
-
-.chart-bar-row {
-  display: grid;
-  grid-template-columns: minmax(0, 11ch) minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--s4);
-  /* A row taller than its mark: the hit target is never only the paint. */
-  min-height: 24px;
-  border-radius: var(--r-sm);
-}
-
-.chart-bar-row:focus-visible {
-  outline: 2px solid var(--clay);
-  outline-offset: 1px;
-}
-
-.chart-bar-key {
-  font-size: var(--text-sm);
-  color: var(--ink-soft);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.chart-bar-track {
-  display: block;
-  height: 10px;
-}
-
-.chart-bar-mark {
-  display: block;
-  height: 100%;
-  min-width: 1px;
-  background: var(--chart-mark);
-  border-radius: 0 var(--r-sm) var(--r-sm) 0;
-  transition: opacity var(--fast) var(--ease);
-}
-
-.chart-bar-row.on .chart-bar-mark {
-  opacity: 0.72;
-}
-
-.chart-bar-value {
-  font-size: var(--text-sm);
-  font-variant-numeric: tabular-nums;
-  color: var(--ink);
-  white-space: nowrap;
 }
 
 /* --- the readout -------------------------------------------------------- */
@@ -1270,143 +1217,13 @@ pre.report {
   padding-right: 0;
 }
 
-/* --- meters ------------------------------------------------------------- */
-
-.meter + .meter {
-  margin-top: var(--s5);
-}
-
-.meter-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--s5);
-  margin-bottom: var(--s2);
-}
-
-.meter-label {
-  font-size: var(--text-sm);
-  color: var(--ink-soft);
-}
-
-.meter-value {
-  font-size: var(--text-sm);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-/* A lighter step of the mark's own ramp, so "the rest" is visible rather
-   than absent. */
-.meter-track {
-  height: 8px;
-  border-radius: var(--r-sm);
-  background: var(--chart-track);
-  overflow: hidden;
-}
-
-.meter-track.empty {
-  background: var(--sunken);
-  border: 1px solid var(--line);
-}
-
-.meter-fill {
-  height: 100%;
-  background: var(--chart-mark);
-  border-radius: var(--r-sm);
-}
-
-.meter-note {
-  margin: var(--s2) 0 0;
-  font-size: var(--text-xs);
-  color: var(--ink-soft);
-  max-width: 62ch;
-}
-
-/* --- stat tiles --------------------------------------------------------- */
-
-.tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: var(--s5);
-  margin-bottom: var(--s5);
-}
-
-.tile {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s1);
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  padding: var(--s5);
-}
-
-.tile-label {
-  font-size: var(--text-xs);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
-/* Proportional figures: tabular digits make a big number look loose. */
-.tile-value {
-  font-size: 26px;
-  font-weight: 600;
-  line-height: var(--leading-tight);
-  letter-spacing: -0.01em;
-}
-
-.tile-delta {
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-
-.tile-delta.good {
-  color: var(--good);
-}
-
-.tile-delta.bad {
-  color: var(--bad);
-}
-
-/* A change with no direction worth colouring stays in ink. */
-.tile-delta.neutral {
-  color: var(--ink-soft);
-}
-
-.tile-note {
-  font-size: var(--text-xs);
-  color: var(--ink-soft);
-}
-
-.spark {
-  margin-top: var(--s2);
-  overflow: visible;
-}
-
-.spark-line {
-  fill: none;
-  stroke: var(--chart-track);
-  stroke-width: 2;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-}
-
-.spark-dot {
-  fill: var(--chart-mark);
-  /* The 2px surface ring, so the point stays legible over the line. */
-  stroke: var(--card);
-  stroke-width: 2;
-}
-
 /* ------------------------------------------------------------------ risk */
 
-.risk,
-.analytics {
+.risk {
   flex: 1;
   /* Both axes: `.body` is a flex row, and without `min-width` a long unbroken
-     line inside — a shell command in the feed — sets the flex item's floor and
-     pushes the whole page wider than the window. */
+     line inside — a shell command in a finding's examples — sets the flex
+     item's floor and pushes the whole page wider than the window. */
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -1429,20 +1246,7 @@ pre.report {
   opacity: 0.55;
 }
 
-.pair {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-  gap: var(--s5);
-  margin-bottom: var(--s5);
-}
-
-.pair > .chart {
-  min-width: 0;
-}
-
 .chart + .chart,
-.chart + .pair,
-.tiles + .chart,
 .banner + .chart {
   margin-top: var(--s5);
 }
@@ -1744,173 +1548,7 @@ pre.report {
   max-width: 46ch;
 }
 
-/* ------------------------------------------------------------------ live */
-
-.live {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.live-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s4);
-  margin: var(--s7) 0 var(--s4);
-}
-
-.live-head:first-child {
-  margin-top: 0;
-}
-
-.lanes {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: var(--s5);
-}
-
-.lane {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: var(--s4);
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--good);
-  border-radius: var(--r-lg);
-  padding: var(--s5);
-}
-
-/* Idle, never "finished": nothing in the store records a session ending. */
-.lane.idle {
-  border-left-color: var(--line-strong);
-  background: var(--sunken);
-}
-
-.lane-head {
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-}
-
-.lane-project {
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.lane-branch {
-  color: var(--ink-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 12ch;
-}
-
-.lane-now {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s4);
-}
-
-.lane-tool {
-  font-size: var(--text-md);
-  font-weight: 600;
-}
-
-.lane-state {
-  font-size: var(--text-sm);
-}
-
-.lane-state.ok {
-  color: var(--good);
-}
-
-.lane-state.bad {
-  color: var(--bad);
-}
-
-.lane-facts {
-  grid-template-columns: 62px minmax(0, 1fr);
-}
-
-.lane .tile {
-  border: none;
-  border-top: 1px solid var(--line);
-  border-radius: 0;
-  padding: var(--s4) 0 0;
-  background: none;
-}
-
-.lane .tile-value {
-  font-size: var(--text-md);
-}
-
-/* --- the feed ----------------------------------------------------------- */
-
-.feed-wrap {
-  position: relative;
-}
-
-.feed {
-  max-height: 44vh;
-  overflow-y: auto;
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-}
-
-.feed-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s4);
-  width: 100%;
-  min-width: 0;
-  min-height: var(--row-h);
-  padding: 0 var(--s4);
-  text-align: left;
-  background: none;
-  border: none;
-  border-bottom: 1px solid var(--line);
-  font-size: var(--text-base);
-}
-
-.feed-row:last-child {
-  border-bottom: none;
-}
-
-.feed-row:hover {
-  background: var(--clay-wash);
-}
-
-.fc-dur {
-  flex: 0 0 var(--col-duration);
-  text-align: right;
-  font-size: var(--text-sm);
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-faint);
-}
-
-.feed-empty {
-  margin: 0;
-  padding: var(--s5);
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-}
-
-.feed-resume {
-  position: absolute;
-  bottom: var(--s5);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-}
-
-/* --- switches ----------------------------------------------------------- */
+/* -------------------------------------------------------------- switches */
 
 .switch {
   display: flex;
@@ -1936,7 +1574,7 @@ pre.report {
   max-width: 72ch;
 }
 
-/* --- uninstall (task 8.6) ----------------------------------------------- */
+/* -------------------------------------------------- uninstall (task 8.6) */
 /*
  * Folded away by default and opened deliberately. The one destructive control
  * in the window, so it is the one button that does not borrow the accent

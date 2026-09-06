@@ -76,6 +76,17 @@ describe("the window", () => {
     expect(app.textContent).not.toContain("Starting…");
   });
 
+  test("offers three tabs — the two Phase 9 removed are not among them", async () => {
+    document.body.append(
+      Object.assign(document.createElement("div"), { id: "app", className: "loading" }),
+    );
+    await import("./main");
+    await settle();
+
+    const tabs = [...document.querySelectorAll(".tabs .tab")].map((t) => t.textContent);
+    expect(tabs).toEqual(["Timeline", "Risk", "Status"]);
+  });
+
   test("a hash asking for the status screen opens it instead", async () => {
     location.hash = "#v=setup";
     document.body.append(

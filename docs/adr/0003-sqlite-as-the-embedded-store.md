@@ -17,6 +17,11 @@ mixed and known:
 
 Full-text search and aggregation are requirements of two of the four views, not optional extras.
 
+> **Phase 9.** The analytics view is gone ([ADR-0010](0010-no-cost-reporting.md)); the aggregation
+> requirement is not. It moved rather than lapsed — the risk review groups findings by project, and
+> the timeline's activity histogram ([Phase 10](../phases/10-one-lens.md)) buckets the same filtered
+> selection the list reads. Full-text search over commands and file paths is untouched.
+
 The single-writer property from ADR-0007 removes the usual multi-process contention concern: one
 process owns the only write handle.
 

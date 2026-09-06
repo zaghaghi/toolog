@@ -277,7 +277,6 @@ describe("grouping (task 5.10)", () => {
         refusals: 1,
         first_at: 1,
         last_at: 2,
-        cost_usd_micros: null,
         agents: [{ agent_id: "ag-1", agent_name: "Explore", calls: 1, first_at: 1, last_at: 2 }],
       },
     ];
@@ -289,7 +288,6 @@ describe("grouping (task 5.10)", () => {
     expect(text(headers[0]!, ".gname")).toBe("app");
     expect(text(headers[0]!, ".gmeta")).toContain("2 calls");
     expect(text(headers[0]!, ".gmeta")).toContain("1 refused");
-    expect(text(headers[0]!, ".gmeta")).toContain("no cost recorded");
     expect(headers[1]!.className).toContain("agent");
     expect(text(headers[1]!, ".gname")).toBe("Explore");
 
@@ -313,7 +311,6 @@ describe("grouping (task 5.10)", () => {
         refusals: 0,
         first_at: 1,
         last_at: 2,
-        cost_usd_micros: 4200,
         agents: [],
       },
     ];
