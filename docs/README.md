@@ -1,6 +1,6 @@
 # Documentation
 
-**Status: v1.1, plus Phase 12 on top of it.** Capture works end to end and the record
+**Status: v1.1, plus Phase 12 on top of it, and a thirteenth planned.** Capture works end to end and the record
 earns the word "audit": it says what it is missing, proves it has not been altered, keeps secrets
 out of what it shows, bounds itself, and fails the build if anything tries to leave the machine. It
 installs and uninstalls as one signed, notarized universal artifact — and ships with **no network
@@ -34,6 +34,7 @@ usable release (v0.1); Phase 8 is v1.0; Phase 11 is v1.1.**
 | [10 — One lens](phases/10-one-lens.md) | The timeline's query bar, histogram and closable pane | done |
 | [11 — Risk, fast and legible](phases/11-risk-fast-and-legible.md) | A review that is fast, adds up, and can be read | **v1.1** — done |
 | [12 — Findings in time](phases/12-findings-in-time.md) | When a finding was first seen, and risk as a timeline filter | done |
+| [13 — A second opinion](phases/13-a-second-opinion.md) | A local model over the calls no rule matched | planned |
 
 Phases 9–11 come from the owner's report after using v1.0: two views did not earn their place, the
 timeline asks the reader to work too hard, and the risk view — the one that is good — is slow, does
@@ -51,6 +52,13 @@ not be filtered by risk at all. It added a sighting ledger — an append-only re
 finding was first seen, which is an observation rather than a derivation and so may be stored where
 a finding may not — and `@risk:high` / `@rule:<id>` in the query bar, which makes the histogram a
 chart of risk over time for free.
+
+[Phase 13](phases/13-a-second-opinion.md) is **planned and not started**. The rules only find what
+someone thought to write a rule for, and **77% of the owner's store is Bash commands no rule has
+ever matched** — reported as nothing rather than as unexamined. It runs a local model over them,
+on this machine and with no network capability added: the model file is brought by the user,
+because [ADR-0008](adr/0008-local-only-zero-egress.md) is not negotiable and the egress test would
+refuse the fetch anyway.
 
 ## The database
 
