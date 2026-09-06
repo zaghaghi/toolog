@@ -1,6 +1,6 @@
 # Documentation
 
-**Status: all twelve phases complete — this is v1.1.** Capture works end to end and the record
+**Status: v1.1 — twelve phases done, a thirteenth planned.** Capture works end to end and the record
 earns the word "audit": it says what it is missing, proves it has not been altered, keeps secrets
 out of what it shows, bounds itself, and fails the build if anything tries to leave the machine. It
 installs and uninstalls as one signed, notarized universal artifact — and ships with **no network
@@ -15,9 +15,9 @@ every rule on the screen with what it looks for.
 
 ## Phases
 
-Nine phases shipped v1.0; three more are the revision after living with it. Each phase ends in
-something runnable and checkable. **Phase 5 was the first usable release (v0.1); Phase 8 is v1.0;
-Phase 11 is v1.1.**
+Nine phases shipped v1.0; three more are the revision after living with it. Phase 12 is **planned
+and not started**. Each phase ends in something runnable and checkable. **Phase 5 was the first
+usable release (v0.1); Phase 8 is v1.0; Phase 11 is v1.1.**
 
 | Phase | Goal | Milestone |
 |---|---|---|
@@ -33,6 +33,7 @@ Phase 11 is v1.1.**
 | [09 — Subtraction](phases/09-subtraction.md) | The usage and live views are removed | done |
 | [10 — One lens](phases/10-one-lens.md) | The timeline's query bar, histogram and closable pane | done |
 | [11 — Risk, fast and legible](phases/11-risk-fast-and-legible.md) | A review that is fast, adds up, and can be read | **v1.1** — done |
+| [12 — Findings in time](phases/12-findings-in-time.md) | When a finding was first seen, and risk as a timeline filter | planned |
 
 Phases 9–11 come from the owner's report after using v1.0: two views did not earn their place, the
 timeline asks the reader to work too hard, and the risk view — the one that is good — is slow, does
@@ -43,6 +44,13 @@ became one `@key:value` box, and the one chart worth keeping from the usage view
 onto the timeline's own filter. Phase 11 finished the job on the risk view — 2,314 ms to 95 ms, a
 summary whose columns add up to it, and every rule visible with its conditions whether or not it
 matched.
+
+[Phase 12](phases/12-findings-in-time.md) is the first thing v1.1 itself asked for rather than
+v1.0: a review can say *what* is wrong and not *when we first noticed*, and the timeline cannot be
+filtered by risk at all. It adds a sighting ledger — an append-only record of when each finding was
+first seen, which is an observation rather than a derivation and so may be stored where a finding
+may not — and `@risk:high` / `@rule:<id>` in the query bar, which makes the histogram a chart of
+risk over time for free.
 
 ## Releasing
 
