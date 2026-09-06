@@ -1105,3 +1105,295 @@ fn every_condition_a_rule_can_state_can_be_said_in_words() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// The sighting ledger (tasks 12.1–12.4)
+// ---------------------------------------------------------------------------
+
+/// Run a review the way the window does, recording what it saw.
+fn review(conn: &Connection, rules: &[rules::Rule], now: i64) -> Vec<rules::Finding> {
+    let mut findings = rules::evaluate(conn, rules).expect("evaluate");
+    rules::record_sightings(conn, rules, &mut findings, now).expect("sightings");
+    findings
+}
+
+#[test]
+fn a_store_nobody_has_reviewed_is_not_a_store_with_nothing_in_it() {
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+
+    // Task 12.5: "nobody has looked yet" and "nothing was found" are different
+    // statements, and reporting the first as "0 new" reads as reassurance.
+    assert!(!rules::ever_reviewed(conn).expect("ever"));
+    let findings = rules::evaluate(conn, &rules).expect("evaluate");
+    assert!(findings.iter().all(|f| f.first_seen.is_none()));
+
+    review(conn, &rules, 1_000);
+    assert!(rules::ever_reviewed(conn).expect("ever"));
+}
+
+#[test]
+fn looking_twice_is_not_seeing_twice() {
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+
+    let first = review(conn, &rules, 1_000);
+    let new_first: i64 = first.iter().map(|f| f.new_calls).sum();
+    assert!(new_first > 0, "the first review sees everything as new");
+
+    // The same store, looked at again an hour later.
+    let second = review(conn, &rules, 4_600_000);
+    assert_eq!(
+        second.iter().map(|f| f.new_calls).sum::<i64>(),
+        0,
+        "a second look records nothing"
+    );
+    for finding in &second {
+        if finding.calls > 0 && finding.dismissed.is_none() {
+            assert_eq!(
+                finding.first_seen,
+                Some(1_000),
+                "{} moved its first_seen on a second look",
+                finding.rule_id
+            );
+        }
+    }
+}
+
+#[test]
+fn a_call_captured_later_is_new_and_the_rest_are_not() {
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+    review(conn, &rules, 1_000);
+
+    // A destructive call arrives after the first review.
+    session(conn, "s-late", "/work/a", "/work/a");
+    call(
+        conn,
+        "toolu_late",
+        "s-late",
+        "Bash",
+        "rm -rf /work/a/target",
+        None,
+        9_000,
+        "default",
+    );
+    decide(conn, "toolu_late", "s-late", "accept", "config");
+
+    let second = review(conn, &rules, 5_000);
+    let hit = finding(&second, "auto-approved-destructive-bash").expect("flagged");
+    assert_eq!(hit.new_calls, 1, "only the call that arrived since");
+    assert_eq!(
+        hit.first_seen,
+        Some(1_000),
+        "and the rule was first seen at the first review, not now"
+    );
+}
+
+#[test]
+fn a_sighting_outlives_the_call_it_names() {
+    // The reason there is no foreign key and no DELETE in `retention.rs`:
+    // "this was flagged before you deleted it" is a thing an audit trail should
+    // still be able to say, exactly as the `deletion` table outlives what it
+    // describes.
+    use toolog_core::retention::{self, Scope};
+
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+    review(conn, &rules, 1_000);
+
+    let before: i64 = conn
+        .query_row("SELECT count(*) FROM rule_sighting", [], |r| r.get(0))
+        .expect("count");
+    assert!(before > 0);
+
+    let scope = Scope::Session {
+        session_id: "s0".into(),
+    };
+    let removed = retention::purge(conn, &scope).expect("purge");
+    assert!(removed.tool_calls > 0, "the purge removed the calls");
+
+    assert_eq!(
+        conn.query_row("SELECT count(*) FROM rule_sighting", [], |r| r
+            .get::<_, i64>(0))
+            .expect("count"),
+        before,
+        "purging the calls left the record that they were flagged"
+    );
+}
+
+#[test]
+fn a_rule_set_aside_records_no_sightings() {
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+    rules::dismiss(conn, "auto-approved-destructive-bash", "known", 1).expect("dismiss");
+
+    review(conn, &rules, 1_000);
+    let rows: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM rule_sighting WHERE rule_id = 'auto-approved-destructive-bash'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count");
+    assert_eq!(
+        rows, 0,
+        "a rule nobody is watching must not fill 'new since the last review'"
+    );
+}
+
+#[test]
+fn a_sighting_is_never_recorded_for_a_call_the_finding_did_not_report() {
+    // The one way this ledger could start lying: sightings written from a
+    // different question than the count came from. They share `where_for`, and
+    // this asserts the two agree over every rule at once.
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+    let findings = review(conn, &rules, 1_000);
+
+    for f in findings.iter().filter(|f| f.dismissed.is_none()) {
+        let recorded: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM rule_sighting WHERE rule_id = ?1",
+                [&f.rule_id],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            recorded, f.calls,
+            "{} reported {} calls and recorded {recorded} sightings",
+            f.rule_id, f.calls
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Risk as a timeline filter (tasks 12.7, 12.8)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_timeline_and_the_review_agree_about_what_high_means() {
+    // The exit criterion, as an assertion: `@risk:high` in the timeline must
+    // select exactly the calls the summary counts at `high`. They share
+    // `risk_clause`, and this is what says so.
+    use toolog_core::model::TimelineFilter;
+    use toolog_core::query::{self, Lens};
+
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+    let findings = rules::evaluate(conn, &rules).expect("evaluate");
+    let reconciled = rules::reconcile(conn, &rules, &findings).expect("reconcile");
+    let dismissed = rules::dismissed_rules(conn).expect("dismissed");
+
+    for tally in &reconciled.totals {
+        let filter = TimelineFilter {
+            risk: Some(rules::severity_word(tally.severity).to_string()),
+            ..TimelineFilter::default()
+        };
+        let counted = query::timeline_count(conn, Lens::with_rules(&filter, &rules, &dismissed))
+            .expect("count");
+        assert_eq!(
+            counted, tally.calls,
+            "the timeline and the review disagree about {:?}",
+            tally.severity
+        );
+    }
+}
+
+#[test]
+fn a_rule_set_aside_fills_neither_the_posture_nor_the_timeline() {
+    use toolog_core::model::TimelineFilter;
+    use toolog_core::query::{self, Lens};
+
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+
+    let filter = TimelineFilter {
+        rule_id: Some("auto-approved-destructive-bash".to_string()),
+        ..TimelineFilter::default()
+    };
+    let before = {
+        let dismissed = rules::dismissed_rules(conn).expect("dismissed");
+        query::timeline_count(conn, Lens::with_rules(&filter, &rules, &dismissed)).expect("count")
+    };
+    assert!(before > 0);
+
+    rules::dismiss(conn, "auto-approved-destructive-bash", "known", 1).expect("dismiss");
+    let after = {
+        let dismissed = rules::dismissed_rules(conn).expect("dismissed");
+        query::timeline_count(conn, Lens::with_rules(&filter, &rules, &dismissed)).expect("count")
+    };
+    assert_eq!(
+        after, 0,
+        "a rule nobody is watching should not fill the list"
+    );
+}
+
+#[test]
+fn a_filter_that_asks_for_risk_without_rules_is_an_error_not_an_empty_list() {
+    // The one way this could be silently wrong: a caller forgetting the rules
+    // and the query layer answering "nothing" instead of "I cannot know".
+    use toolog_core::model::TimelineFilter;
+    use toolog_core::query::{self, Lens};
+
+    let db = awkward();
+    let filter = TimelineFilter {
+        risk: Some("high".to_string()),
+        ..TimelineFilter::default()
+    };
+    let err = query::timeline_count(db.conn(), Lens::plain(&filter))
+        .expect_err("a plain lens cannot see risk");
+    assert!(
+        format!("{err}").contains("no rule set was supplied"),
+        "the error must say what is missing: {err}"
+    );
+}
+
+#[test]
+fn the_histogram_narrows_with_a_risk_filter_like_everything_else() {
+    // Task 12.11: the chart is built on the same `selection`, so `@risk:high`
+    // over the whole store is risk over time — for free, and asserted rather
+    // than assumed.
+    use toolog_core::model::TimelineFilter;
+    use toolog_core::query::{self, Lens};
+
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+    let dismissed = rules::dismissed_rules(conn).expect("dismissed");
+
+    // Every call in `awkward()` is destructive on purpose, so the contrast has
+    // to be supplied here: an ordinary call the rules have nothing to say about.
+    session(conn, "s-quiet", "/work/a", "/work/a");
+    call(
+        conn, "toolu_ls", "s-quiet", "Bash", "ls -la", None, 4_000, "default",
+    );
+
+    let all = query::histogram(conn, &TimelineFilter::default(), 0).expect("histogram");
+    let filter = TimelineFilter {
+        risk: Some("high".to_string()),
+        ..TimelineFilter::default()
+    };
+    let risky = query::histogram(conn, Lens::with_rules(&filter, &rules, &dismissed), 0)
+        .expect("histogram");
+
+    let sum = |h: &query::Histogram| h.buckets.iter().map(|b| b.calls).sum::<i64>();
+    assert!(sum(&risky) > 0, "this fixture has high-severity calls");
+    assert!(
+        sum(&risky) < sum(&all),
+        "and not every call in it is one of them"
+    );
+    assert_eq!(
+        sum(&risky),
+        query::timeline_count(conn, Lens::with_rules(&filter, &rules, &dismissed)).expect("count"),
+        "the chart and the count still describe the same rows"
+    );
+}

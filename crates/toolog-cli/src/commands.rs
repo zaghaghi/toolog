@@ -454,9 +454,15 @@ fn write_row(out: &mut dyn Write, row: &ToolCall, format: Format, written: u32) 
 ///
 /// Takes a connection rather than a [`Db`] so the application can export
 /// through its existing read handle instead of opening a second one.
+/// Export the calls a filter selects.
+///
+/// Takes a [`query::Lens`] rather than a bare filter (task 12.13), so
+/// `--risk high` on the command line means the same thing it means in the
+/// window: the rules in force, dismissed ones excluded. A filter that names a
+/// risk field with no rules supplied is an error here, not an empty file.
 pub fn export(
     conn: &Connection,
-    filter: &TimelineFilter,
+    lens: query::Lens<'_>,
     limit: Option<u32>,
     format: Format,
     out: &mut dyn Write,
@@ -496,7 +502,7 @@ pub fn export(
             limit: remaining,
             offset,
         };
-        let rows = query::timeline_page(conn, filter, page)?;
+        let rows = query::timeline_page(conn, lens, page)?;
         if rows.is_empty() {
             break;
         }
@@ -961,7 +967,7 @@ mod tests {
         let mut out = Vec::new();
         let n = export(
             db.conn(),
-            &TimelineFilter::default(),
+            query::Lens::plain(&TimelineFilter::default()),
             None,
             Format::Csv,
             &mut out,
@@ -983,7 +989,7 @@ mod tests {
         let mut out = Vec::new();
         export(
             db.conn(),
-            &TimelineFilter::default(),
+            query::Lens::plain(&TimelineFilter::default()),
             None,
             Format::Json,
             &mut out,
@@ -1002,7 +1008,7 @@ mod tests {
         let mut out = Vec::new();
         export(
             db.conn(),
-            &TimelineFilter::default(),
+            query::Lens::plain(&TimelineFilter::default()),
             None,
             Format::Json,
             &mut out,
@@ -1029,7 +1035,7 @@ mod tests {
         let mut out = Vec::new();
         let n = export(
             db.conn(),
-            &TimelineFilter::default(),
+            query::Lens::plain(&TimelineFilter::default()),
             Some(2),
             Format::Jsonl,
             &mut out,
@@ -1059,7 +1065,7 @@ mod tests {
             let mut out = Vec::new();
             export(
                 db.conn(),
-                &TimelineFilter::default(),
+                query::Lens::plain(&TimelineFilter::default()),
                 None,
                 format,
                 &mut out,
@@ -1107,7 +1113,7 @@ mod tests {
         let mut out = Vec::new();
         export(
             db.conn(),
-            &TimelineFilter::default(),
+            query::Lens::plain(&TimelineFilter::default()),
             None,
             Format::Markdown,
             &mut out,
@@ -1157,7 +1163,14 @@ mod tests {
 
         // Both rows carry the OTLP bit; only one of them was refused.
         let mut out = Vec::new();
-        let n = export(db.conn(), &rejected_only(), None, Format::Jsonl, &mut out).expect("export");
+        let n = export(
+            db.conn(),
+            query::Lens::plain(&rejected_only()),
+            None,
+            Format::Jsonl,
+            &mut out,
+        )
+        .expect("export");
         assert_eq!(n, 1, "a refusal is a decision, not a provenance");
         assert!(String::from_utf8(out).expect("utf8").contains("toolu_no"));
     }

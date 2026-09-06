@@ -21,7 +21,7 @@
 //! values nobody has used — or missing ones they have — is worse than none.
 
 import type { Facets, Format, TimelineFilter } from "./bindings";
-import { saveExport } from "./bindings";
+import { ruleIds, saveExport } from "./bindings";
 import { el, fill, span } from "./dom";
 import { count } from "./format";
 import { fixedValues, format as formatQuery, KEYS, parse, quote, tokenize } from "./query";
@@ -65,6 +65,8 @@ export class FilterBar {
     permission_modes: [],
     agents: [],
   };
+  /** `@rule:` completions. From the rules file, not the store — see `rule_ids`. */
+  private rules: string[] = [];
 
   constructor(
     view: ViewState,
@@ -120,6 +122,15 @@ export class FilterBar {
   setFacets(facets: Facets): void {
     this.facets = facets;
     this.draw();
+    // Fetched here rather than by the timeline, because the query bar is the
+    // only thing that offers them.
+    void ruleIds()
+      .then((ids) => {
+        this.rules = ids;
+      })
+      .catch(() => {
+        // `@rule:` still parses and still filters; only completion is lost.
+      });
   }
 
   setView(view: ViewState): void {
@@ -223,6 +234,8 @@ export class FilterBar {
         return this.facets.agents;
       case "decision":
         return ["accept", "reject"];
+      case "rule":
+        return this.rules;
       default:
         return fixedValues(key);
     }

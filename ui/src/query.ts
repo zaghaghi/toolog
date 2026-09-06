@@ -18,7 +18,7 @@ import { emptyFilter, withLane, withThread } from "./view";
 import type { Lane, Thread } from "./view";
 
 /** What a key accepts, which is what autocomplete offers after the colon. */
-export type Values = "text" | "outcome" | "lane" | "thread" | "boolean";
+export type Values = "text" | "outcome" | "lane" | "thread" | "boolean" | "risk" | "rule";
 
 export interface KeySpec {
   /** The field this key edits, for the ones that are a plain assignment. */
@@ -47,6 +47,20 @@ export const KEYS: Record<string, KeySpec> = {
   lane: { values: "lane", hint: "both, transcript or otel" },
   thread: { values: "thread", hint: "main or sub" },
   sidechain: { field: "is_sidechain", values: "boolean", hint: "true or false" },
+  /**
+   * The two keys that mean something only against the rules in force.
+   *
+   * **A link carrying one is not absolute** (task 12.10). Task 5.6 made time
+   * absolute so a shared view keeps its meaning; `@risk:high` cannot be, because
+   * the rules are a file that changes — so it is evaluated against the rules in
+   * force when the link is *opened*. That is a deliberate exception, and the
+   * alternative is embedding a rule definition in a URL.
+   *
+   * A rule someone set aside counts for neither, matching the risk view's
+   * posture table: a rule nobody is watching should not fill the timeline.
+   */
+  risk: { field: "risk", values: "risk", hint: "high, medium, low or info" },
+  rule: { field: "rule_id", values: "rule", hint: "One rule, by id" },
 };
 
 const OUTCOMES: string[] = ["ok", "failed", "refused"];
@@ -64,6 +78,8 @@ export function fixedValues(key: string): string[] {
       return THREADS;
     case "boolean":
       return ["true", "false"];
+    case "risk":
+      return ["high", "medium", "low", "info"];
     default:
       return [];
   }
@@ -238,6 +254,15 @@ function apply(
   const spec = KEYS[key]!;
 
   if (spec.field !== undefined) {
+    if (spec.values === "risk") {
+      const known = fixedValues(key);
+      if (!known.includes(value)) {
+        errors.push({ key, message: `@${key} takes ${known.join(", ")} — not "${value}".` });
+        return;
+      }
+      filter.risk = value;
+      return;
+    }
     if (spec.values === "boolean") {
       const bool = asBoolean(value);
       if (bool === null) {

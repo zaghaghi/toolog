@@ -46,6 +46,8 @@ const SAYABLE: Partial<TimelineFilter>[] = [
   { query: "rm -rf" },
   { query: "@reboot" },
   { query: 'a "quoted" phrase' },
+  { risk: "high" },
+  { rule_id: "auto-approved-destructive-bash" },
 ];
 
 describe("the round trip (task 10.5)", () => {
@@ -166,5 +168,20 @@ describe("a filter reachable by link is sayable in the box (task 10.7)", () => {
     // Time is the one thing the box does not write, so it is the one thing
     // that does not come back — the control and the histogram own it.
     expect(said).toEqual({ ...restored, since: null, until: null });
+  });
+});
+
+describe("risk as a filter (tasks 12.9, 12.10)", () => {
+  test("@risk narrows to a severity and @rule to one rule", () => {
+    const { filter: f, errors } = parse("@risk:high @rule:secrets-read rm");
+    expect(errors).toEqual([]);
+    expect(f.risk).toBe("high");
+    expect(f.rule_id).toBe("secrets-read");
+    expect(f.query).toBe("rm");
+  });
+
+  test("a severity the rules do not have is an error naming the four", () => {
+    const { errors } = parse("@risk:critical");
+    expect(errors[0]?.message).toContain("high, medium, low, info");
   });
 });

@@ -122,6 +122,12 @@ pub struct ExportArgs {
     /// Only calls that were refused — the OTEL-only lane.
     #[arg(long)]
     pub rejected: bool,
+    /// Only calls a live rule of this severity flagged: high, medium, low, info.
+    #[arg(long, value_name = "SEVERITY")]
+    pub risk: Option<String>,
+    /// Only calls one named rule matched.
+    #[arg(long, value_name = "ID")]
+    pub rule: Option<String>,
     /// Stop after this many.
     #[arg(long, value_name = "N")]
     pub limit: Option<u32>,
@@ -399,15 +405,45 @@ fn run_export(cli: &Cli, args: &ExportArgs) -> anyhow::Result<i32> {
     };
     filter.session_id.clone_from(&args.session);
     filter.tool_name.clone_from(&args.tool);
+    filter.risk.clone_from(&args.risk);
+    filter.rule_id.clone_from(&args.rule);
     if let Some(since) = &args.since {
         filter.since = Some(parse_since(since)?);
     }
+
+    // Task 12.13: the rules file is only read when the export asks for it, and
+    // a broken one fails here rather than quietly exporting everything.
+    let rules = if filter.risk.is_some() || filter.rule_id.is_some() {
+        let loaded = commands::rules()?;
+        if let Some(severity) = &filter.risk {
+            let known = ["high", "medium", "low", "info"];
+            anyhow::ensure!(
+                known.contains(&severity.as_str()),
+                "--risk takes one of {}, not `{severity}`",
+                known.join(", "),
+            );
+        }
+        if let Some(id) = &filter.rule_id {
+            anyhow::ensure!(
+                loaded.iter().any(|r| &r.id == id),
+                "no rule with id `{id}`. `toolog risk` lists them.",
+            );
+        }
+        Some(loaded)
+    } else {
+        None
+    };
+    let dismissed = toolog_core::rules::dismissed_rules(db.conn())?;
+    let lens = match &rules {
+        Some(rules) => toolog_core::query::Lens::with_rules(&filter, rules, &dismissed),
+        None => toolog_core::query::Lens::plain(&filter),
+    };
 
     let mut sink: Box<dyn Write> = match &args.output {
         Some(path) => Box::new(std::io::BufWriter::new(std::fs::File::create(path)?)),
         None => Box::new(std::io::BufWriter::new(std::io::stdout().lock())),
     };
-    let n = commands::export(db.conn(), &filter, args.limit, args.format, &mut sink)?;
+    let n = commands::export(db.conn(), lens, args.limit, args.format, &mut sink)?;
     drop(sink);
 
     if let Some(path) = &args.output {

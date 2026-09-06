@@ -38,6 +38,8 @@ export function emptyFilter(): TimelineFilter {
     main_thread: null,
     query: null,
     provenance: null,
+    risk: null,
+    rule_id: null,
   };
 }
 
@@ -107,6 +109,8 @@ const KEYS: Record<string, keyof TimelineFilter> = {
   ok: "success",
   sidechain: "is_sidechain",
   nosession: "session_unknown",
+  risk: "risk",
+  rule: "rule_id",
 };
 
 const NUMERIC = new Set<keyof TimelineFilter>(["since", "until", "provenance"]);

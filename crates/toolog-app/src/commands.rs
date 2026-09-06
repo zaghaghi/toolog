@@ -103,6 +103,12 @@ pub(crate) struct RiskReview {
     pub(crate) rules_path: Option<String>,
     /// Whether that file exists and was loaded.
     pub(crate) rules_customized: bool,
+    /// Whether this is the first review this store has ever had (task 12.5).
+    ///
+    /// "Nobody has looked yet" and "nothing was found" are different
+    /// statements, and reporting the first as "0 new findings" reads as
+    /// reassurance it has not earned.
+    pub(crate) first_review: bool,
 }
 
 /// When the user's rules file was last written, or `None` if there is none.
@@ -130,24 +136,62 @@ fn risk_review(app: &AppState) -> anyhow::Result<RiskReview> {
         return Ok(cached);
     }
 
-    // Taken before the evaluation, so a write that lands while the rules run
-    // expires the memo rather than being stamped into it.
-    let watermark = app.risk_watermark()?;
     let path = cli::rules_path();
     let customized = path.as_ref().is_some_and(|p| p.is_file());
     let rules = cli::rules()?;
-    let review = app.read_risk(|c| {
+    let first_review = app.read_risk(|c| Ok(!rules::ever_reviewed(c)?))?;
+
+    let (mut findings, reconciled) = app.read_risk(|c| {
         let findings = rules::evaluate(c, &rules)?;
         let reconciled = rules::reconcile(c, &rules, &findings)?;
-        Ok(RiskReview {
-            findings,
-            totals: reconciled.totals,
-            projects: reconciled.projects,
-            rules_path: path.map(|p| p.display().to_string()),
-            rules_customized: customized,
-        })
+        Ok((findings, reconciled))
     })?;
 
+    // Task 12.3: a review records what it saw, which makes it a *mutating*
+    // command. The write goes through the single writer (ADR-0007), the way a
+    // dismissal does — the risk connection is a reader.
+    let now = raw::now_ms();
+    let recorded = {
+        let mut seen = std::mem::take(&mut findings);
+        let for_writer = rules.clone();
+        let out = app.with_capture(move |capture| {
+            capture
+                .writer()
+                .submit_blocking(move |conn| {
+                    rules::record_sightings(conn, &for_writer, &mut seen, now).map(|_| seen)
+                })
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+                .map_err(anyhow::Error::from)
+        });
+        match out {
+            Ok(seen) => seen,
+            // A store that cannot be written to is still a store worth
+            // reviewing. The findings are right; only the ledger is behind.
+            Err(error) => {
+                tracing::warn!(%error, "sightings not recorded");
+                app.read_risk(|c| {
+                    let mut findings = rules::evaluate(c, &rules)?;
+                    rules::read_sightings(c, &mut findings)?;
+                    Ok(findings)
+                })?
+            }
+        }
+    };
+
+    let review = RiskReview {
+        findings: recorded,
+        totals: reconciled.totals,
+        projects: reconciled.projects,
+        rules_path: path.map(|p| p.display().to_string()),
+        rules_customized: customized,
+        first_review,
+    };
+
+    // Taken **after** the sighting write, which inverts task 11.3's rule and
+    // for the opposite reason: that write is ours and is already accounted for
+    // in the answer above, so stamping the watermark before it would leave a
+    // memo that expires immediately on our own change.
+    let watermark = app.risk_watermark()?;
     app.remember_risk(watermark, mtime, &review);
     Ok(review)
 }
@@ -289,6 +333,28 @@ macro_rules! commands {
     };
 }
 
+/// A timeline filter, with the rules its `@risk` and `@rule` fields need.
+///
+/// Every read the timeline makes goes through this rather than through
+/// `Lens::plain`, so a filter naming a risk field can never reach the query
+/// layer without the rules that give it meaning (task 12.7). Reading the rules
+/// file is a few microseconds; getting this wrong is a wrong answer.
+fn timeline_lens<T>(
+    app: &AppState,
+    filter: &TimelineFilter,
+    f: impl FnOnce(&toolog_core::Connection, query::Lens<'_>) -> toolog_core::Result<T>,
+) -> anyhow::Result<T> {
+    // A filter that asks for nothing rule-shaped does not pay for the file.
+    if filter.risk.is_none() && filter.rule_id.is_none() {
+        return app.read(|c| f(c, query::Lens::plain(filter)));
+    }
+    let rules = cli::rules()?;
+    app.read(|c| {
+        let dismissed = rules::dismissed_rules(c)?;
+        f(c, query::Lens::with_rules(filter, &rules, &dismissed))
+    })
+}
+
 commands! {
     |app, handle|
 
@@ -298,7 +364,7 @@ commands! {
     /// a search term, the snippet showing where the match was — the list never
     /// makes a second call to draw a row.
     query_timeline(filter: TimelineFilter, page: Page) -> Vec<query::TimelineRow> {
-        app.read(|c| query::timeline_rows(c, &filter, page))
+        timeline_lens(app, &filter, |c, lens| query::timeline_rows(c, lens, page))
     }
 
     /// The sessions a filter touches, with their subagents and sizes.
@@ -306,12 +372,21 @@ commands! {
     /// The index a grouped list is built from: knowing each group's size up
     /// front is what lets it collapse a session without having fetched it.
     timeline_groups(filter: TimelineFilter) -> Vec<query::SessionGroup> {
-        app.read(|c| query::timeline_groups(c, &filter))
+        timeline_lens(app, &filter, |c, lens| query::timeline_groups(c, lens))
     }
 
     /// The distinct values the filter controls offer.
     facets() -> query::Facets {
         app.read(query::facets)
+    }
+
+    /// Every rule id in force, for the query bar's `@rule:` completions.
+    ///
+    /// Its own command rather than a field on `facets`: facets come from the
+    /// store and rules come from a file, and a call that mixed the two would
+    /// have to explain which half was stale.
+    rule_ids() -> Vec<String> {
+        Ok(cli::rules()?.into_iter().map(|r| r.id).collect())
     }
 
     /// The activity histogram over the same filter the list is showing.
@@ -321,7 +396,7 @@ commands! {
     /// bucket size is chosen from the span rather than passed in: it is a
     /// property of what is being looked at, not a preference.
     timeline_histogram(filter: TimelineFilter, utc_offset_minutes: i32) -> query::Histogram {
-        app.read(|c| query::histogram(c, &filter, utc_offset_minutes))
+        timeline_lens(app, &filter, |c, lens| query::histogram(c, lens, utc_offset_minutes))
     }
 
     /// How many calls match a filter, ignoring paging.
@@ -329,7 +404,7 @@ commands! {
     /// Beyond the tasks' list, and needed by every one of them: a virtualized
     /// list cannot size its scrollbar without it.
     timeline_count(filter: TimelineFilter) -> i64 {
-        app.read(|c| query::timeline_count(c, &filter))
+        timeline_lens(app, &filter, |c, lens| query::timeline_count(c, lens))
     }
 
     /// One call, the files it changed, and the session it ran in.
@@ -429,9 +504,9 @@ commands! {
     /// wrapper would not parse. The bindings test enforces the rule rather than
     /// leaving it to memory.
     export_calls(filter: TimelineFilter, format: Format, limit: Option<u32>) -> String {
-        app.read(|c| {
+        timeline_lens(app, &filter, |c, lens| {
             let mut out = Vec::new();
-            cli::export(c, &filter, limit, format, &mut out)?;
+            cli::export(c, lens, limit, format, &mut out)?;
             Ok(String::from_utf8_lossy(&out).into_owned())
         })
     }
@@ -464,7 +539,10 @@ commands! {
             .map_err(|e| anyhow::anyhow!("that location cannot be written to: {e}"))?;
 
         let mut file = std::fs::File::create(&path)?;
-        app.read(|c| cli::export(c, &filter, limit, format, &mut file))?;
+        timeline_lens(app, &filter, |c, lens| {
+            cli::export(c, lens, limit, format, &mut file)?;
+            Ok(())
+        })?;
         Ok(Some(path.display().to_string()))
     }
 

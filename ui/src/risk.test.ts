@@ -17,6 +17,7 @@ const state = {
   firstPage: [] as ToolCall[],
   asked: [] as [string, number][],
   revealed: 0,
+  openedRule: [] as string[],
 };
 
 vi.mock("./bindings", () => ({
@@ -100,6 +101,8 @@ function finding(over: Partial<Finding> = {}): Finding {
     last_at: Date.parse("2026-03-02T09:00:00Z"),
     conditions: ["the tool is Bash", "the command's first line contains any of: rm -rf"],
     from_user: false,
+    first_seen: Date.parse("2026-03-01T09:00:00Z"),
+    new_calls: 0,
     unattributed_calls: 0,
     dismissed: null,
     ...over,
@@ -124,6 +127,7 @@ function review(over: Partial<RiskReview> = {}): RiskReview {
     ],
     rules_path: "/Users/someone/Library/Application Support/toolog/rules.toml",
     rules_customized: false,
+    first_review: false,
     ...over,
   };
 }
@@ -138,7 +142,7 @@ const settle = async (): Promise<void> => {
 
 async function mount(data: RiskReview, onOpenCall: (id: string) => void = () => {}) {
   state.review = data;
-  const view = new RiskView({ onNotice: () => {}, onOpenCall });
+  const view = new RiskView({ onNotice: () => {}, onOpenCall, onOpenRule: (id) => state.openedRule.push(id) });
   await view.refresh();
   return view.node;
 }
@@ -147,6 +151,7 @@ beforeEach(() => {
   state.review = null;
   state.firstPage = [call()];
   state.revealed = 0;
+  state.openedRule = [];
   state.dismissed = [];
   state.restored = [];
   state.extraCalls = [];
@@ -239,7 +244,7 @@ describe("setting a rule aside", () => {
     const notices: string[] = [];
     state.review = review();
     const { RiskView: View } = await import("./risk");
-    const view = new View({ onNotice: (m) => notices.push(m), onOpenCall: () => {} });
+    const view = new View({ onNotice: (m) => notices.push(m), onOpenCall: () => {}, onOpenRule: () => {} });
     await view.refresh();
     const node = view.node;
 
@@ -435,5 +440,53 @@ describe("nothing found", () => {
   test("and still says where a rules file would go", async () => {
     const node = await mount(clean());
     expect(node.querySelector(".footnote")?.textContent).toContain("rules.toml");
+  });
+});
+
+describe("findings in time (tasks 12.4, 12.5, 12.12)", () => {
+  test("a first review says so rather than reporting nothing new", async () => {
+    // "Nobody has looked yet" and "nothing was found" are different, and
+    // reporting the first as "0 new" is reassurance it has not earned.
+    const node = await mount(review({ first_review: true }));
+    expect(node.querySelector(".risk-new")?.textContent).toContain("First review");
+  });
+
+  test("counts what is new since the last review", async () => {
+    const node = await mount(
+      review({ findings: [finding({ calls: 9, new_calls: 4 })], first_review: false }),
+    );
+    expect(node.querySelector(".risk-new")?.textContent).toContain("4 calls are new");
+  });
+
+  test("says nothing is new when nothing is, without implying nothing was found", async () => {
+    const node = await mount(review({ findings: [finding({ calls: 9, new_calls: 0 })] }));
+    expect(node.querySelector(".risk-new")?.textContent).toBe(
+      "Nothing new since the last review. ",
+    );
+  });
+
+  test("shows when a finding was first seen, not when its calls ran", async () => {
+    const node = await mount(review({ findings: [finding({ first_seen: null })] }));
+    node.querySelector<HTMLButtonElement>(".finding-head")?.click();
+    await settle();
+    expect(node.querySelector(".kv")?.textContent).toContain("not yet recorded");
+  });
+
+  test("links the whole rule into the timeline", async () => {
+    const node = await mount(review({ findings: [finding({ calls: 12 })] }));
+    node.querySelector<HTMLButtonElement>(".finding-head")?.click();
+    await settle();
+
+    const open = node.querySelector<HTMLButtonElement>(".finding-open button");
+    expect(open?.textContent).toBe("Show all 12 in the timeline");
+    open?.click();
+    expect(state.openedRule).toEqual(["auto-approved-destructive-bash"]);
+  });
+
+  test("a rule that matched nothing has nowhere to go", async () => {
+    const node = await mount(review({ findings: [finding({ calls: 0 })] }));
+    node.querySelector<HTMLButtonElement>(".finding-head")?.click();
+    await settle();
+    expect(node.querySelector(".finding-open")).toBeNull();
   });
 });

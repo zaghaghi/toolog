@@ -45,6 +45,37 @@ fn main() {
         ),
     ];
 
+    // Task 12.11: the risk filter compiles a dozen LIKE/GLOB patterns into the
+    // timeline's selection, and this is the first time that lands inside a
+    // per-bucket GROUP BY.
+    let ruleset = toolog_core::rules::load(None).expect("rules");
+    let dismissed = toolog_core::rules::dismissed_rules(conn).expect("dismissed");
+    let risky = TimelineFilter {
+        risk: Some("high".to_string()),
+        ..TimelineFilter::default()
+    };
+    let lens = query::Lens::with_rules(&risky, &ruleset, &dismissed);
+    let _ = query::histogram(conn, lens, 0).expect("histogram");
+    let mut runs: Vec<f64> = (0..5)
+        .map(|_| {
+            let start = Instant::now();
+            let h = query::histogram(conn, lens, 0).expect("histogram");
+            let ms = start.elapsed().as_secs_f64() * 1000.0;
+            std::hint::black_box(h);
+            ms
+        })
+        .collect();
+    runs.sort_by(f64::total_cmp);
+    let risk_h = query::histogram(conn, lens, 0).expect("histogram");
+    println!(
+        "{:<28} {:>7.1} ms   {:>3} columns of {:?}, {} calls",
+        "@risk:high (no bounds)",
+        runs[2],
+        risk_h.buckets.len(),
+        risk_h.size,
+        risk_h.buckets.iter().map(|b| b.calls).sum::<i64>(),
+    );
+
     for (name, filter) in cases {
         // Warm the page cache the way a second tab switch would find it, then
         // report the median of five: one cold number is a story, not a budget.

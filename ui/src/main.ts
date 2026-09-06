@@ -24,7 +24,7 @@ import { RiskView } from "./risk";
 import { SetupView } from "./setup";
 import { TimelineView } from "./timeline";
 import type { ViewState } from "./view";
-import { fromHash, toHash } from "./view";
+import { emptyFilter, emptyView, fromHash, toHash } from "./view";
 
 type Screen = "timeline" | "risk" | "setup";
 
@@ -107,7 +107,17 @@ function openCall(toolUseId: string): void {
   timeline.apply(view, true);
 }
 
-const risk = new RiskView({ onNotice: notice, onOpenCall: openCall });
+/** Take the reader to every call one rule matched (task 12.12). */
+function openRule(ruleId: string): void {
+  // The rule replaces whatever was narrowing the list: arriving at a filtered
+  // timeline that shows fewer calls than the finding claimed would be worse
+  // than arriving at the wrong place.
+  view = { ...emptyView(), filter: { ...emptyFilter(), rule_id: ruleId } };
+  show("timeline");
+  timeline.apply(view, true);
+}
+
+const risk = new RiskView({ onNotice: notice, onOpenCall: openCall, onOpenRule: openRule });
 
 const screens: Record<Screen, { node: HTMLElement }> = { timeline, risk, setup };
 

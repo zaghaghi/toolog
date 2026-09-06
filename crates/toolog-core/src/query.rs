@@ -9,7 +9,7 @@
 use rusqlite::{Connection, Row, ToSql, params};
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::fts;
 use crate::model::{
     FileChange, Page, Reconciliation, SearchHit, Session, TimelineFilter, ToolCall, provenance,
@@ -74,6 +74,8 @@ fn map_tool_call_offset(row: &Row<'_>, base: usize) -> rusqlite::Result<ToolCall
 struct Selection {
     from: String,
     where_sql: String,
+    /// A `WITH` clause the statement must carry, when a risk filter brought one.
+    with_sql: String,
     binds: Vec<Box<dyn ToSql>>,
     /// The sanitized FTS5 expression, when there is one. Kept because the page
     /// query has to bind it a second time for `snippet()`.
@@ -83,14 +85,66 @@ struct Selection {
     searching: bool,
 }
 
+/// A filter, plus the rules its risk fields need in order to mean anything.
+///
+/// `risk` and `rule_id` are the only fields that cannot be compiled from the
+/// store alone, because a rule lives in a file. Rather than reach for that file
+/// from inside the query layer — where "which rules were in force" would become
+/// invisible — the caller hands it over. A [`Lens::plain`] filter that names a
+/// risk field is an **error**, not an empty result: answering "show me the
+/// high-risk calls" with silence because nobody passed the rules is the kind of
+/// wrong answer this crate exists not to give.
+#[derive(Debug, Clone, Copy)]
+pub struct Lens<'a> {
+    filter: &'a TimelineFilter,
+    rules: &'a [crate::rules::Rule],
+    dismissed: Option<&'a std::collections::HashMap<String, crate::rules::Dismissal>>,
+}
+
+impl<'a> Lens<'a> {
+    /// A filter that names no rule-based field.
+    #[must_use]
+    pub fn plain(filter: &'a TimelineFilter) -> Self {
+        Self {
+            filter,
+            rules: &[],
+            dismissed: None,
+        }
+    }
+
+    /// A filter that may narrow by risk or by rule.
+    #[must_use]
+    pub fn with_rules(
+        filter: &'a TimelineFilter,
+        rules: &'a [crate::rules::Rule],
+        dismissed: &'a std::collections::HashMap<String, crate::rules::Dismissal>,
+    ) -> Self {
+        Self {
+            filter,
+            rules,
+            dismissed: Some(dismissed),
+        }
+    }
+}
+
+/// So every existing call site keeps reading as it did. A filter that names a
+/// risk field this way fails loudly in [`selection`].
+impl<'a> From<&'a TimelineFilter> for Lens<'a> {
+    fn from(filter: &'a TimelineFilter) -> Self {
+        Self::plain(filter)
+    }
+}
+
 /// Build the `FROM`/`WHERE` fragments and bindings for a [`TimelineFilter`].
 ///
 /// Every value is bound, never interpolated. Free text goes through
 /// [`fts::build_query`] first: the corpus is mostly shell commands, and `rm
 /// -rf` is FTS5 syntax before it is a search.
-fn selection(f: &TimelineFilter) -> Selection {
+fn selection(lens: Lens<'_>) -> Result<Selection> {
+    let f = lens.filter;
     let mut clauses: Vec<String> = Vec::new();
     let mut binds: Vec<Box<dyn ToSql>> = Vec::new();
+    let mut with_sql = String::new();
 
     // A text term joins the FTS index and must be bound before the column
     // filters, because it appears first in the statement.
@@ -137,6 +191,36 @@ fn selection(f: &TimelineFilter) -> Selection {
 
     bind!(f.provenance, "tc.provenance = ?");
 
+    // Risk (task 12.8). A subquery rather than an inlined `OR` of every rule,
+    // because the rule fragments name `s.cwd` and their own correlated lookups,
+    // and folding a dozen of them into this `WHERE` would make the shape of the
+    // timeline's query depend on the rules file.
+    if f.risk.is_some() || f.rule_id.is_some() {
+        let Some(dismissed) = lens.dismissed else {
+            return Err(Error::Rules(
+                "this filter narrows by risk, and no rule set was supplied — \
+                 the query layer cannot read the rules file itself"
+                    .to_string(),
+            ));
+        };
+        if let Some(compiled) = crate::rules::risk_clause(
+            lens.rules,
+            dismissed,
+            f.risk.as_deref(),
+            f.rule_id.as_deref(),
+        ) {
+            with_sql.push_str(compiled.with_sql());
+            clauses.push(format!(
+                "tc.tool_use_id IN (
+                     SELECT tc.tool_use_id FROM tool_call tc
+                     LEFT JOIN session s ON s.session_id = tc.session_id
+                     WHERE {})",
+                compiled.where_sql
+            ));
+            binds.extend(compiled.binds);
+        }
+    }
+
     // The FTS table is joined rather than used as a subquery so `snippet()`
     // can still be called on it. It is not aliased: FTS5 wants its own name on
     // both the `MATCH` and the auxiliary functions.
@@ -154,13 +238,14 @@ fn selection(f: &TimelineFilter) -> Selection {
         format!(" WHERE {}", clauses.join(" AND "))
     };
 
-    Selection {
+    Ok(Selection {
         from,
         where_sql,
+        with_sql,
         binds,
         searching: fts.is_some(),
         fts,
-    }
+    })
 }
 
 /// Marks where a match starts inside [`TimelineRow::snippet`].
@@ -225,12 +310,12 @@ const DIFF_SIZE_COLUMNS: &str = "
 /// carrying 100k fully-built rows through that sort. Sorting 100k integers and
 /// building 200 rows is the same answer, several times faster
 /// (`cargo run --release -p toolog-core --example measure_timeline`).
-pub fn timeline_rows(
+pub fn timeline_rows<'a>(
     conn: &Connection,
-    filter: &TimelineFilter,
+    lens: impl Into<Lens<'a>>,
     page: Page,
 ) -> Result<Vec<TimelineRow>> {
-    let sel = selection(filter);
+    let sel = selection(lens.into())?;
 
     // `snippet()` needs the FTS table joined *and* matched in the same query as
     // the rows it annotates, so the outer query repeats the match. FTS5 will
@@ -247,7 +332,7 @@ pub fn timeline_rows(
     };
 
     let sql = format!(
-        "SELECT {TOOL_CALL_COLUMNS}, s.project_path, s.git_branch, {snippet},
+        "{}SELECT {TOOL_CALL_COLUMNS}, s.project_path, s.git_branch, {snippet},
                 {DIFF_SIZE_COLUMNS}
          FROM tool_call tc
          LEFT JOIN session s ON s.session_id = tc.session_id
@@ -259,7 +344,7 @@ pub fn timeline_rows(
              LIMIT ? OFFSET ?
          )
          ORDER BY tc.called_at DESC, tc.rowid DESC",
-        sel.from, sel.where_sql
+        sel.with_sql, sel.from, sel.where_sql
     );
 
     // SQLite numbers parameters left to right: the snippet delimiters and the
@@ -284,21 +369,24 @@ pub fn timeline_rows(
 ///
 /// The calls alone, for callers that serialize them — `toolog export` writes
 /// [`ToolCall`], not a row decorated for a list that is not there.
-pub fn timeline_page(
+pub fn timeline_page<'a>(
     conn: &Connection,
-    filter: &TimelineFilter,
+    lens: impl Into<Lens<'a>>,
     page: Page,
 ) -> Result<Vec<ToolCall>> {
-    Ok(timeline_rows(conn, filter, page)?
+    Ok(timeline_rows(conn, lens, page)?
         .into_iter()
         .map(|r| r.call)
         .collect())
 }
 
 /// How many calls match a filter, ignoring paging.
-pub fn timeline_count(conn: &Connection, filter: &TimelineFilter) -> Result<i64> {
-    let sel = selection(filter);
-    let sql = format!("SELECT count(*) FROM {}{}", sel.from, sel.where_sql);
+pub fn timeline_count<'a>(conn: &Connection, lens: impl Into<Lens<'a>>) -> Result<i64> {
+    let sel = selection(lens.into())?;
+    let sql = format!(
+        "{}SELECT count(*) FROM {}{}",
+        sel.with_sql, sel.from, sel.where_sql
+    );
     let refs: Vec<&dyn ToSql> = sel.binds.iter().map(AsRef::as_ref).collect();
     Ok(conn.query_row(&sql, refs.as_slice(), |r| r.get(0))?)
 }
@@ -409,11 +497,11 @@ pub struct Histogram {
 /// is drawn over and the rows the list shows can never come from different
 /// questions. With no filter at all this is the store's own first-to-last, and
 /// the `tool_call_called_at` index answers it without a scan.
-fn called_at_span(conn: &Connection, filter: &TimelineFilter) -> Result<Option<(i64, i64)>> {
-    let sel = selection(filter);
+fn called_at_span(conn: &Connection, lens: Lens<'_>) -> Result<Option<(i64, i64)>> {
+    let sel = selection(lens)?;
     let sql = format!(
-        "SELECT min(tc.called_at), max(tc.called_at) FROM {}{}",
-        sel.from, sel.where_sql
+        "{}SELECT min(tc.called_at), max(tc.called_at) FROM {}{}",
+        sel.with_sql, sel.from, sel.where_sql
     );
     let refs: Vec<&dyn ToSql> = sel.binds.iter().map(AsRef::as_ref).collect();
     let (first, last): (Option<i64>, Option<i64>) =
@@ -429,12 +517,13 @@ fn called_at_span(conn: &Connection, filter: &TimelineFilter) -> Result<Option<(
 /// for anyone east of Greenwich. The offset shifts the timestamp before it is
 /// divided and is taken back off the result, so a column's `start_ms` is the
 /// real instant local midnight (or the hour, or Monday) fell on.
-pub fn histogram(
+pub fn histogram<'a>(
     conn: &Connection,
-    filter: &TimelineFilter,
+    lens: impl Into<Lens<'a>>,
     utc_offset_minutes: i32,
 ) -> Result<Histogram> {
-    let Some((first, last)) = called_at_span(conn, filter)? else {
+    let lens = lens.into();
+    let Some((first, last)) = called_at_span(conn, lens)? else {
         return Ok(Histogram {
             size: BucketSize::Hour,
             buckets: Vec::new(),
@@ -452,14 +541,15 @@ pub fn histogram(
     let index_of = |ms: i64| (ms + shift).div_euclid(width);
     let (first_index, last_index) = (index_of(first), index_of(last));
 
-    let sel = selection(filter);
+    let sel = selection(lens)?;
     let sql = format!(
-        "SELECT (tc.called_at + {shift}) / {width} - CASE WHEN (tc.called_at + {shift}) % {width} < 0 THEN 1 ELSE 0 END,
+        "{}SELECT (tc.called_at + {shift}) / {width} - CASE WHEN (tc.called_at + {shift}) % {width} < 0 THEN 1 ELSE 0 END,
                 count(*),
                 sum(CASE WHEN tc.success = 0 THEN 1 ELSE 0 END),
                 sum(CASE WHEN tc.decision = 'reject' THEN 1 ELSE 0 END)
          FROM {}{}{} tc.called_at IS NOT NULL
          GROUP BY 1",
+        sel.with_sql,
         sel.from,
         sel.where_sql,
         if sel.where_sql.is_empty() {
@@ -551,10 +641,13 @@ pub struct SessionGroup {
 /// The index a grouped, collapsible list is built from: every group's size is
 /// known up front, so the list can compute its own height and fetch only the
 /// window a session is actually scrolled to.
-pub fn timeline_groups(conn: &Connection, filter: &TimelineFilter) -> Result<Vec<SessionGroup>> {
-    let sel = selection(filter);
+pub fn timeline_groups<'a>(
+    conn: &Connection,
+    lens: impl Into<Lens<'a>>,
+) -> Result<Vec<SessionGroup>> {
+    let sel = selection(lens.into())?;
     let sql = format!(
-        "SELECT tc.session_id, s.project_path, s.git_branch, s.slug, s.cc_version,
+        "{}SELECT tc.session_id, s.project_path, s.git_branch, s.slug, s.cc_version,
                 count(*),
                 sum(CASE WHEN tc.agent_id IS NULL THEN 1 ELSE 0 END),
                 sum(CASE WHEN tc.success = 0 THEN 1 ELSE 0 END),
@@ -563,7 +656,7 @@ pub fn timeline_groups(conn: &Connection, filter: &TimelineFilter) -> Result<Vec
          FROM {}{}
          GROUP BY tc.session_id
          ORDER BY max(tc.called_at) DESC",
-        sel.from, sel.where_sql
+        sel.with_sql, sel.from, sel.where_sql
     );
     let refs: Vec<&dyn ToSql> = sel.binds.iter().map(AsRef::as_ref).collect();
     let mut stmt = conn.prepare(&sql)?;
@@ -589,11 +682,12 @@ pub fn timeline_groups(conn: &Connection, filter: &TimelineFilter) -> Result<Vec
     // session. 271 of 2,334 calls in the planning corpus are sidechain, so
     // these groups are the common case, not a rarity worth deferring.
     let sql = format!(
-        "SELECT tc.session_id, tc.agent_id, max(tc.agent_name),
+        "{}SELECT tc.session_id, tc.agent_id, max(tc.agent_name),
                 count(*), min(tc.called_at), max(tc.called_at)
          FROM {}{}{} tc.agent_id IS NOT NULL
          GROUP BY tc.session_id, tc.agent_id
          ORDER BY max(tc.called_at) DESC",
+        sel.with_sql,
         sel.from,
         sel.where_sql,
         if sel.where_sql.is_empty() {

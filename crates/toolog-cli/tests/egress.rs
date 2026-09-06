@@ -69,6 +69,19 @@ fn full_workload() {
     // The timeline's activity histogram (Phase 10), which loads with the list.
     query::histogram(conn, &filter, 0).expect("histogram");
 
+    // And the same reads narrowed by risk (Phase 12), which compile the rules
+    // into the timeline's own selection.
+    let risky = TimelineFilter {
+        risk: Some("high".to_string()),
+        ..TimelineFilter::default()
+    };
+    let ruleset = rules::load(None).expect("rules");
+    let dismissed = rules::dismissed_rules(conn).expect("dismissed");
+    let lens = query::Lens::with_rules(&risky, &ruleset, &dismissed);
+    query::timeline_rows(conn, lens, Page::default()).expect("risk timeline");
+    query::timeline_count(conn, lens).expect("risk count");
+    query::histogram(conn, lens, 0).expect("risk histogram");
+
     // The detail pane, which reads a call, its session, its diffs and the
     // transcript line behind it.
     if let Some(call) = query::tool_call_detail(conn, "toolu_egress").expect("detail") {
@@ -79,9 +92,11 @@ fn full_workload() {
         query::source_record(conn, &call).expect("source record");
     }
 
-    let ruleset = rules::load(None).expect("rules");
     let findings = rules::evaluate(conn, &ruleset).expect("evaluate");
     rules::reconcile(conn, &ruleset, &findings).expect("reconcile");
+    // The sighting ledger (Phase 12), which a review writes as it goes.
+    let mut seen = findings.clone();
+    rules::record_sightings(conn, &ruleset, &mut seen, 0).expect("sightings");
     // The risk view's drill-through past a finding's examples.
     if let Some(rule) = ruleset.first() {
         rules::calls(conn, rule, Page::default()).expect("rule calls");

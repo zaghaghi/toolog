@@ -36,6 +36,8 @@ describe("the URL hash (task 5.6)", () => {
       main_thread: false,
       query: "rm -rf",
       provenance: 3,
+      risk: "high",
+      rule_id: "auto-approved-destructive-bash",
     };
     const view = { filter, grouped: true, selected: "toolu_7" };
 
@@ -133,6 +135,8 @@ describe("a v1.0 link still restores its view (task 10.7)", () => {
       main_thread: false,
       query: "rm -rf",
       provenance: 3,
+      risk: null,
+      rule_id: null,
     });
     expect(view.grouped).toBe(true);
     expect(view.selected).toBe("toolu_7");

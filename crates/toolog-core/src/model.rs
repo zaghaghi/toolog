@@ -337,6 +337,16 @@ pub struct TimelineFilter {
     /// the transcript lane did not", and it was a mask that let `--rejected`
     /// quietly mean "every call OTEL witnessed" for two phases.
     pub provenance: Option<i64>,
+    /// Calls flagged by any live rule of this severity (task 12.7).
+    ///
+    /// The first two fields here that **cannot be compiled from the store
+    /// alone**: a rule lives in a file, so the query layer is handed the rule
+    /// set rather than looking it up. That also means a link carrying this is
+    /// evaluated against the rules in force when it is *opened* — see
+    /// [`crate::query::selection`].
+    pub risk: Option<String>,
+    /// Calls one named rule matched.
+    pub rule_id: Option<String>,
 }
 
 /// Paging for a timeline query.

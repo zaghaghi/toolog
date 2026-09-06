@@ -1483,6 +1483,17 @@ pre.report {
   color: var(--ink-faint);
 }
 
+/* What is new since the last review (task 12.5). Emphasised when there is
+   something, plain when there is not — "nothing new" is a result, not news. */
+.risk-new {
+  color: var(--ink);
+}
+
+.risk-new.none {
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
 /* The secondary line: both numbers are worth having, and only one of them can
    be the total (task 11.10). */
 .risk-count-rules {
@@ -1653,6 +1664,11 @@ pre.report {
 
 .rules-note .actions {
   margin-top: var(--s3);
+}
+
+/* The route out of a finding and into the timeline (task 12.12). */
+.finding-open {
+  margin: var(--s4) 0 var(--s5);
 }
 
 .finding-body .kv {

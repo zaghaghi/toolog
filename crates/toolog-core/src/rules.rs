@@ -207,6 +207,17 @@ pub struct Finding {
     pub sessions: i64,
     /// Distinct projects those calls fall in.
     pub projects: Vec<String>,
+    /// When a review first recorded this rule catching anything (task 12.4).
+    ///
+    /// `None` for a rule no review has seen match — which includes every rule
+    /// on a store whose risk tab has never been opened. That is a different
+    /// statement from "nothing was found", and the view says which.
+    pub first_seen: Option<i64>,
+    /// Matched calls this run recorded a sighting for the first time.
+    ///
+    /// "New since the last review", counted from the ledger rather than by
+    /// diffing two reviews — there is only ever one review in memory.
+    pub new_calls: i64,
     /// Matched calls whose session the store never learned a project for.
     ///
     /// The number that used to vanish: [`reconcile`]'s table dropped these and
@@ -230,11 +241,11 @@ pub struct Dismissal {
 }
 
 /// The SQL a rule's conditions compile to, with its bindings.
-struct Compiled {
-    where_sql: String,
-    binds: Vec<Box<dyn ToSql>>,
+pub(crate) struct Compiled {
+    pub(crate) where_sql: String,
+    pub(crate) binds: Vec<Box<dyn ToSql>>,
     /// Whether the statement embedding this needs [`REFUSALS_CTE`] in front.
-    needs_refusals: bool,
+    pub(crate) needs_refusals: bool,
 }
 
 /// The refused calls, gathered once instead of re-found per candidate row.
@@ -258,7 +269,7 @@ const REFUSALS_CTE: &str = "WITH refusals AS MATERIALIZED (
 
 impl Compiled {
     /// The `WITH` clause a statement using this fragment must carry.
-    fn with_sql(&self) -> &'static str {
+    pub(crate) fn with_sql(&self) -> &'static str {
         if self.needs_refusals {
             REFUSALS_CTE
         } else {
@@ -266,7 +277,7 @@ impl Compiled {
         }
     }
 
-    fn refs(&self) -> Vec<&dyn ToSql> {
+    pub(crate) fn refs(&self) -> Vec<&dyn ToSql> {
         self.binds.iter().map(AsRef::as_ref).collect()
     }
 }
@@ -596,6 +607,10 @@ pub fn evaluate(conn: &Connection, rules: &[Rule]) -> Result<Vec<Finding>> {
                 .iter()
                 .find(|(p, _)| p.is_none())
                 .map_or(0, |(_, n)| *n),
+            // Filled by `record_sightings`, which is the only thing that knows
+            // what this run saw for the first time.
+            first_seen: None,
+            new_calls: 0,
             first_at: roll.first_at,
             last_at: roll.last_at,
             dismissed: dismissals.get(&rule.id).cloned(),
@@ -713,11 +728,15 @@ pub fn describe(m: &Match) -> Vec<String> {
 
 /// Every call one rule matched, newest first (task 6.3's drill-through).
 ///
-/// The eight examples on a [`Finding`] are for reading the finding; this is for
-/// leaving it. It returns the calls themselves rather than a filter, because a
-/// rule's conditions have no equivalent in [`TimelineFilter`] — `outside_cwd`
-/// and `first_line` are not columns — and a drill-through that quietly showed
-/// a *similar* set of calls would be worse than none.
+/// The first page is what a finding shows on expand; this is for paging past
+/// it. It returns the calls themselves rather than a filter because it is the
+/// cheaper answer for a list already on screen.
+///
+/// It used to return calls because it *had* to: "a rule's conditions have no
+/// equivalent in `TimelineFilter` — `outside_cwd` and `first_line` are not
+/// columns". Phase 12 made that false. `TimelineFilter::rule_id` compiles the
+/// same conditions through [`risk_clause`], so the timeline can now be asked
+/// the question directly, and the risk view links to it.
 pub fn calls(conn: &Connection, rule: &Rule, page: Page) -> Result<Vec<ToolCall>> {
     let compiled = where_for(rule);
     let sql = format!(
@@ -931,6 +950,171 @@ pub fn reconcile(conn: &Connection, rules: &[Rule], findings: &[Finding]) -> Res
         totals,
         projects: list,
     })
+}
+
+/// The `WHERE` fragment for "flagged at this severity" or "matched by this
+/// rule" (task 12.8).
+///
+/// Built from the same compiled conditions the review runs, `OR`-ed across
+/// every live rule of the severity — which is the fragment `reconcile` already
+/// uses, so the timeline and the risk view cannot disagree about what `high`
+/// means.
+///
+/// **Dismissed rules do not count.** A rule set aside stops counting against
+/// the project that tripped it, and it should stop filling the timeline too.
+/// `dismissed` is passed in rather than read here so the caller can use the
+/// findings it already has.
+///
+/// Returns `None` when nothing is asked for. Returns a fragment matching
+/// nothing when a severity or id names no live rule — which is the honest
+/// answer to "show me the high-risk calls" on a store where no high rule is in
+/// force.
+pub(crate) fn risk_clause(
+    rules: &[Rule],
+    dismissed: &HashMap<String, Dismissal>,
+    severity: Option<&str>,
+    rule_id: Option<&str>,
+) -> Option<Compiled> {
+    if severity.is_none() && rule_id.is_none() {
+        return None;
+    }
+
+    let wanted: Vec<&Rule> = rules
+        .iter()
+        .filter(|r| !dismissed.contains_key(&r.id))
+        .filter(|r| match severity {
+            Some(s) => severity_word(r.severity) == s,
+            None => true,
+        })
+        .filter(|r| match rule_id {
+            Some(id) => r.id == id,
+            None => true,
+        })
+        .collect();
+
+    let mut clauses = Vec::new();
+    let mut binds: Vec<Box<dyn ToSql>> = Vec::new();
+    let mut needs_refusals = false;
+    for rule in wanted {
+        let compiled = where_for(rule);
+        clauses.push(format!("({})", compiled.where_sql));
+        binds.extend(compiled.binds);
+        needs_refusals |= compiled.needs_refusals;
+    }
+
+    Some(Compiled {
+        where_sql: if clauses.is_empty() {
+            "0".to_string()
+        } else {
+            clauses.join(" OR ")
+        },
+        binds,
+        needs_refusals,
+    })
+}
+
+/// The word a severity is written as, in a rules file and in the query bar.
+#[must_use]
+pub fn severity_word(severity: Severity) -> &'static str {
+    match severity {
+        Severity::High => "high",
+        Severity::Medium => "medium",
+        Severity::Low => "low",
+        Severity::Info => "info",
+    }
+}
+
+/// The rules that have been set aside, for [`risk_clause`].
+pub fn dismissed_rules(conn: &Connection) -> Result<HashMap<String, Dismissal>> {
+    dismissals(conn)
+}
+
+// ---------------------------------------------------------------------------
+// The sighting ledger (tasks 12.2 and 12.4)
+// ---------------------------------------------------------------------------
+
+/// Record that these rules caught these calls, and say what was new.
+///
+/// One `INSERT … SELECT` per live rule, from the **same compiled fragment the
+/// count came from** — so a sighting cannot be recorded for a call the finding
+/// did not report, which is the one way this ledger could start lying. No ids
+/// cross into Rust on the way.
+///
+/// `ON CONFLICT DO NOTHING` makes it append-only in the strong sense: looking
+/// twice is not seeing twice, and `first_seen` keeps the first answer forever.
+/// The `changes()` after each insert is therefore exactly what this run saw for
+/// the first time.
+///
+/// Dismissed rules are skipped. A rule set aside is not being watched, and
+/// recording sightings for it would make "new since the last review" count
+/// things nobody asked to be told about.
+pub fn record_sightings(
+    conn: &Connection,
+    rules: &[Rule],
+    findings: &mut [Finding],
+    now: i64,
+) -> Result<usize> {
+    let mut total = 0;
+
+    for finding in findings.iter_mut() {
+        if finding.dismissed.is_some() || finding.calls == 0 {
+            continue;
+        }
+        let Some(rule) = rules.iter().find(|r| r.id == finding.rule_id) else {
+            continue;
+        };
+        let compiled = where_for(rule);
+        let sql = format!(
+            "{}INSERT INTO rule_sighting (rule_id, tool_use_id, first_seen)
+             SELECT ?, tc.tool_use_id, ?
+             FROM tool_call tc
+             LEFT JOIN session s ON s.session_id = tc.session_id
+             WHERE {}
+             ON CONFLICT (rule_id, tool_use_id) DO NOTHING",
+            compiled.with_sql(),
+            compiled.where_sql
+        );
+        let mut binds: Vec<&dyn ToSql> = vec![&rule.id, &now];
+        binds.extend(compiled.refs());
+
+        let inserted = conn.execute(&sql, binds.as_slice())?;
+        finding.new_calls = i64::try_from(inserted).unwrap_or(i64::MAX);
+        total += inserted;
+    }
+
+    read_sightings(conn, findings)?;
+    Ok(total)
+}
+
+/// Fill each finding's `first_seen` from the ledger, in one query for all of
+/// them.
+pub fn read_sightings(conn: &Connection, findings: &mut [Finding]) -> Result<()> {
+    let mut stmt =
+        conn.prepare("SELECT rule_id, min(first_seen) FROM rule_sighting GROUP BY rule_id")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    let seen: HashMap<String, i64> = rows
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .collect();
+
+    for finding in findings.iter_mut() {
+        finding.first_seen = seen.get(&finding.rule_id).copied();
+    }
+    Ok(())
+}
+
+/// Whether any review has ever recorded anything on this store.
+///
+/// "No rule has ever matched" and "nobody has looked yet" are different
+/// statements and the view says which (task 12.5). Without this it would report
+/// "0 new findings" on a store it has never read, which reads as reassurance
+/// and is not.
+pub fn ever_reviewed(conn: &Connection) -> Result<bool> {
+    Ok(
+        conn.query_row("SELECT EXISTS (SELECT 1 FROM rule_sighting)", [], |r| {
+            r.get(0)
+        })?,
+    )
 }
 
 // ---------------------------------------------------------------------------

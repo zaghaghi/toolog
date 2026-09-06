@@ -25,7 +25,7 @@
 import type { Finding, ProjectRisk, RiskReview, Severity, ToolCall } from "./bindings";
 import { dismissRule, restoreRule, revealRules, risk, ruleCalls } from "./bindings";
 import { append, el, fill, orDash } from "./dom";
-import { basename, clock, count, fullStamp, shortPath } from "./format";
+import { basename, clock, count, dayLabel, fullStamp, shortPath } from "./format";
 
 /** How many calls one page of a drill-through fetches. */
 const PAGE = 50;
@@ -63,6 +63,14 @@ export interface RiskOptions {
   onNotice: (message: string) => void;
   /** Open one call in the timeline — the drill-through's destination. */
   onOpenCall: (toolUseId: string) => void;
+  /**
+   * Show every call one rule matched, in the timeline (task 12.12).
+   *
+   * Possible for the first time in Phase 12: `@rule:<id>` compiles the rule's
+   * own conditions into the timeline's filter, so this is the same set the
+   * finding counted rather than a similar one.
+   */
+  onOpenRule: (ruleId: string) => void;
 }
 
 export class RiskView {
@@ -118,6 +126,7 @@ export class RiskView {
       el("div", { class: "risk-summary" }, [
         el("div", { class: "risk-counts" }, review.totals.map((t) => this.severityCount(t))),
         el("p", { class: "note" }, [
+          this.newness(review),
           `${count(matched.length - aside)} of ${count(review.findings.length)} rules matched something` +
             (aside === 0
               ? ". "
@@ -135,6 +144,27 @@ export class RiskView {
       el("div", { class: "findings" }, review.findings.map((f) => this.finding(f))),
       this.rulesFooter(),
     ]);
+  }
+
+  /**
+   * What is new since the last review (task 12.5).
+   *
+   * A first review is not a review with nothing new in it — everything is new
+   * the first time anyone looks — and saying "0 new" on a store nobody has read
+   * would be reassurance this has not earned.
+   */
+  private newness(review: RiskReview): HTMLElement {
+    if (review.first_review) {
+      return el("strong", { class: "risk-new", text: "First review of this store. " });
+    }
+    const fresh = review.findings.reduce((sum, f) => sum + f.new_calls, 0);
+    if (fresh === 0) {
+      return el("span", { class: "risk-new none", text: "Nothing new since the last review. " });
+    }
+    return el("strong", {
+      class: "risk-new",
+      text: `${count(fresh)} ${fresh === 1 ? "call is" : "calls are"} new since the last review. `,
+    });
   }
 
   /**
@@ -256,6 +286,16 @@ export class RiskView {
         el("dd", { text: f.last_at === null ? "—" : fullStamp(f.last_at) }),
         el("dt", { text: "Projects" }),
         el("dd", { text: projects.length === 0 ? "—" : projects.join(", ") }),
+        el("dt", { text: "First seen" }),
+        el("dd", {
+          // Not `first_at`: that is when the call ran. This is when a review
+          // first noticed, which is the only one of the two nothing else can
+          // reconstruct (task 12.4).
+          text:
+            f.first_seen === null
+              ? "not yet recorded"
+              : `${dayLabel(f.first_seen)}${f.new_calls > 0 ? ` · ${count(f.new_calls)} new` : ""}`,
+        }),
         el("dt", { text: "Rule" }),
         el("dd", { class: "mono", text: `${f.rule_id}${f.from_user ? " · from your rules file" : ""}` }),
       ]),
@@ -263,6 +303,7 @@ export class RiskView {
         ? el("p", { class: "note", text: "This rule matched nothing in this store." })
         : calls,
       f.calls === 0 ? null : this.moreCalls(f),
+      f.calls === 0 ? null : this.openInTimeline(f),
       this.judgement(f),
     ]);
 
@@ -310,6 +351,23 @@ export class RiskView {
     ]);
     row.addEventListener("click", () => this.opts.onOpenCall(call.tool_use_id));
     return row;
+  }
+
+  /**
+   * The whole rule, in the timeline (task 12.12).
+   *
+   * A route, not a replacement: the inline page stays, because reading a
+   * finding and leaving it are different things. What is new is that the
+   * timeline can now express the question at all.
+   */
+  private openInTimeline(f: Finding): HTMLElement {
+    const button = el("button", {
+      class: "link",
+      text: `Show all ${count(f.calls)} in the timeline`,
+      attrs: { type: "button" },
+    });
+    button.addEventListener("click", () => this.opts.onOpenRule(f.rule_id));
+    return el("div", { class: "finding-open" }, [button]);
   }
 
   /** "Show the rest" — the drill-through past the first page. */

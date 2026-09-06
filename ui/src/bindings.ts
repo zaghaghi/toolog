@@ -59,7 +59,21 @@ query: string | null,
  * the transcript lane did not", and it was a mask that let `--rejected`
  * quietly mean "every call OTEL witnessed" for two phases.
  */
-provenance: number | null, };
+provenance: number | null, 
+/**
+ * Calls flagged by any live rule of this severity (task 12.7).
+ *
+ * The first two fields here that **cannot be compiled from the store
+ * alone**: a rule lives in a file, so the query layer is handed the rule
+ * set rather than looking it up. That also means a link carrying this is
+ * evaluated against the rules in force when it is *opened* — see
+ * [`crate::query::selection`].
+ */
+risk: string | null, 
+/**
+ * Calls one named rule matched.
+ */
+rule_id: string | null, };
 
 export type Page = { limit: number, offset: number, };
 
@@ -162,6 +176,21 @@ sessions: number,
  * Distinct projects those calls fall in.
  */
 projects: Array<string>, 
+/**
+ * When a review first recorded this rule catching anything (task 12.4).
+ *
+ * `None` for a rule no review has seen match — which includes every rule
+ * on a store whose risk tab has never been opened. That is a different
+ * statement from "nothing was found", and the view says which.
+ */
+first_seen: number | null, 
+/**
+ * Matched calls this run recorded a sighting for the first time.
+ *
+ * "New since the last review", counted from the ledger rather than by
+ * diffing two reviews — there is only ever one review in memory.
+ */
+new_calls: number, 
 /**
  * Matched calls whose session the store never learned a project for.
  *
@@ -316,7 +345,15 @@ rules_path: string | null,
 /**
  * Whether that file exists and was loaded.
  */
-rules_customized: boolean, };
+rules_customized: boolean, 
+/**
+ * Whether this is the first review this store has ever had (task 12.5).
+ *
+ * "Nobody has looked yet" and "nothing was found" are different
+ * statements, and reporting the first as "0 new findings" reads as
+ * reassurance it has not earned.
+ */
+first_review: boolean, };
 
 export type Setup = { configured: boolean, listening: boolean, endpoint: string, settings_path: string, transcripts_dir: string, transcript_files: number, ingested_files: number, agent_supported: boolean, agent_installed: boolean, problems: Array<string>, 
 /**
@@ -354,6 +391,10 @@ export function timelineGroups(filter: TimelineFilter): Promise<Array<SessionGro
 
 export function facets(): Promise<Facets> {
   return invoke("facets");
+}
+
+export function ruleIds(): Promise<Array<string>> {
+  return invoke("rule_ids");
 }
 
 export function timelineHistogram(filter: TimelineFilter, utcOffsetMinutes: number): Promise<Histogram> {
