@@ -1,35 +1,7 @@
 # Toolog
 
-> **Status: v1.2 — thirteen phases done.** The timeline is a virtualized list over every tool
-> call, filtered and searched from one `@key:value` box, with an activity histogram you can drag a
-> time range out of, diffs for every `Edit`, a view that lives in the URL, and export to JSON, CSV
-> or Markdown. The risk review runs rules written as data, shows every rule and what it looks for
-> whether or not it matched, drills through to the calls behind each finding, and can notify on
-> refusals and high-severity rule hits, off by default. And the record earns its name: `toolog
-> verify` says what it is missing and when nothing was watching, `toolog verify --chain` shows it
-> has not been altered, secrets are stripped from everything the views show, and `toolog purge`
-> bounds the store without deleting anything you have not seen listed first. It ships as one signed,
-> notarized universal artifact, and removes itself as carefully as it installs: `toolog uninstall`
-> puts `~/.claude/settings.json` back byte for byte and keeps your history unless you say otherwise.
-> See [docs/](docs/README.md).
->
-> **v1.2 answers what the rules were not saying.** Twelve rules find what someone thought to write a
-> rule for, and **77% of the owner's store was Bash commands no rule had ever matched** — reported as
-> nothing, which reads as *these are fine* and means *these were not examined*. A local model now
-> reads them and says what each was doing, on this machine, with **no network capability added**:
-> you bring the `.gguf`, and the release asserts the shipped binary links no `libcurl`
-> ([ADR-0013](docs/adr/0013-a-verdict-is-stored-not-recomputed.md)). It is advisory throughout —
-> never a rule, never a severity, never a number in the summary. And both verdicts are now visible
-> where a reader actually looks: a severity column and a model-score column in the timeline, never
-> the same column, and both spelled out in the detail pane.
->
-> **v1.1 is what living with v1.0 changed.** Four views turned out to be two too many: the usage
-> analytics and the live tail are gone, and toolog now captures cost and reports none of it
-> ([ADR-0010](docs/adr/0010-no-cost-reporting.md)). Seven filter dropdowns became one query box. And
-> the risk review went from 2.3 seconds to 95 ms, with a summary whose columns add up to it
-> ([ADR-0011](docs/adr/0011-memoize-the-risk-review.md)).
-
-A local audit trail for Claude Code tool calls.
+**A local audit trail for Claude Code tool calls.** macOS, one signed app, nothing leaves the
+machine.
 
 Claude Code runs tools on your machine — shell commands, file edits, network fetches. Today there is
 no way to answer *"what did the agent actually do, when, in which repo, and who approved it?"*
@@ -47,30 +19,24 @@ itself.
 | **`@risk:high`** — what a rule flagged, and which rule, on hover. | **`@model-risk:>=4`** — what the local model scored 4 or 5, with its one-line reading of each on hover. |
 
 *Home directory blurred. The two columns are never the same column: a rule's severity is
-deterministic, a model's score is not, and [ADR-0013](docs/adr/0013-a-verdict-is-stored-not-recomputed.md)
-is why a reader has to be able to tell which produced a number at a glance.*
+deterministic, a model's score is not.*
 
 ## Nothing leaves your machine
 
 The OTLP receiver binds `127.0.0.1` only. There is no analytics, no crash reporting, no remote
-config, no account.
+config, no account, and no update check — `brew upgrade --cask toolog` is the update path instead.
 
 **A CI test runs a full ingest and every query the window issues, then asks the operating system
 which sockets the process holds** — any address that is not loopback fails the build. A second test
 proves that check can fail, by opening a socket pointed off the machine and asserting the census
 sees it. The guarantee is a build failure when broken, not a promise in a readme.
 
-**There is no exception.** ADR-0008 had reserved one — an opt-in update check — and Phase 8
-declined to take it: an updater compiles an HTTP client into the binary whether its switch is on
-or off, which would demote a compile-time guarantee to a runtime flag. `brew upgrade --cask
-toolog` is the update path instead, and the updater plugin is named in the same test that rejects
-`reqwest`. See [ADR-0008](docs/adr/0008-local-only-zero-egress.md) and [PRIVACY.md](PRIVACY.md).
-
 **Including the model.** Toolog links llama.cpp and does not gain a downloader with it: you fetch
 the `.gguf` yourself and point toolog at it. llama.cpp has a `--hf-repo` fetcher of its own that a
-check reading `Cargo.toml` cannot see, so the release additionally asserts `otool -L` on the
-shipped binary lists no `libcurl` and no TLS library. A config option is not a guarantee; the
-binary is.
+check reading `Cargo.toml` cannot see, so the release additionally asserts `otool -L` on the shipped
+binary lists no `libcurl` and no TLS library. A config option is not a guarantee; the binary is.
+
+See [ADR-0008](docs/adr/0008-local-only-zero-egress.md) and [PRIVACY.md](PRIVACY.md).
 
 ## How it works
 
@@ -89,22 +55,23 @@ Two ingestion lanes, because neither is complete alone:
 ```
 
 **Transcripts** carry the untruncated content — the full shell command, the full file diff. OTEL
-truncates tool inputs at 512 characters, which is not evidence.
-
-**OTEL** carries what transcripts never record: **who approved or refused each call, and under
-which rule**, and how long it took. A refused call does appear in the transcript — but only as a
-sentence inside a result body, with nothing to query. `decision` and `decision_source` exist in one
-place.
+truncates tool inputs at 512 characters, which is not evidence. **OTEL** carries what transcripts
+never record: **who approved or refused each call, and under which rule**, and how long it took.
 
 The two are joined exactly on `tool_use_id`, and where they disagree, that is a finding rather than
 an inconsistency to paper over: a call only the transcript saw is a gap in collection, and a call
 only OTEL saw had no transcript body written. This is how the tool demonstrates its own completeness
-instead of asserting it.
+instead of asserting it. Neither lane puts any code on Claude Code's critical path — one is a
+read-only file watch, the other a fire-and-forget export whose failure costs nothing.
+See [ADR-0002](docs/adr/0002-dual-ingestion-transcripts-and-otel.md).
 
-Neither lane puts any code on Claude Code's critical path. One is a read-only file watch; the other
-is a fire-and-forget network export whose failure costs nothing.
-
-See [ADR-0002](docs/adr/0002-dual-ingestion-transcripts-and-otel.md) for the full reasoning.
+**A second opinion, optional and advisory.** Twelve rules find what someone thought to write a rule
+for, and 77% of the owner's store was Bash commands no rule had ever matched — reported as nothing,
+which reads as *these are fine* and means *these were not examined*. Point toolog at a local `.gguf`
+and it reads them and says what each was doing. It is never a rule, never a severity, and never a
+number in the summary — it gets its own column, its own section, and its own block in the detail
+pane. See [ADR-0013](docs/adr/0013-a-verdict-is-stored-not-recomputed.md), and
+[docs/](docs/README.md#phases) for the one command that fetches the model.
 
 ## Install
 
@@ -128,11 +95,6 @@ toolog doctor --fix          # configures Claude Code telemetry, merged, with a 
 toolog backfill              # imports your existing history
 toolog                       # starts the menu-bar app and the receiver
 ```
-
-Measured on the author's machine: a 50-file, 66 MB transcript corpus mounts, copies, configures,
-imports and answers its first query in about **17 seconds** of machine time — 14 s of that is
-`hdiutil` verifying the disk image. The import itself is 2.0 s for 3,729 tool calls across 41
-sessions.
 
 ### Uninstall
 
@@ -182,47 +144,35 @@ your existing telemetry pipeline is not ours to redirect. See
 
 ## Limitations, stated rather than discovered
 
-- **macOS only.** Linux `.AppImage`/`.deb` was a Phase 8 stretch goal and was cut, not
-  attempted. Nothing in the code assumes macOS except the LaunchAgent, so the port is open —
-  it would need a systemd user unit for both the install and the uninstall path.
-- **Decisions and latency exist only for sessions captured live.** They arrive on the OTEL
-  lane, which is not replayable: a session that ran while toolog was not listening has its
-  commands and results, from the transcript, and no decision layer ever. `toolog verify`
-  reports exactly which sessions those are and over what windows, rather than averaging
-  across a gap as if it were not there.
-- **Cost is captured and never shown.** `api_request` records are stored and counted, and
-  nothing in the window or the CLI reports spend or tokens. That is a scope decision, not an
-  omission — see [ADR-0010](docs/adr/0010-no-cost-reporting.md).
-- **Quitting from the menu bar stops capture**, and it is meant to — the LaunchAgent restarts a
-  crash but respects a deliberate exit. Anything Claude Code runs while toolog is quit is
-  recoverable from transcripts by a later `toolog backfill`, minus the decision layer above.
-- **No update notification.** `brew upgrade --cask toolog` covers Homebrew installs; if you
-  downloaded the `.dmg` directly, nothing will tell you a new version exists. That is the
-  cost of shipping an application that makes no network calls, and it was chosen with the
-  cost known — see the addendum to [ADR-0008](docs/adr/0008-local-only-zero-egress.md).
-- **A project directory name cannot always be decoded back to a path.** Claude Code encodes
-  `/` as `-`, so `/a/b/my-app` and `/a/b/my/app` name the same directory. Project attribution
-  therefore comes from `cwd` in the records; only per-project *exclusion* matches on the
-  encoded name, where it is exact.
-- **The second opinion is a 3.1 GB dependency against a 166 MB store, and it is wrong
-  sometimes.** The model analysing the history is nineteen times the size of the history, and
-  it is a 4.6B quantized model: measured on the owner's store it scores a benign `cargo test`
-  at 2 and needed its rubric spelled out before it called a raw-device `dd` dangerous. That is
-  why it is opt-in, advisory, never a rule, and kept visibly apart from the rules everywhere it
-  appears — its own section in the risk view, its own block in the detail pane, and its own column
-  in the timeline beside the one carrying rule severities — and why the one-line intent summary may
-  be the half worth keeping even where the score is not. See
-  [ADR-0013](docs/adr/0013-a-verdict-is-stored-not-recomputed.md).
-- **macOS 11 or later**, since Phase 13: llama.cpp's C++ needs `std::filesystem`. The floor was
-  10.15 through v1.1.
-- **Anyone who can read your disk can read the database.** It is a plain SQLite file, on
-  purpose — that is what lets you check the claims in `PRIVACY.md` without trusting this
-  program. Encryption at rest was evaluated in Phase 7 and declined in favour of FileVault,
-  with the reasoning in ADR-0008.
+- **macOS 11 or later, and macOS only.** Nothing assumes it except the LaunchAgent, so the port is
+  open — it would need a systemd user unit for both the install and the uninstall path.
+- **Decisions and latency exist only for sessions captured live.** They arrive on the OTEL lane,
+  which is not replayable: a session that ran while toolog was not listening has its commands and
+  results, from the transcript, and no decision layer ever. `toolog verify` reports exactly which
+  sessions those are, rather than averaging across a gap as if it were not there.
+- **Cost is captured and never shown.** `api_request` records are stored and counted, and nothing
+  reports spend or tokens. A scope decision, not an omission —
+  [ADR-0010](docs/adr/0010-no-cost-reporting.md).
+- **Quitting from the menu bar stops capture**, and it is meant to. Anything Claude Code runs while
+  toolog is quit is recoverable by a later `toolog backfill`, minus the decision layer above.
+- **No update notification.** If you downloaded the `.dmg` directly, nothing will tell you a new
+  version exists. That is the cost of an application that makes no network calls.
+- **A project directory name cannot always be decoded back to a path.** Claude Code encodes `/` as
+  `-`, so `/a/b/my-app` and `/a/b/my/app` name the same directory. Project attribution therefore
+  comes from `cwd` in the records; only per-project *exclusion* matches on the encoded name.
+- **The second opinion is a 3.1 GB dependency against a 166 MB store, and it is wrong sometimes.**
+  It is a 4.6B quantized model: measured on the owner's store it scores a benign `cargo test` at 2
+  and needed its rubric spelled out before it called a raw-device `dd` dangerous. That is why it is
+  opt-in, advisory, and kept visibly apart from the rules everywhere it appears — and why its
+  one-line intent summary may be the half worth keeping even where the score is not.
+- **Anyone who can read your disk can read the database.** It is a plain SQLite file, on purpose —
+  that is what lets you check the claims in `PRIVACY.md` without trusting this program. Encryption
+  at rest was evaluated and declined in favour of FileVault.
 
 ## Documentation
 
-- [docs/README.md](docs/README.md) — phases, milestones, and the facts the design rests on
+- [docs/README.md](docs/README.md) — the thirteen phases, and the facts the design rests on
 - [docs/adr/](docs/adr/README.md) — thirteen architecture decision records
 - [PRIVACY.md](PRIVACY.md) — what is captured, what is not, and what never leaves
+- [docs/database.md](docs/database.md) — the SQLite file, and what is in it
 - [docs/releasing.md](docs/releasing.md) — how a signed, notarized release is cut
