@@ -272,3 +272,84 @@ pub(crate) fn numbers(conn: &toolog_core::Connection, pair: &Pair) -> anyhow::Re
         worst: toolog_core::llm::top_scoring(conn, pair, WORST_FROM, WORST_SHOWN)?,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The phase's first exit criterion, at the one place it can be asserted
+    /// without a window: with nothing configured, the handle holds nothing,
+    /// answers nothing, and does nothing when offered a call.
+    ///
+    /// The thread is the thing that must not exist, and the only way one is
+    /// ever started is [`Llm::start`], which `AppState::apply_model` calls only
+    /// when `prefs.model()` is `Some`. That is asserted from the other end by
+    /// `toolog_cli::prefs`'s test that a default `Prefs` names no model.
+    #[test]
+    fn with_no_model_the_handle_is_empty_and_answers_nothing() {
+        let llm = Llm::default();
+        assert!(llm.pair().is_none());
+        #[cfg(feature = "inference")]
+        assert!(llm.analysis().is_none());
+
+        // Offering a call and stopping are both no-ops rather than errors: the
+        // live sink calls the first on every arriving call, and shutdown calls
+        // the second whether or not anything was ever loaded.
+        llm.observe("toolu_1", "ls -la");
+        llm.set_paused(true);
+        llm.stop();
+        llm.stop();
+    }
+
+    /// A report with no model reads as "no model", not as "nothing found".
+    #[test]
+    fn a_report_with_no_model_carries_no_numbers_to_be_mistaken_for_zero() {
+        let llm = Llm::default();
+        let report = llm.report(None, |_| unreachable!("nothing to read for"));
+
+        assert!(report.model.path.is_none());
+        assert!(
+            report.progress.is_none(),
+            "not `0 of 0`, which reads as clean"
+        );
+        assert!(report.pair.is_none());
+        assert!(report.scores.is_empty());
+        assert!(report.worst.is_empty());
+        assert!(!report.starting);
+        assert!(report.error.is_none(), "absence is not an error");
+        // The prompt has an identity whether or not a model exists to run it.
+        assert_eq!(report.prompt_fingerprint.len(), 12);
+    }
+
+    /// A store read that fails is surfaced, not silently rendered as zero.
+    #[test]
+    fn a_failed_read_becomes_the_reports_error_rather_than_an_empty_result() {
+        let llm = Llm::default();
+        if let Ok(mut inner) = llm.inner.lock() {
+            inner.pair = Some(Pair::new("model-a", "prompt-a"));
+        }
+
+        let report = llm.report(None, |_| Err(anyhow::anyhow!("the database is locked")));
+        assert!(report.progress.is_none());
+        assert!(
+            report
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("locked")),
+            "{:?}",
+            report.error
+        );
+    }
+
+    /// The pair outlives the model being unloaded, so `@llm-risk` still means
+    /// something for verdicts already recorded.
+    #[test]
+    fn stopping_the_model_does_not_forget_which_question_the_verdicts_answered() {
+        let llm = Llm::default();
+        if let Ok(mut inner) = llm.inner.lock() {
+            inner.pair = Some(Pair::new("model-a", "prompt-a"));
+        }
+        llm.stop();
+        assert_eq!(llm.pair(), Some(Pair::new("model-a", "prompt-a")));
+    }
+}

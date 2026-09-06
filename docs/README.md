@@ -71,6 +71,24 @@ that holds when the grammar and the schema do not.
 
 The macOS floor moved 10.15 → 11.0 with it, for llama.cpp's `std::filesystem`.
 
+**The model, and the one command that fetches it.** Written out here rather than left to a link, so
+nobody has to guess which quantization is meant. **toolog never runs this** — it is a line for your
+own shell, on your own network:
+
+```
+google/gemma-4-E2B-it-qat-q4_0-gguf → gemma-4-E2B_q4_0-it.gguf  (~3.1 GB)
+```
+
+```sh
+curl -L -o gemma-4-E2B_q4_0-it.gguf \
+  https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B_q4_0-it.gguf
+
+toolog model set ./gemma-4-E2B_q4_0-it.gguf
+```
+
+Any GGUF llama.cpp can load will work; that is the one the prompt was written against and measured
+on. Status → Model shows the same two lines, and `toolog model status` prints them.
+
 ## The database
 
 [database.md](database.md) — one SQLite file, what is in it, and the three tables that are not

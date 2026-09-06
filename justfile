@@ -6,9 +6,15 @@
 tauri_cli := "2.11.4"
 
 # The Developer ID that signs a release (task 8.2). Tauri reads this exact
-# variable name, so exporting it in the environment works identically. Empty
-# means an unsigned bundle, which is what a machine without the certificate
-# gets — and it still builds.
+# variable name, so exporting it in the environment works identically.
+#
+# It is exported **empty** when unset, and `bundle` unsets it again before
+# calling the bundler. That indirection is load-bearing: `just` cannot
+# conditionally export, and Tauri 2.11 treats the variable being *present and
+# empty* as "sign with the identity `""`", which fails with `: no identity
+# found` rather than falling back to an ad-hoc signature. So a machine without
+# the certificate got no bundle at all, while this comment said it would get an
+# unsigned one. Found in Phase 13, building for a `.dmg` size.
 export APPLE_SIGNING_IDENTITY := env("APPLE_SIGNING_IDENTITY", "")
 
 default:
@@ -100,7 +106,11 @@ bundle: ui tauri-cli
     if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
         echo "signing as: $APPLE_SIGNING_IDENTITY"
     else
-        echo "note: APPLE_SIGNING_IDENTITY is unset — the bundle will be unsigned."
+        # Absent, not empty — see the note at the top of this file. An empty
+        # value makes the bundler try to sign with it and fail.
+        unset APPLE_SIGNING_IDENTITY
+        echo "note: APPLE_SIGNING_IDENTITY is unset — the bundle will be unsigned,"
+        echo "      which Gatekeeper refuses. Fine for measuring; not a release."
     fi
     cargo tauri build --target universal-apple-darwin
     just verify-bundle
