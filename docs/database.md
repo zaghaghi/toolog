@@ -36,6 +36,10 @@ most questions about it:
 | **Projection** | `session`, `tool_call`, `file_change`, `api_request`, `prompt`, `permission_mode_change`, `tool_call_fts` | Yes, from `raw_event` |
 | **Record of what happened** | `rule_dismissal`, `deletion`, `rule_sighting` | **No** — see [below](#the-third-kind-things-recomputation-cannot-recover) |
 
+There is no table for **rules**. They are TOML — a built-in set plus an optional user file — and the
+two tables naming a `rule_id` reference them softly, with no foreign key. See
+[Rule identity](#rule-identity).
+
 ## Evidence
 
 ### `raw_event`
@@ -140,6 +144,18 @@ exception for the same reason. A derivation can be recomputed; an **observation 
 cannot. Re-running the rules does not recover what someone decided, what was deleted, or when a thing
 was first noticed.
 
+> **`rule_id` points outside the database.** There is no `rule` table. Rules are TOML: the built-in
+> set is compiled into the binary (`crates/toolog-core/src/rules/default.toml`, via `include_str!`),
+> and an optional user file at `~/Library/Application Support/toolog/rules.toml` adds to it — a rule
+> whose `id` matches a built-in **replaces** it. So `rule_id` is a soft reference to a string in a
+> file, deliberately: a rule is data you can edit without a migration, and a foreign key would make
+> the database refuse a rules file it disagrees with. `file_change.tool_use_id` is the schema's
+> **only** foreign key.
+>
+> The cost is real and worth knowing: nothing reconciles these ids. Delete or rename a rule and its
+> dismissal and sightings stay, orphaned — never shown, never cleaned, and unreachable through the
+> window, which only lists rules that exist. See [Rule identity](#rule-identity) below.
+
 ### `rule_dismissal`
 
 `(rule_id, note, dismissed_at)`. A judgement a person made about a rule, with the reason they gave.
@@ -176,6 +192,32 @@ Two properties worth knowing:
 - **Written by a review, not by ingestion.** `first_seen` means *first seen by a review*. Recording
   on ingest would mean running twelve rules on the live path, which is the cost Phase 11 exists to
   have removed.
+
+## Rule identity
+
+The two tables above key on `rule_id` alone, and a rule's id is chosen by whoever writes the rules
+file. Three consequences follow, all measured rather than reasoned about:
+
+| What you do | What happens |
+|---|---|
+| Rename or delete a rule | Its dismissal and sightings are orphaned — kept forever, never displayed, unreachable from the window |
+| Keep the id and retune what it looks for | Its sightings carry over, and `first_seen` still reports the **old** rule's first sighting |
+| Replace a built-in with your own of the same id | The same: it inherits the built-in's history |
+
+The first is untidy and harmless. The rows are small, and re-creating a rule with the old id restores
+its dismissal, which is arguably the friendly behaviour.
+
+**The second is a genuine wart.** [ADR-0012](adr/0012-store-sightings-not-findings.md) argues that a
+sighting cannot go stale because "retune a rule and the old sightings remain true statements about
+what the old rule saw" — true of the *rows*, but `Finding.first_seen` presents `min(first_seen)` for
+an id as though it described the current rule. Retune `auto-approved-destructive-bash` to look for
+`dd if=` instead of `rm -rf` and it reports "first seen" as the date the *`rm -rf` version* was first
+seen, while matching nothing.
+
+Fixing it means giving a rule an identity that covers its conditions — a fingerprint of the `Match`
+struct stored beside `rule_id`, so a retune starts a new history while a cosmetic edit to a title does
+not. **That is not built.** Until it is, `first_seen` is trustworthy for a rule whose conditions have
+not changed and misleading for one whose have.
 
 ## Integrity
 
