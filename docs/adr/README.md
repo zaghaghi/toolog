@@ -17,6 +17,7 @@ numbered in the order decided, not in dependency order.
 | [0010](0010-no-cost-reporting.md) | toolog captures cost and does not report it | Accepted |
 | [0011](0011-memoize-the-risk-review.md) | Memoize the risk review in memory; never store findings | Accepted |
 | [0012](0012-store-sightings-not-findings.md) | Store when a finding was first seen; still never store findings | Accepted |
+| [0013](0013-a-verdict-is-stored-not-recomputed.md) | A local model's verdict is stored, not recomputed, and is never a rule | Accepted |
 
 ## The two that drive everything else
 

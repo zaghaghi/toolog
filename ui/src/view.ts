@@ -38,6 +38,8 @@ export function emptyFilter(): TimelineFilter {
     provenance: null,
     risk: null,
     rule_id: null,
+    intent: null,
+    llm_risk: null,
   };
 }
 
@@ -109,6 +111,13 @@ const KEYS: Record<string, keyof TimelineFilter> = {
   nosession: "session_unknown",
   risk: "risk",
   rule: "rule_id",
+  // Phase 13. Both are in the hash for the same reason `risk` is: a view is
+  // shareable, and "the calls the model called risky, in this project, last
+  // Tuesday" is a view. Like `risk`, they are evaluated against whatever is
+  // configured when the link is *opened* — a verdict belongs to a model, and a
+  // URL cannot carry 3.1 GB of one.
+  intent: "intent",
+  llmrisk: "llm_risk",
 };
 
 const NUMERIC = new Set<keyof TimelineFilter>(["since", "until", "provenance"]);

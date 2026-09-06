@@ -139,10 +139,10 @@ commands, and `rm -rf` is FTS5 syntax before it is a search term.
 
 ## The third kind: things recomputation cannot recover
 
-These three tables are the exception to "everything derived is rebuildable", and they are the
+These four tables are the exception to "everything derived is rebuildable", and they are the
 exception for the same reason. A derivation can be recomputed; an **observation or a judgement**
-cannot. Re-running the rules does not recover what someone decided, what was deleted, or when a thing
-was first noticed.
+cannot. Re-running the rules does not recover what someone decided, what was deleted, when a thing
+was first noticed, or what a non-deterministic model said about it.
 
 > **`rule_id` points outside the database.** There is no `rule` table. Rules are TOML: the built-in
 > set is compiled into the binary (`crates/toolog-core/src/rules/default.toml`, via `include_str!`),
@@ -195,6 +195,44 @@ Two properties worth knowing:
   have removed.
 - **Keyed on the rule's fingerprint as well as its id**, so a rule that has been retuned has no
   history rather than the wrong history. See below.
+
+### `llm_verdict`
+
+`(tool_use_id, model_fingerprint, prompt_fingerprint, status, error, risk_score, category,
+intent_summary, is_destructive, violates_sandbox, at, ms)`, `WITHOUT ROWID`, primary key on the
+first three. *Phase 13, [ADR-0013](adr/0013-a-verdict-is-stored-not-recomputed.md).*
+
+What a local model said about a call no rule matched. It is in this section rather than in the
+projection because **an LLM answer is not a derivation**: a different model, quantization, sampler
+seed or prompt gives a different number, and this build cannot promise the same answer twice from
+the same file — the prompt prefix is cached across calls, so the command is tokenized as its own
+sequence, and that moves verdicts at the margin. Something that cannot be recomputed has to be
+recorded or lost.
+
+The key is what makes storing it safe, and it is the same argument as `rule_sighting`'s one phase
+on: **change the model or the prompt and you are asking a different question**, so old answers stay
+true statements about what the old question got, and the new question starts empty. Point toolog at
+a different `.gguf` and every eligible call is queued again, while the previous model's verdicts
+stay addressable by their own fingerprints.
+
+- **`model_fingerprint` is the SHA-256 of the file, never its name.** Two files called
+  `gemma.gguf` are not the same model, and a verdict that cannot name what produced it is not
+  evidence of anything.
+- **`prompt_fingerprint` covers the rendered instructions *and* the GBNF grammar**, because both
+  decide what was asked. It lives in `crates/toolog-llm/src/prompt/`, so a change to it is a diff
+  someone reviews.
+- **A rejected answer is stored, as `status = 'failed'` with the reason.** "Asked and could not
+  answer" and "never asked" are different facts. It is also what stops a call the model cannot
+  answer for being retried on every pass forever.
+- **No foreign key, never purged**, exactly as `rule_sighting` and `deletion` are not.
+- **Advisory.** Nothing in `rules.rs` reads this table. It never changes a severity, a finding or
+  the risk summary's numbers.
+
+`llm_verdict_fts` indexes `intent_summary` for the timeline's `@intent:` filter. It is a separate
+FTS table rather than a column on `tool_call_fts` because a call has one row in `tool_call` and may
+have many verdicts — one per (model, prompt) pair — so there is no column on `tool_call` for it to
+be; and `llm_verdict` is `WITHOUT ROWID`, so an external-content table keyed on its rowid is not
+available either. Triggers keep it in step.
 
 ## Rule identity
 
@@ -322,7 +360,7 @@ Two preferences live outside it, and the split is worth stating because both are
 
 | | Where | Why |
 |---|---|---|
-| Notifications, evidence redaction, excluded projects | `prefs.json`, beside the database | The **resident process** acts on them — notifications fire from the capture thread, redaction happens on the write path |
+| Notifications, evidence redaction, excluded projects, the model path and whether its examination is paused | `prefs.json`, beside the database | The **resident process** acts on them — notifications fire from the capture thread, redaction happens on the write path, and the model is loaded by a thread that outlives the window |
 | Theme, the activity chart's collapsed state | The window's `localStorage` | Nothing outside the window acts on them, and reading them synchronously at boot is what stops the first paint being the wrong theme |
 
 Neither is in SQLite. A preference is not evidence, and `prefs.json` is a file a

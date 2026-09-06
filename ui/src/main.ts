@@ -25,6 +25,7 @@ import { SetupView } from "./setup";
 import { applyTheme, currentTheme } from "./theme";
 import { TimelineView } from "./timeline";
 import type { ViewState } from "./view";
+import { parse as parseQuery } from "./query";
 import { emptyFilter, emptyView, fromHash, toHash } from "./view";
 
 type Screen = "timeline" | "risk" | "setup";
@@ -122,7 +123,27 @@ function openRule(ruleId: string): void {
   timeline.apply(view, true);
 }
 
-const risk = new RiskView({ onNotice: notice, onOpenCall: openCall, onOpenRule: openRule });
+/**
+ * Take the reader to a query, written the way they would have typed it.
+ *
+ * `openRule` builds a filter directly because a rule id is not something a
+ * reader composes; this takes the query *language* instead, so what arrives in
+ * the box is a sentence they could have written and can now edit. Phase 13's
+ * section is the first caller: "the calls the model scored 4 or above" is
+ * `@llm-risk:>=4`, and being able to change the 4 is most of its value.
+ */
+function openQuery(query: string): void {
+  view = { ...emptyView(), filter: parseQuery(query).filter };
+  show("timeline");
+  timeline.apply(view, true);
+}
+
+const risk = new RiskView({
+  onNotice: notice,
+  onOpenCall: openCall,
+  onOpenRule: openRule,
+  onOpenQuery: openQuery,
+});
 
 const screens: Record<Screen, { node: HTMLElement }> = { timeline, risk, setup };
 

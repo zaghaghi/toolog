@@ -1898,3 +1898,174 @@ details.uninstall[open] > summary {
     flex: 1 1 100%;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   The second opinion (task 13.16).
+
+   Everything above this section on the risk page is deterministic: a rule with
+   an id, conditions anyone can read, and a severity that means the same thing
+   every time. This is a local model's opinion — not reproducible, and wrong
+   sometimes — so the visual separation is doing real work, not decoration.
+
+   Three deliberate choices:
+
+   - **A different surface.** The section sits on a tinted panel with its own
+     border, so it reads as a footnote to the review rather than as more of it.
+   - **A different colour language.** Rule severities own `--bad`, `--warn` and
+     the muted line; a model score is drawn in one hue at four weights — the
+     same ramp the histogram uses for magnitude. A reader who has learned that
+     red means "high severity rule" must never see red here.
+   - **Numbers, not words.** The score is rendered as a digit. The four severity
+     words are the rules' vocabulary, and this borrows none of them.
+   --------------------------------------------------------------------------- */
+.llm {
+  margin-top: var(--s7);
+  padding: var(--s5);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--chart-track);
+  border-radius: var(--r-lg);
+}
+
+.llm-head h2 {
+  margin: 0 0 var(--s2);
+}
+
+.llm-caveat {
+  margin: 0 0 var(--s4);
+  color: var(--ink-soft);
+  max-width: 68ch;
+}
+
+/* How far the examination has got. A track and a fill rather than a percentage
+   on its own: 11% means nothing without the 3,618 it is 11% of, and the bar is
+   how that is said without a second number. */
+.llm-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--chart-track) 35%, transparent);
+  overflow: hidden;
+}
+
+.llm-progress-fill {
+  height: 100%;
+  background: var(--chart-mark);
+}
+
+.llm-state {
+  margin: var(--s2) 0 0;
+  color: var(--ink-soft);
+}
+
+.llm-provenance {
+  margin: var(--s1) 0 0;
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+}
+
+.llm-provenance code {
+  font-family: var(--mono);
+  color: var(--ink-soft);
+}
+
+.llm-worst-head {
+  margin: var(--s6) 0 var(--s3);
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+.llm-worst {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.llm-row {
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+  width: 100%;
+  padding: var(--s3);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.llm-row:hover,
+.llm-row:focus-visible {
+  background: var(--sunken);
+  border-color: var(--line);
+}
+
+/* The score: a digit on its own scale, never a severity chip. The four weights
+   are one hue getting darker, which is the form magnitude takes everywhere
+   else in this window. */
+.llm-score {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--ink);
+  background: color-mix(in oklab, var(--chart-track) 30%, transparent);
+}
+
+.llm-score-3 {
+  background: color-mix(in oklab, var(--chart-track) 55%, transparent);
+}
+
+.llm-score-4 {
+  background: var(--chart-track);
+}
+
+.llm-score-5 {
+  background: var(--chart-mark);
+  color: var(--card);
+}
+
+.llm-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.llm-intent {
+  color: var(--ink);
+}
+
+.llm-command {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-meta {
+  font-size: var(--text-sm);
+  color: var(--ink-faint);
+}
+
+.llm-none {
+  margin: var(--s4) 0 0;
+  color: var(--ink-soft);
+}
+
+/* The Status page's model card. `pre` inside it is the fetch command, which is
+   shown to be copied and never run — so it wraps rather than scrolling away. */
+.model-card pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+}

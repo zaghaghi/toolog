@@ -5,15 +5,19 @@
 //! "is this thing actually recording?" is answered, and task 5.13 points at it
 //! from the timeline's "the collector is not running" banner.
 
-import type { Prefs, Setup, Status } from "./bindings";
+import type { LlmReport, Prefs, Setup, Status } from "./bindings";
 import {
   applyDoctorFix,
   collectorStatus,
   doctorStatus,
   getPrefs,
+  llmReport,
+  pickModel,
   revealLogs,
   runBackfill,
+  setAnalysisPaused,
   setLoginAgent,
+  setModel,
   setPaused,
   setPrefs,
   uninstallPreview,
@@ -48,11 +52,19 @@ export class SetupView {
   private async render(): Promise<void> {
     fill(this.node, [el("div", { class: "empty", text: "Loading…" })]);
     try {
-      const [setup, status] = await Promise.all([
+      // The model report is fetched here rather than lazily, because the card
+      // is part of the page rather than a panel someone opens — and it is
+      // allowed to fail on its own: a Status page that would not render because
+      // a preference names a file that has been deleted is worse than one that
+      // says so in one card.
+      const [setup, status, llm] = await Promise.all([
         doctorStatus(),
         collectorStatus().catch(() => null),
+        llmReport().catch(() => null),
       ]);
-      fill(this.node, [setup.configured ? this.home(setup, status) : this.wizard(setup)]);
+      fill(this.node, [
+        setup.configured ? this.home(setup, status, llm) : this.wizard(setup),
+      ]);
     } catch (error) {
       fill(this.node, [el("div", { class: "problem", text: String(error) })]);
     }
@@ -122,7 +134,7 @@ export class SetupView {
 
   // ----------------------------------------------------------------- home
 
-  private home(setup: Setup, status: Status | null): HTMLElement {
+  private home(setup: Setup, status: Status | null, llm: LlmReport | null): HTMLElement {
     const view = el("div", { class: "prose" });
     const live = status !== null && !status.paused && status.listening;
 
@@ -213,6 +225,10 @@ export class SetupView {
       }
     }
 
+    if (llm !== null) {
+      view.append(el("h2", { text: "Model" }), this.model(llm));
+    }
+
     view.append(el("h2", { text: "Appearance" }), this.appearance());
 
     view.append(el("h2", { text: "Notifications" }), this.notifications());
@@ -226,6 +242,141 @@ export class SetupView {
 
     view.append(el("h2", { text: "Remove toolog" }), this.uninstall());
     return view;
+  }
+
+  /**
+   * The local second opinion: what is configured, and how to configure it
+   * (tasks 13.1, 13.2).
+   *
+   * **toolog never downloads the model.** ADR-0008 is the tool's central claim
+   * and the egress test enforces it structurally; a 3.1 GB fetch from Hugging
+   * Face is exactly what that test exists to forbid. So this card names the
+   * file and shows the `curl` line for the reader to run in their own shell —
+   * on their network, by their decision — and offers a file picker for the
+   * result.
+   *
+   * The card is deliberately honest about three different kinds of nothing: no
+   * model configured, a configured path that is not a model, and a build with
+   * no inference support at all. They look the same from a distance and lead
+   * to completely different next steps.
+   */
+  private model(llm: LlmReport): HTMLElement {
+    const card = el("div", { class: "card model-card" });
+
+    if (!llm.model.supported) {
+      card.append(
+        el("p", { class: "muted" }, [
+          el("strong", { text: "This build has no inference support. " }),
+          "Nothing here will load a model, whatever it is pointed at.",
+        ]),
+      );
+    }
+
+    const file = llm.model.file;
+    if (file === null) {
+      card.append(
+        el("p", { class: "muted" }, [
+          llm.model.path === null
+            ? "No model. The calls no rule matched are reported as unexamined, which is what they are."
+            : `That path is not a usable model: ${llm.model.problem ?? "unreadable"}`,
+        ]),
+        el("p", { class: "muted", text: `The model this is written for: ${llm.model.suggested}` }),
+        el("p", { class: "muted", text: "Fetch it yourself — toolog has no network capability:" }),
+        el("pre", { class: "report", text: llm.model.fetch_command }),
+      );
+    } else {
+      card.append(
+        statRow("File", file.path),
+        statRow("Model", llm.model.summary ?? `${file.parameters} parameters`),
+        statRow("State", llm.starting ? "Loading…" : llm.model.loaded ? "Loaded" : "Not loaded"),
+      );
+      if (llm.pair !== null) {
+        // The identity a verdict is stored under. Shown because a number whose
+        // author cannot be named is not evidence of anything (task 13.14).
+        card.append(statRow("Model / prompt", llm.pair));
+      }
+      const progress = llm.progress;
+      if (progress !== null) {
+        card.append(
+          statRow(
+            "Examined",
+            `${count(progress.examined)} of ${count(progress.eligible)} unmatched Bash calls`,
+          ),
+        );
+        if (progress.failed > 0) {
+          card.append(statRow("Could not answer", count(progress.failed)));
+        }
+        card.append(statRow("Queued", count(progress.queued)));
+        if (progress.mean_ms !== null) {
+          card.append(statRow("Per call", `${count(progress.mean_ms)} ms`));
+        }
+      }
+    }
+
+    if (llm.error !== null) {
+      card.append(el("div", { class: "problem", text: llm.error }));
+    }
+
+    const choose = el("button", { text: file === null ? "Choose a model…" : "Change model…" });
+    choose.addEventListener("click", () => {
+      choose.disabled = true;
+      void pickModel()
+        .then(() => this.render())
+        .catch((error: unknown) => {
+          choose.disabled = false;
+          this.options.onNotice(String(error));
+        });
+    });
+
+    const actions: HTMLElement[] = [choose];
+
+    if (llm.model.path !== null) {
+      const forget = el("button", { text: "Forget it" });
+      forget.addEventListener("click", () => {
+        forget.disabled = true;
+        void setModel(null)
+          .then(() => {
+            this.options.onNotice(
+              "The model is forgotten. The file is untouched, and the verdicts it recorded are kept.",
+            );
+            return this.render();
+          })
+          .catch((error: unknown) => {
+            forget.disabled = false;
+            this.options.onNotice(String(error));
+          });
+      });
+      actions.push(forget);
+    }
+
+    const running = llm.analysis;
+    if (running !== null) {
+      // Pausing is its own button rather than a switch, because a 65-minute
+      // backfill is a thing someone stops to get their laptop back — an action,
+      // not a preference they set once.
+      const pause = el("button", { text: running.paused ? "Resume examining" : "Pause examining" });
+      pause.addEventListener("click", () => {
+        pause.disabled = true;
+        void setAnalysisPaused(!running.paused)
+          .then(() => this.render())
+          .catch((error: unknown) => {
+            pause.disabled = false;
+            this.options.onNotice(String(error));
+          });
+      });
+      actions.push(pause);
+    }
+
+    card.append(el("div", { class: "actions" }, actions));
+
+    if (running !== null && running.skipped_live > 0) {
+      card.append(
+        el("p", { class: "muted" }, [
+          `${count(running.skipped_live)} arriving calls were not analysed immediately because the model was busy. The backfill will reach them.`,
+        ]),
+      );
+    }
+    return card;
   }
 
   /**

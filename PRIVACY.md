@@ -96,6 +96,26 @@ Nothing. Not conditionally, not by default, not unless you turn something on.
   it is running, and it **refuses any address that is not loopback**, with a test asserting
   it refuses before connecting.
 
+**The local model reads the same redacted text every view does — and it is local.** *Phase 13.*
+If you point toolog at a `.gguf` file, a model on this machine reads the shell commands no rule
+matched and says what each was doing. Three things about it:
+
+- **toolog does not download it, and gained no ability to.** You fetch the file yourself, with the
+  `curl` line Status → Model shows, on your network. The tests below still pass with llama.cpp in
+  the build, and one more was added: `just verify-bundle` asserts the shipped binary links no
+  `libcurl` and no TLS library — because llama.cpp has a downloader of its own that a check reading
+  `Cargo.toml` could not see.
+- **The prompt is never transmitted, because there is nothing to transmit it to.** Inference runs
+  in this process, on this machine's CPU and GPU.
+- **The model reads `input_summary`** — the redacted projection every other view reads, with
+  secrets already stripped — never the raw evidence in `raw_event`. So this adds **no new place a
+  secret can go**: the text it sees is text the window already shows you, and what it writes back
+  is a one-line summary of it.
+
+What it produces is advisory and stays that way: it never changes a rule, a severity or the risk
+summary's numbers, and it is shown in its own section saying which model and which prompt produced
+it. See [ADR-0013](docs/adr/0013-a-verdict-is-stored-not-recomputed.md).
+
 **Exports go where you point them.** The timeline's export opens a native save panel, and toolog
 writes the file you choose and nothing else. What it contains is the same sensitive data the store
 holds — commands, paths, results — so where you put it is the decision that matters.
@@ -122,6 +142,8 @@ addendum to [ADR-0008](docs/adr/0008-local-only-zero-egress.md).
 | Remove one session, or one project | `toolog purge --session ID` / `--project PATH` |
 | Redact the evidence store as well as the projection | Status → Privacy |
 | Notifications on refusals and high-severity rule hits | Status → Notifications. Off by default |
+| Point a local model at the unmatched calls | Status → Model. **No model until you choose a file** |
+| Stop the model examining, or forget it entirely | Status → Model. Forgetting deletes no file and keeps what it recorded |
 | Add or retune redaction patterns | `redaction.toml`, beside the database |
 | Add or retune risk rules | `rules.toml`, beside the database |
 | Remove toolog and put `settings.json` back | `toolog uninstall`, or Status → Remove toolog |

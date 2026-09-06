@@ -1,6 +1,6 @@
 # Documentation
 
-**Status: v1.1, plus Phase 12 on top of it, and a thirteenth planned.** Capture works end to end and the record
+**Status: v1.1, plus Phases 12 and 13 on top of it.** Capture works end to end and the record
 earns the word "audit": it says what it is missing, proves it has not been altered, keeps secrets
 out of what it shows, bounds itself, and fails the build if anything tries to leave the machine. It
 installs and uninstalls as one signed, notarized universal artifact — and ships with **no network
@@ -34,7 +34,7 @@ usable release (v0.1); Phase 8 is v1.0; Phase 11 is v1.1.**
 | [10 — One lens](phases/10-one-lens.md) | The timeline's query bar, histogram and closable pane | done |
 | [11 — Risk, fast and legible](phases/11-risk-fast-and-legible.md) | A review that is fast, adds up, and can be read | **v1.1** — done |
 | [12 — Findings in time](phases/12-findings-in-time.md) | When a finding was first seen, and risk as a timeline filter | done |
-| [13 — A second opinion](phases/13-a-second-opinion.md) | A local model over the calls no rule matched | planned |
+| [13 — A second opinion](phases/13-a-second-opinion.md) | A local model over the calls no rule matched | done |
 
 Phases 9–11 come from the owner's report after using v1.0: two views did not earn their place, the
 timeline asks the reader to work too hard, and the risk view — the one that is good — is slow, does
@@ -53,12 +53,23 @@ finding was first seen, which is an observation rather than a derivation and so 
 a finding may not — and `@risk:high` / `@rule:<id>` in the query bar, which makes the histogram a
 chart of risk over time for free.
 
-[Phase 13](phases/13-a-second-opinion.md) is **planned and not started**. The rules only find what
-someone thought to write a rule for, and **77% of the owner's store is Bash commands no rule has
-ever matched** — reported as nothing rather than as unexamined. It runs a local model over them,
-on this machine and with no network capability added: the model file is brought by the user,
-because [ADR-0008](adr/0008-local-only-zero-egress.md) is not negotiable and the egress test would
-refuse the fetch anyway.
+[Phase 13](phases/13-a-second-opinion.md) answers the thing the rules cannot. They only find what
+someone thought to write a rule for, and **77% of the owner's store — 3,618 of 4,682 calls — is
+Bash commands no rule has ever matched**, reported as nothing rather than as unexamined. A local
+model now reads them and says what each was doing, on this machine and with **no network capability
+added**: the `.gguf` is brought by the user, because [ADR-0008](adr/0008-local-only-zero-egress.md)
+is not negotiable and the egress test would refuse the fetch anyway — and because llama.cpp has a
+downloader of its own, the shipped binary is asserted to link no `libcurl`.
+
+A verdict is **stored** rather than recomputed, which is a departure from
+[ADR-0004](adr/0004-store-raw-project-normalized.md) that [ADR-0013](adr/0013-a-verdict-is-stored-not-recomputed.md)
+argues: an LLM answer is not reproducible, so it is not a derivation, and it is keyed on a
+fingerprint of the model file *and* the prompt so that changing either starts a fresh set rather
+than making the old ones wrong. It is **advisory throughout** — never a rule, never a severity,
+never a number in the summary — which is both an honesty requirement and the injection mitigation
+that holds when the grammar and the schema do not.
+
+The macOS floor moved 10.15 → 11.0 with it, for llama.cpp's `std::filesystem`.
 
 ## The database
 
@@ -101,6 +112,8 @@ version moves substantially.
 | `session.transcript_path` is the only link between a projection row and its evidence | Retention removes whole sessions, both halves together → [Phase 7](phases/07-privacy-retention-integrity.md) |
 | `plutil -lint` accepts an entitlements file that `codesign` rejects: XML forbids `--` inside a comment, and AMFI then signs the app **without** the entitlements rather than stopping | The plists are asserted by a test, not by a linter → [Phase 8](phases/08-packaging-distribution.md) |
 | Tauri notarizes and staples the `.app` but only *signs* the `.dmg` around it | The `.dmg` is notarized in its own right, or the first double-click is a Gatekeeper warning → [Phase 8](phases/08-packaging-distribution.md) |
+| `llama_sampler_sample` accepts the token into the sampler chain itself; calling `accept` again advances a GBNF grammar twice per token until no stack survives, and llama.cpp then `abort(3)`s the **process** on `GGML_ASSERT(!stacks.empty())` | The generation loop never calls `accept`, and says why → [Phase 13](phases/13-a-second-opinion.md) |
+| 3,618 of 4,682 calls carry no `rule_sighting`: 77% of the store has never been looked at | A local model reads them, advisory and never a rule → [ADR-0013](adr/0013-a-verdict-is-stored-not-recomputed.md) |
 
 ## Backfill numbers to check against
 

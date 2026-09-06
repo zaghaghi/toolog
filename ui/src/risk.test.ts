@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import type { Finding, RiskReview, ToolCall } from "./bindings";
+import type { Finding, LlmReport, RiskReview, ToolCall } from "./bindings";
 
 const state = {
   review: null as RiskReview | null,
@@ -18,6 +18,8 @@ const state = {
   asked: [] as [string, number][],
   revealed: 0,
   openedRule: [] as string[],
+  openedQuery: [] as string[],
+  llm: null as LlmReport | null,
 };
 
 vi.mock("./bindings", () => ({
@@ -50,6 +52,7 @@ vi.mock("./bindings", () => ({
     state.restored.push(ruleId);
     return Promise.resolve(state.review);
   }),
+  llmReport: vi.fn(() => Promise.resolve(state.llm)),
 }));
 
 const { RiskView } = await import("./risk");
@@ -142,7 +145,12 @@ const settle = async (): Promise<void> => {
 
 async function mount(data: RiskReview, onOpenCall: (id: string) => void = () => {}) {
   state.review = data;
-  const view = new RiskView({ onNotice: () => {}, onOpenCall, onOpenRule: (id) => state.openedRule.push(id) });
+  const view = new RiskView({
+    onNotice: () => {},
+    onOpenCall,
+    onOpenRule: (id) => state.openedRule.push(id),
+    onOpenQuery: (q) => state.openedQuery.push(q),
+  });
   await view.refresh();
   return view.node;
 }
@@ -152,6 +160,8 @@ beforeEach(() => {
   state.firstPage = [call()];
   state.revealed = 0;
   state.openedRule = [];
+  state.openedQuery = [];
+  state.llm = null;
   state.dismissed = [];
   state.restored = [];
   state.extraCalls = [];
@@ -244,7 +254,12 @@ describe("setting a rule aside", () => {
     const notices: string[] = [];
     state.review = review();
     const { RiskView: View } = await import("./risk");
-    const view = new View({ onNotice: (m) => notices.push(m), onOpenCall: () => {}, onOpenRule: () => {} });
+    const view = new View({
+      onNotice: (m) => notices.push(m),
+      onOpenCall: () => {},
+      onOpenRule: () => {},
+      onOpenQuery: () => {},
+    });
     await view.refresh();
     const node = view.node;
 
@@ -500,5 +515,124 @@ describe("findings in time (tasks 12.4, 12.5, 12.12)", () => {
     node.querySelector<HTMLButtonElement>(".finding-head")?.click();
     await settle();
     expect(node.querySelector(".finding-open")).toBeNull();
+  });
+});
+
+describe("the second opinion (task 13.16)", () => {
+  function report(over: Partial<LlmReport> = {}): LlmReport {
+    return {
+      model: {
+        supported: true,
+        path: "/models/gemma.gguf",
+        file: null,
+        summary: "gemma4, 4.6B parameters, 3.1 GB",
+        problem: null,
+        loaded: true,
+        suggested: "google/gemma-4-E2B-it-qat-q4_0-gguf → gemma-4-E2B_q4_0-it.gguf",
+        fetch_command: "curl -L -o gemma-4-E2B_q4_0-it.gguf https://example.invalid/x",
+      },
+      starting: false,
+      error: null,
+      analysis: null,
+      progress: { eligible: 3618, examined: 412, failed: 3, queued: 3203, mean_ms: 1249 },
+      pair: "3646b4c147cd / 734b5913bf03",
+      prompt_fingerprint: "734b5913bf03",
+      scores: [{ score: 4, calls: 7 }],
+      worst: [
+        {
+          tool_use_id: "toolu_dd",
+          command: "dd if=/dev/zero of=/dev/disk0",
+          project_path: "/work/app",
+          called_at: 1_700_000_000_000,
+          risk_score: 5,
+          category: "filesystem",
+          intent_summary: "Writes zeros to a raw disk device.",
+          is_destructive: true,
+          violates_sandbox: true,
+        },
+      ],
+      ...over,
+    };
+  }
+
+  test("is absent entirely when no model is configured", async () => {
+    // The phase's exit criterion: with no model, the risk view is exactly as
+    // it was. Not an empty section with a heading — nothing.
+    state.llm = null;
+    const node = await mount(review());
+    expect(node.querySelector(".llm")).toBeNull();
+  });
+
+  test("is absent when a model is configured but has answered for nothing", async () => {
+    state.llm = report({ progress: null });
+    const node = await mount(review());
+    expect(node.querySelector(".llm")).toBeNull();
+  });
+
+  test("says it is not a rule, and names the model and prompt that produced it", async () => {
+    state.llm = report();
+    const section = (await mount(review())).querySelector(".llm");
+
+    expect(section).not.toBeNull();
+    expect(section!.textContent).toContain("Not a rule");
+    expect(section!.textContent).toContain("advisory");
+    // A number whose author cannot be named is not evidence (task 13.14).
+    expect(section!.textContent).toContain("3646b4c147cd / 734b5913bf03");
+    expect(section!.textContent).toContain("412 examined");
+    expect(section!.textContent).toContain("3,203 still queued");
+  });
+
+  /**
+   * The rule a reader depends on: which numbers a deterministic rule produced.
+   *
+   * A model score is drawn as a number on its own scale in its own class, and
+   * never given one of the four severity words the rules above use. If this
+   * ever fails, the page has started mixing two things that mean differently.
+   */
+  test("never puts a model score in a severity column or gives it a severity word", async () => {
+    state.llm = report();
+    const section = (await mount(review())).querySelector(".llm")!;
+
+    for (const word of ["Worth answering for", "Worth explaining", "Worth a look", "Worth knowing"]) {
+      expect(section.textContent).not.toContain(word);
+    }
+    expect(section.textContent).not.toContain("severity");
+    expect(section.querySelector(".sev")).toBeNull();
+
+    const score = section.querySelector(".llm-score");
+    expect(score?.textContent).toBe("5");
+    expect(score?.className).toContain("llm-score-5");
+  });
+
+  test("a scored command shows what the model said and opens the call", async () => {
+    state.llm = report();
+    const opened: string[] = [];
+    const node = await mount(review(), (id) => opened.push(id));
+
+    const row = node.querySelector<HTMLButtonElement>(".llm-row");
+    expect(row!.textContent).toContain("Writes zeros to a raw disk device.");
+    expect(row!.textContent).toContain("dd if=/dev/zero of=/dev/disk0");
+    expect(row!.textContent).toContain("destructive");
+    expect(row!.textContent).toContain("outside the project");
+
+    row!.click();
+    expect(opened).toEqual(["toolu_dd"]);
+  });
+
+  test("drills through to the timeline in the query language, so the score can be edited", async () => {
+    state.llm = report();
+    const node = await mount(review());
+    const open = [...node.querySelectorAll("button")].find(
+      (b) => b.textContent === "Open all of these in the timeline",
+    );
+
+    open!.click();
+    expect(state.openedQuery).toEqual(["@llm-risk:>=4"]);
+  });
+
+  test("says so plainly when it examined things and flagged none of them", async () => {
+    state.llm = report({ worst: [] });
+    const section = (await mount(review())).querySelector(".llm")!;
+    expect(section.textContent).toContain("Nothing it examined scored 4 or above");
   });
 });

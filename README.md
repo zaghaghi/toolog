@@ -45,6 +45,12 @@ or off, which would demote a compile-time guarantee to a runtime flag. `brew upg
 toolog` is the update path instead, and the updater plugin is named in the same test that rejects
 `reqwest`. See [ADR-0008](docs/adr/0008-local-only-zero-egress.md) and [PRIVACY.md](PRIVACY.md).
 
+**Including the model.** Toolog links llama.cpp and does not gain a downloader with it: you fetch
+the `.gguf` yourself and point toolog at it. llama.cpp has a `--hf-repo` fetcher of its own that a
+check reading `Cargo.toml` cannot see, so the release additionally asserts `otool -L` on the
+shipped binary lists no `libcurl` and no TLS library. A config option is not a guarantee; the
+binary is.
+
 ## How it works
 
 Two ingestion lanes, because neither is complete alone:
@@ -142,6 +148,8 @@ The window is TypeScript compiled by Vite and **embedded in the binary**, so it 
 | `toolog verify --chain` | Walk the integrity chain over stored evidence, and print its head |
 | `toolog purge` | Show what retention would remove. `--apply` to remove it |
 | `toolog risk` | Evaluate the risk rules: what got approved, and how |
+| `toolog model set PATH` | Point the local second opinion at a `.gguf`. Never downloads |
+| `toolog model status` | The configured model, and how far the examination has got |
 | `toolog export` | JSON, JSONL, CSV or Markdown, with filters |
 | `toolog agent install` | A login agent so capture survives a restart |
 | `toolog uninstall` | Undo the install. Restores `settings.json`; keeps your history |
@@ -175,6 +183,15 @@ your existing telemetry pipeline is not ours to redirect. See
   `/` as `-`, so `/a/b/my-app` and `/a/b/my/app` name the same directory. Project attribution
   therefore comes from `cwd` in the records; only per-project *exclusion* matches on the
   encoded name, where it is exact.
+- **The second opinion is a 3.1 GB dependency against a 166 MB store, and it is wrong
+  sometimes.** The model analysing the history is nineteen times the size of the history, and
+  it is a 4.6B quantized model: measured on the owner's store it scores a benign `cargo test`
+  at 2 and needed its rubric spelled out before it called a raw-device `dd` dangerous. That is
+  why it is opt-in, advisory, never a rule, and shown in its own section — and why the
+  one-line intent summary may be the half worth keeping even where the score is not. See
+  [ADR-0013](docs/adr/0013-a-verdict-is-stored-not-recomputed.md).
+- **macOS 11 or later**, since Phase 13: llama.cpp's C++ needs `std::filesystem`. The floor was
+  10.15 through v1.1.
 - **Anyone who can read your disk can read the database.** It is a plain SQLite file, on
   purpose — that is what lets you check the claims in `PRIVACY.md` without trusting this
   program. Encryption at rest was evaluated in Phase 7 and declined in favour of FileVault,
@@ -183,6 +200,6 @@ your existing telemetry pipeline is not ours to redirect. See
 ## Documentation
 
 - [docs/README.md](docs/README.md) — phases, milestones, and the facts the design rests on
-- [docs/adr/](docs/adr/README.md) — nine architecture decision records
+- [docs/adr/](docs/adr/README.md) — thirteen architecture decision records
 - [PRIVACY.md](PRIVACY.md) — what is captured, what is not, and what never leaves
 - [docs/releasing.md](docs/releasing.md) — how a signed, notarized release is cut

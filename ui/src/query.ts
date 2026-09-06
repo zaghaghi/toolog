@@ -18,7 +18,15 @@ import { emptyFilter, withLane, withThread } from "./view";
 import type { Lane, Thread } from "./view";
 
 /** What a key accepts, which is what autocomplete offers after the colon. */
-export type Values = "text" | "outcome" | "lane" | "thread" | "boolean" | "risk" | "rule";
+export type Values =
+  | "text"
+  | "outcome"
+  | "lane"
+  | "thread"
+  | "boolean"
+  | "risk"
+  | "rule"
+  | "score";
 
 export interface KeySpec {
   /** The field this key edits, for the ones that are a plain assignment. */
@@ -61,6 +69,22 @@ export const KEYS: Record<string, KeySpec> = {
    */
   risk: { field: "risk", values: "risk", hint: "high, medium, low or info" },
   rule: { field: "rule_id", values: "rule", hint: "One rule, by id" },
+  /**
+   * The two keys that mean something only against a *model* (task 13.15).
+   *
+   * Deliberately not folded into `@risk`. A rule's severity is deterministic
+   * and a model's score is not, and a box in which one token could mean either
+   * would be the first step towards a view that mixes them. The naming says so
+   * too: `@llm-risk` carries its own prefix rather than being a value of
+   * `@risk`.
+   *
+   * Like `@risk`, a link carrying one is evaluated against what is configured
+   * when it is *opened* — and unlike `@risk`, it can fail outright: a store
+   * that has never had a model has no verdicts, and the command says so rather
+   * than answering with an empty list.
+   */
+  intent: { field: "intent", values: "text", hint: "What the model said it does" },
+  "llm-risk": { field: "llm_risk", values: "score", hint: "A model score: >=4, 5, <2" },
 };
 
 const OUTCOMES: string[] = ["ok", "failed", "refused"];
@@ -80,6 +104,10 @@ export function fixedValues(key: string): string[] {
       return ["true", "false"];
     case "risk":
       return ["high", "medium", "low", "info"];
+    case "score":
+      // The comparisons worth offering, not every one that parses. `>=4` is
+      // the question people actually ask; `=3` is one they can type.
+      return [">=4", "5", ">=3", "<2"];
     default:
       return [];
   }
@@ -254,6 +282,20 @@ function apply(
   const spec = KEYS[key]!;
 
   if (spec.field !== undefined) {
+    if (spec.values === "score") {
+      // Parsed here as well as in Rust, so a typo is reported in the box the
+      // reader is typing into rather than as a failed query. The two have to
+      // agree: `toolog_core::llm::ScoreFilter::parse` is the one that runs.
+      if (!/^(>=|<=|>|<|=)?\s*[1-5]$/.test(value.trim())) {
+        errors.push({
+          key,
+          message: `@${key} takes a score 1 to 5, optionally after >=, >, <= or < — for example >=4.`,
+        });
+        return;
+      }
+      filter.llm_risk = value.trim();
+      return;
+    }
     if (spec.values === "risk") {
       const known = fixedValues(key);
       if (!known.includes(value)) {

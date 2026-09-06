@@ -78,6 +78,13 @@ pub struct ModelStatus {
     pub path: Option<String>,
     /// What the file turned out to be, when it is a model.
     pub file: Option<gguf::ModelFile>,
+    /// `gemma4, 4.6B parameters, 3.1 GB` — rendered once, in Rust.
+    ///
+    /// Carried rather than rebuilt in TypeScript so `toolog model status` and
+    /// the Status card cannot describe the same file differently. It is the
+    /// same rule the doctor report follows, and the reason `report` is a string
+    /// there too.
+    pub summary: Option<String>,
     /// Why the configured path is not usable, in a sentence.
     pub problem: Option<String>,
     /// Whether a model is loaded and answering right now.
@@ -96,6 +103,7 @@ impl ModelStatus {
             supported: toolog_llm::built_with_inference(),
             path: None,
             file: None,
+            summary: None,
             problem: None,
             loaded: false,
             suggested: format!("{SUGGESTED_REPO} → {SUGGESTED_FILE}"),
@@ -134,7 +142,10 @@ pub fn status(path: Option<&Path>, loaded: bool) -> ModelStatus {
     }
 
     match gguf::inspect(path) {
-        Ok(file) => status.file = Some(file),
+        Ok(file) => {
+            status.summary = Some(file.describe());
+            status.file = Some(file);
+        }
         Err(e) => status.problem = Some(e.to_string()),
     }
     status

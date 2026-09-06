@@ -48,6 +48,13 @@ const SAYABLE: Partial<TimelineFilter>[] = [
   { query: 'a "quoted" phrase' },
   { risk: "high" },
   { rule_id: "auto-approved-destructive-bash" },
+  // Phase 13. `@intent` is free text like a project path, so it gets the same
+  // quoting cases; `@llm-risk` is a comparison, so both forms it accepts are
+  // here — a bare number and one with an operator.
+  { intent: "deletes a directory" },
+  { intent: 'writes a "config" file' },
+  { llm_risk: ">=4" },
+  { llm_risk: "5" },
 ];
 
 describe("the round trip (task 10.5)", () => {

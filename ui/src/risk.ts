@@ -22,8 +22,16 @@
 //!   that found nothing is a real result, and skipping it was exactly why a
 //!   reader could not tell from the window which rules exist.
 
-import type { Finding, ProjectRisk, RiskReview, Severity, ToolCall } from "./bindings";
-import { dismissRule, restoreRule, revealRules, risk, ruleCalls } from "./bindings";
+import type {
+  Finding,
+  LlmReport,
+  ProjectRisk,
+  RiskReview,
+  Scored,
+  Severity,
+  ToolCall,
+} from "./bindings";
+import { dismissRule, llmReport, restoreRule, revealRules, risk, ruleCalls } from "./bindings";
 import { append, el, fill, orDash } from "./dom";
 import { basename, clock, count, dayLabel, fullStamp } from "./format";
 
@@ -71,12 +79,15 @@ export interface RiskOptions {
    * finding counted rather than a similar one.
    */
   onOpenRule: (ruleId: string) => void;
+  /** Open a raw query in the timeline — how the model's section drills through. */
+  onOpenQuery: (query: string) => void;
 }
 
 export class RiskView {
   readonly node: HTMLElement;
   private readonly content = el("div", { class: "sheet" });
   private review: RiskReview | null = null;
+  private llm: LlmReport | null = null;
   private readonly open = new Set<string>();
   private loading = false;
 
@@ -89,7 +100,16 @@ export class RiskView {
     this.loading = true;
     this.content.classList.add("busy");
     try {
-      this.review = await risk();
+      // Two reads, not one, and deliberately: the rules and the model are
+      // separate claims, and a model that cannot be reported on must not stop
+      // the review being shown. That is the same separation the section itself
+      // is about (task 13.16).
+      const [review, llm] = await Promise.all([
+        risk(),
+        llmReport().catch(() => null),
+      ]);
+      this.review = review;
+      this.llm = llm;
       this.draw();
     } catch (error) {
       this.opts.onNotice(`The rules could not be run: ${String(error)}`);
@@ -116,6 +136,7 @@ export class RiskView {
         ]),
         el("div", { class: "findings" }, review.findings.map((f) => this.finding(f))),
         this.rulesFooter(),
+        ...this.secondOpinion(),
       ]);
       return;
     }
@@ -131,7 +152,129 @@ export class RiskView {
       this.projects(review.projects),
       el("div", { class: "findings" }, review.findings.map((f) => this.finding(f))),
       this.rulesFooter(),
+      ...this.secondOpinion(),
     ]);
+  }
+
+  /**
+   * What a local model said about the calls no rule matched (task 13.16).
+   *
+   * **Explicitly not the rules.** Everything above this point is deterministic:
+   * a rule with an id, conditions anyone can read, and a severity that means
+   * the same thing every time it is computed. This is a 4.6B model's opinion,
+   * it is not reproducible, and it is wrong sometimes.
+   *
+   * So the section is separated by more than a heading. It never uses the word
+   * "severity" or any of the four severity words; its scores are numbers on
+   * their own scale, drawn in their own colour. It states the model and prompt
+   * it came from in words, because a number whose author cannot be named is not
+   * evidence. And it never contributes to the counts above — those are the
+   * rules', and they do not move because a model was pointed at the store.
+   *
+   * Absent entirely when no model is configured, which is the exit criterion:
+   * with none, the risk view is exactly as it was.
+   */
+  private secondOpinion(): HTMLElement[] {
+    const llm = this.llm;
+    if (llm === null) return [];
+    const progress = llm.progress;
+    // No model, or one that has never answered: nothing to report. A card
+    // saying "0 examined" for a store nobody pointed a model at would be an
+    // answer to a question nobody asked.
+    if (progress === null || llm.model.path === null) return [];
+
+    const done = progress.examined + progress.failed;
+    const share =
+      progress.eligible > 0 ? Math.round((done / progress.eligible) * 100) : 0;
+
+    const head = el("div", { class: "llm-head" }, [
+      el("h2", { text: "A second opinion" }),
+      el("p", { class: "llm-caveat" }, [
+        "Not a rule. A local model read the ",
+        el("strong", { text: count(progress.eligible) }),
+        " Bash commands no rule has ever matched and said what each was doing. It is advisory, it is not reproducible, and it is wrong sometimes — nothing here changes the numbers above.",
+      ]),
+    ]);
+
+    const bar = el("div", { class: "llm-progress" }, [
+      el("div", {
+        class: "llm-progress-fill",
+        attrs: { style: `width: ${String(share)}%` },
+      }),
+    ]);
+
+    const state = el("p", { class: "llm-state" }, [
+      `${count(progress.examined)} examined`,
+      progress.failed > 0 ? `, ${count(progress.failed)} the model could not answer for` : "",
+      `, ${count(progress.queued)} still queued`,
+      progress.mean_ms === null ? "" : ` · ${count(progress.mean_ms)} ms each`,
+      llm.analysis?.paused === true ? " · paused" : "",
+    ]);
+
+    const provenance = el("p", { class: "llm-provenance" }, [
+      "model ",
+      el("code", { text: llm.pair ?? "unknown" }),
+      " · prompt ",
+      el("code", { text: llm.prompt_fingerprint }),
+      ". Change either and these answers are kept, and a fresh set starts.",
+    ]);
+
+    const body: HTMLElement[] = [head, bar, state, provenance];
+    if (llm.worst.length > 0) {
+      body.push(
+        el("h3", { class: "llm-worst-head", text: "Highest-scoring unmatched commands" }),
+        el("div", { class: "llm-worst" }, llm.worst.map((w) => this.scored(w))),
+        this.openScored(),
+      );
+    } else if (progress.examined > 0) {
+      body.push(
+        el("p", { class: "llm-none" }, [
+          "Nothing it examined scored 4 or above.",
+        ]),
+      );
+    }
+
+    return [el("section", { class: "llm" }, body)];
+  }
+
+  /** One command the model scored, with what it said about it. */
+  private scored(w: Scored): HTMLElement {
+    const open = el("button", {
+      class: "llm-row",
+      attrs: { type: "button" },
+    });
+    append(open, [
+      // The score, never in a severity column and never given a severity word.
+      el("span", { class: `llm-score llm-score-${String(w.risk_score)}`, text: String(w.risk_score) }),
+      el("span", { class: "llm-row-body" }, [
+        el("span", { class: "llm-intent", text: w.intent_summary }),
+        el("code", { class: "llm-command", text: firstLineOf(w.command) }),
+        el("span", { class: "llm-meta" }, [
+          w.project_path === null ? "" : basename(w.project_path),
+          w.is_destructive ? " · destructive" : "",
+          w.violates_sandbox ? " · outside the project" : "",
+          w.called_at === null ? "" : ` · ${dayLabel(w.called_at)} ${clock(w.called_at)}`,
+        ]),
+      ]),
+    ]);
+    open.title = w.called_at === null ? "" : fullStamp(w.called_at);
+    open.addEventListener("click", () => {
+      this.opts.onOpenCall(w.tool_use_id);
+    });
+    return open;
+  }
+
+  /** Every call the model scored 4 or above, in the timeline (task 13.15). */
+  private openScored(): HTMLElement {
+    const open = el("button", {
+      class: "toggle",
+      text: "Open all of these in the timeline",
+      attrs: { type: "button" },
+    });
+    open.addEventListener("click", () => {
+      this.opts.onOpenQuery("@llm-risk:>=4");
+    });
+    return el("div", { class: "rules-note" }, [open]);
   }
 
   /**
@@ -467,7 +610,11 @@ export class RiskView {
 
 /** The first line of what a call did — a heredoc body is not the command. */
 function firstLine(call: ToolCall): string {
-  const summary = call.input_summary ?? call.target_path ?? "";
-  const line = summary.split("\n", 1)[0] ?? "";
+  return firstLineOf(call.input_summary ?? call.target_path);
+}
+
+/** The same, for a row that carries the command rather than the call. */
+function firstLineOf(summary: string | null): string {
+  const line = (summary ?? "").split("\n", 1)[0] ?? "";
   return line.length > 160 ? `${line.slice(0, 159)}…` : line;
 }

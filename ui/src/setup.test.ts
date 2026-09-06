@@ -12,6 +12,8 @@
 
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
+import type { LlmReport } from "./bindings";
+
 const doctor = {
   configured: true,
   listening: true,
@@ -50,6 +52,35 @@ interface Prefs {
 }
 const setPrefs = vi.fn((prefs: Prefs) => Promise.resolve(prefs));
 
+/** What `llmReport` answers. Replaced per test; `null` is "could not be read". */
+let llmModel: LlmReport | null = noModel();
+const setModelCalls: (string | null)[] = [];
+const pausedCalls: boolean[] = [];
+
+/** A machine where nobody has configured a model — the default state. */
+function noModel(): LlmReport {
+  return {
+    model: {
+      supported: true,
+      path: null,
+      file: null,
+      summary: null,
+      problem: null,
+      loaded: false,
+      suggested: "google/gemma-4-E2B-it-qat-q4_0-gguf → gemma-4-E2B_q4_0-it.gguf",
+      fetch_command: "curl -L -o gemma-4-E2B_q4_0-it.gguf https://example.invalid/x",
+    },
+    starting: false,
+    error: null,
+    analysis: null,
+    progress: null,
+    pair: null,
+    prompt_fingerprint: "734b5913bf03",
+    scores: [],
+    worst: [],
+  };
+}
+
 vi.mock("./bindings", () => ({
   doctorStatus: vi.fn(() => Promise.resolve(doctor)),
   collectorStatus: vi.fn(() =>
@@ -68,6 +99,8 @@ vi.mock("./bindings", () => ({
       notify_high_risk: false,
       redact_evidence: false,
       excluded_projects: [],
+      model_path: null,
+      analysis_paused: false,
     }),
   ),
   setPrefs,
@@ -78,6 +111,19 @@ vi.mock("./bindings", () => ({
   revealLogs: vi.fn(),
   uninstallPreview,
   uninstallRun,
+  // Phase 13. `llmModel` is the fixture the tests below set; the default is a
+  // machine where nobody has pointed at a model, which is the state the exit
+  // criterion is about.
+  llmReport: vi.fn(() => Promise.resolve(llmModel)),
+  pickModel: vi.fn(() => Promise.resolve(llmModel)),
+  setModel: vi.fn((path: string | null) => {
+    setModelCalls.push(path);
+    return Promise.resolve(llmModel);
+  }),
+  setAnalysisPaused: vi.fn((paused: boolean) => {
+    pausedCalls.push(paused);
+    return Promise.resolve(llmModel);
+  }),
 }));
 
 const { SetupView } = await import("./setup");
@@ -199,11 +245,16 @@ describe("the notification switches (task 9.3)", () => {
     refusals!.dispatchEvent(new Event("change"));
     await settle();
 
+    // The *whole* Prefs, including the fields this switch knows nothing about
+    // — which is the assertion: a patch would let the window forget a
+    // preference it never displayed. Phase 13 added two, and they ride along.
     expect(setPrefs).toHaveBeenCalledWith({
       notify_refusals: true,
       notify_high_risk: false,
       redact_evidence: false,
       excluded_projects: [],
+      model_path: null,
+      analysis_paused: false,
     });
   });
 
@@ -251,5 +302,106 @@ describe("the theme control", () => {
     const node = await mount();
     const on = node.querySelector(".seg.on");
     expect(on?.textContent).toBe("Light");
+  });
+});
+
+describe("the model card (tasks 13.1, 13.2)", () => {
+  test("with no model, it says so and shows the command it will never run", async () => {
+    llmModel = noModel();
+    const node = await mount();
+    const card = node.querySelector(".model-card");
+
+    expect(card).not.toBeNull();
+    expect(card!.textContent).toContain("No model");
+    // The whole of ADR-0008 in this card: the line is shown, never run.
+    expect(card!.textContent).toContain("toolog has no network capability");
+    expect(card!.querySelector("pre")?.textContent).toContain("curl -L -o");
+  });
+
+  test("a configured path that is not a model is named as the problem it is", async () => {
+    const report = noModel();
+    report.model.path = "/tmp/archive.tar.gz";
+    report.model.problem = "/tmp/archive.tar.gz: not a GGUF model — it starts with a gzip archive";
+    llmModel = report;
+
+    const card = (await mount()).querySelector(".model-card");
+    expect(card!.textContent).toContain("not a GGUF model");
+    // And it still offers the way out, rather than only complaining.
+    expect(card!.textContent).toContain("Choose a model…");
+  });
+
+  test("a loaded model shows its identity and how far the examination has got", async () => {
+    const report = noModel();
+    report.model.path = "/models/gemma.gguf";
+    report.model.loaded = true;
+    report.model.summary = "gemma4, 4.6B parameters, 3.1 GB";
+    report.model.file = {
+      path: "/models/gemma.gguf",
+      size_bytes: 3_350_000_000,
+      gguf_version: 3,
+      architecture: "gemma4",
+      name: "Gemma 4 E2B",
+      parameters: 4_630_000_000,
+      tensors: 541,
+      sha256: null,
+    };
+    report.pair = "3646b4c147cd / 734b5913bf03";
+    report.progress = {
+      eligible: 3618,
+      examined: 412,
+      failed: 3,
+      queued: 3203,
+      mean_ms: 1249,
+    };
+    report.analysis = {
+      running: true,
+      paused: false,
+      done_this_run: 412,
+      failed_this_run: 3,
+      skipped_live: 0,
+      last_error: null,
+    };
+    llmModel = report;
+
+    const card = (await mount()).querySelector(".model-card");
+    expect(card!.textContent).toContain("gemma4, 4.6B parameters, 3.1 GB");
+    // Both halves of the key a verdict is stored under (task 13.14).
+    expect(card!.textContent).toContain("3646b4c147cd / 734b5913bf03");
+    expect(card!.textContent).toContain("412");
+    expect(card!.textContent).toContain("3,618");
+    expect(card!.textContent).toContain("Pause examining");
+  });
+
+  test("forgetting a model clears the path rather than deleting anything", async () => {
+    const report = noModel();
+    report.model.path = "/models/gemma.gguf";
+    llmModel = report;
+
+    const node = await mount();
+    const forget = [...node.querySelectorAll("button")].find(
+      (b) => b.textContent === "Forget it",
+    );
+    forget!.click();
+    await settle();
+
+    expect(setModelCalls).toEqual([null]);
+  });
+
+  test("a build with no inference support says that, not \"no model\"", async () => {
+    const report = noModel();
+    report.model.supported = false;
+    llmModel = report;
+
+    const card = (await mount()).querySelector(".model-card");
+    expect(card!.textContent).toContain("no inference support");
+  });
+
+  test("a report that cannot be read leaves the rest of the page alone", async () => {
+    // The exit criterion, from the other side: the Status page is not the
+    // model's, and a model that cannot be reported on must not take it down.
+    llmModel = null;
+    const node = await mount();
+    expect(node.querySelector(".model-card")).toBeNull();
+    expect(node.querySelector("details.uninstall")).not.toBeNull();
   });
 });

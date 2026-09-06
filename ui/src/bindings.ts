@@ -377,6 +377,15 @@ path: string | null,
  */
 file: ModelFile | null, 
 /**
+ * `gemma4, 4.6B parameters, 3.1 GB` — rendered once, in Rust.
+ *
+ * Carried rather than rebuilt in TypeScript so `toolog model status` and
+ * the Status card cannot describe the same file differently. It is the
+ * same rule the doctor report follows, and the reason `report` is a string
+ * there too.
+ */
+summary: string | null, 
+/**
  * Why the configured path is not usable, in a sentence.
  */
 problem: string | null, 
