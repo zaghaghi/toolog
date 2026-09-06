@@ -138,10 +138,34 @@ button {
   border-bottom: 1px solid var(--line);
 }
 
+/*
+ * The box, the time control and Export share one line, so they share its
+ * height. `stretch` rather than `center`, because the three have different
+ * fonts and padding — the box is the roomier `--text-base` in mono, the other
+ * two are `--text-sm` — and centring three different heights reads as an
+ * accident rather than as a row.
+ *
+ * The height comes from the box, which is the control that sets it. The
+ * wrappers are flex so their single child fills them rather than needing a
+ * `height: 100%` that has nothing to resolve against.
+ */
 .searchrow {
   display: flex;
   gap: var(--s3);
-  align-items: center;
+  align-items: stretch;
+}
+
+.searchrow .timepick,
+.searchrow .menu {
+  display: flex;
+}
+
+.searchrow .pick,
+.searchrow .toggle {
+  /* The vertical padding is the row's job now; these keep their own
+     horizontal padding so the text still has room either side. */
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .search {
@@ -264,6 +288,7 @@ button {
 .menu {
   position: relative;
 }
+
 
 .menupop {
   position: absolute;
