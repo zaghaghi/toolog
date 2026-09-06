@@ -209,6 +209,11 @@ cask-check:
     trap 'rm -rf "$(brew --repository)/Library/Taps/toolog-caskcheck"' EXIT
     mkdir -p "$tap/Casks"
     cp packaging/homebrew/toolog.rb "$tap/Casks/toolog.rb"
+    # `readall` first, because it is the one that would have caught the v1.1.0
+    # cask: `brew style` is RuboCop and reported no offenses on a stanza
+    # (`depends_on macos: :catalina`) that `brew tap` then refused to load at
+    # all. It also evaluates for every platform, not just this machine's.
+    brew readall toolog-caskcheck/tmp
     brew style --cask toolog-caskcheck/tmp
     brew info --cask toolog-caskcheck/tmp/toolog | head -12
 

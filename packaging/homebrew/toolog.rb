@@ -4,6 +4,10 @@
 # artifacts so the version and checksum can never be typed in wrong, and the
 # result is copied into the tap at zaghaghi/homebrew-tap.
 #
+# `just cask-check` runs `brew readall` over it, not only `brew style`. Style is
+# RuboCop and passes a cask Homebrew then refuses to load: it said "no offenses"
+# about a `depends_on macos: :catalina` that `brew tap` rejected outright.
+#
 # Three stanzas here are not boilerplate and are the reason this file is worth
 # reading:
 #
@@ -25,14 +29,13 @@
 #            someone asks for the history to go too, and it maps onto exactly
 #            what `toolog uninstall --delete-data` would have removed.
 cask "toolog" do
-  version "1.0.0"
+  version "1.1.0"
   # Replaced by `just cask <version>`, which reads it from the release's
   # SHA256SUMS. Left as an impossible value rather than :no_check: a cask
   # published by accident must fail to install, not install anything.
-  sha256 "0" * 64
+  sha256 "5f39ff5d3ba634f728b3ab3c548848e052e7ffcc5a502cff80b36ed1f88c93f9"
 
-  url "https://github.com/zaghaghi/toolog/releases/download/v#{version}/toolog_#{version}_universal.dmg",
-      verified: "github.com/zaghaghi/toolog/"
+  url "https://github.com/zaghaghi/toolog/releases/download/v#{version}/toolog_#{version}_universal.dmg"
   name "toolog"
   desc "Local audit trail for Claude Code tool calls"
   homepage "https://github.com/zaghaghi/toolog"
@@ -42,9 +45,21 @@ cask "toolog" do
     strategy :github_latest
   end
 
-  # Matches LSMinimumSystemVersion in the bundle. The artifact is universal, so
-  # there is one download for both architectures.
-  depends_on macos: :catalina
+  # macOS-only, with no version alongside it — the two forms cannot be combined,
+  # and this is the half that is still expressible.
+  depends_on :macos
+
+  # There is deliberately no *version* on that stanza.
+  #
+  # The bundle's own LSMinimumSystemVersion is 10.15, and macOS will not launch
+  # an app below it — that is the real floor and it enforces itself. Homebrew can
+  # no longer express one this old: `:catalina` is not in its version table any
+  # more, and `brew` itself requires macOS 14. Naming a version we do support
+  # would mean claiming a *higher* floor than the app has, which would refuse to
+  # install on machines where it runs.
+  #
+  # If the floor ever moves to 11.0 — which a local inference model would force —
+  # `depends_on macos: :big_sur` becomes both expressible and true.
 
   app "toolog.app"
   binary "#{appdir}/toolog.app/Contents/MacOS/toolog"

@@ -67,11 +67,24 @@ byte-identical, and publishing the local one hands everybody a cask that refuses
 
 ```bash
 just cask X.Y.Z        # reads SHA256SUMS from the release
-just cask-check        # lints it the way Homebrew will
+just cask-check        # brew readall, then brew style, then brew info
 ```
 
-Then copy `packaging/homebrew/toolog.rb` to `Casks/toolog.rb` in `zaghaghi/homebrew-tap`. The
-first time, the tap has to exist:
+`cask-check` runs `readall` **first** and that ordering is not cosmetic. `brew style` is RuboCop: at
+v1.1.0 it reported "no offenses" on a cask that `brew tap` then refused to load outright, because
+`depends_on macos: :catalina` had been disabled — Homebrew's version table no longer goes back that
+far, and `brew` itself now requires macOS 14. `readall` loads the cask for every platform, which is
+what `brew tap` does and what a user's install does.
+
+Then copy `packaging/homebrew/toolog.rb` to `Casks/toolog.rb` in `zaghaghi/homebrew-tap`, and check
+it from the tap rather than from a staged copy:
+
+```bash
+brew untap zaghaghi/tap 2>/dev/null; brew tap zaghaghi/tap
+brew info --cask zaghaghi/tap/toolog
+```
+
+The first time, the tap has to exist:
 
 ```bash
 gh repo create zaghaghi/homebrew-tap --public \
