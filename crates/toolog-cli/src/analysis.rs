@@ -26,7 +26,13 @@
 //! the call is **dropped rather than queued**, because the backfill will reach
 //! it anyway. Losing a place in line costs nothing; blocking ingestion costs
 //! the capture this tool exists to perform.
+//!
+//! It also remembers which calls it has already offered, because a call arrives
+//! twice by design — the transcript lane creates the row, the OTLP lane
+//! completes it — and analysing the same command twice is 1.25 seconds spent
+//! overwriting an answer with itself.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
@@ -56,6 +62,12 @@ const WRITE_EVERY: usize = 8;
 /// How many arriving calls may wait for the model before they are dropped.
 const LIVE_QUEUE: usize = 16;
 
+/// How many `tool_use_id`s the live path remembers having already offered.
+///
+/// Comfortably more than a busy session produces between the two lanes' arrivals
+/// for the same call, and small enough to be free — a few thousand short strings.
+const LIVE_SEEN_MAX: usize = 4096;
+
 /// A running examination.
 ///
 /// Holds the engine handle and the two threads' switches. Dropping it does not
@@ -72,6 +84,8 @@ pub struct Analysis {
     skipped: Arc<AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
     live: SyncSender<LiveJob>,
+    /// Calls this process's live path has already offered — see [`Analysis::claim`].
+    seen_live: Mutex<HashSet<String>>,
 }
 
 impl std::fmt::Debug for Analysis {
@@ -123,6 +137,7 @@ impl Analysis {
             skipped,
             last_error,
             live: live_tx,
+            seen_live: Mutex::new(HashSet::new()),
         };
 
         this.spawn_live(writer.clone(), live_rx)?;
@@ -160,8 +175,18 @@ impl Analysis {
     ///
     /// Never blocks. A full queue means the model is behind, and the backfill
     /// will reach this call in its own time.
+    ///
+    /// **A call arrives more than once by design** ([ADR-0009]): the transcript
+    /// lane creates the row and the OTLP lane completes it, and the live sink
+    /// fires for each. Both firings carry the same command, so without the
+    /// guard below the same command would be analysed twice — 1.25 seconds of
+    /// inference to overwrite an answer with itself. The timeline's live pill
+    /// already keys on `tool_use_id` for exactly this reason (task 9.2); this is
+    /// the same fact costing something more expensive.
+    ///
+    /// [ADR-0009]: ../../../docs/adr/0009-correlate-on-tool-use-id.md
     pub fn observe(&self, tool_use_id: &str, command: &str) {
-        if self.stopping.load(Ordering::SeqCst) {
+        if self.stopping.load(Ordering::SeqCst) || !self.claim(tool_use_id) {
             return;
         }
         let job = LiveJob {
@@ -174,6 +199,29 @@ impl Analysis {
         if let Err(TrySendError::Full(_)) = self.live.try_send(job) {
             self.skipped.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    /// Take this call for the live path, or report that it is already taken.
+    ///
+    /// In memory rather than a lookup in `llm_verdict`, because this runs on the
+    /// ingestion thread and that thread has no read connection — giving it one
+    /// to answer a question the backfill already answers correctly would be the
+    /// wrong trade. The set is therefore only about *this process's* live path;
+    /// the store remains the authority, and `pending` is what stops the backfill
+    /// redoing anything.
+    ///
+    /// It is cleared rather than evicted when it grows. An LRU would be the
+    /// right structure if the consequence of forgetting were wrong data, and it
+    /// is not: forgetting costs at most one repeated inference on a call that
+    /// arrives on both lanes either side of the clear.
+    fn claim(&self, tool_use_id: &str) -> bool {
+        let Ok(mut seen) = self.seen_live.lock() else {
+            return true;
+        };
+        if seen.len() >= LIVE_SEEN_MAX {
+            seen.clear();
+        }
+        seen.insert(tool_use_id.to_string())
     }
 
     #[must_use]
@@ -371,6 +419,39 @@ mod tests {
     /// The batch sizes have to relate to each other or the write batching does
     /// nothing: a write batch larger than a read batch would only ever flush at
     /// the end of the loop.
+    /// The live path's dedup, which is the whole of task 13.8's cost control.
+    ///
+    /// Tested through the set rather than through `observe`, because `observe`
+    /// needs a loaded model and this property does not.
+    #[test]
+    fn a_call_offered_twice_is_only_analysed_once() {
+        let seen = Mutex::new(HashSet::new());
+        let claim = |id: &str| {
+            let mut seen = seen.lock().expect("lock");
+            if seen.len() >= LIVE_SEEN_MAX {
+                seen.clear();
+            }
+            seen.insert(id.to_string())
+        };
+
+        assert!(claim("toolu_1"), "the transcript lane's arrival is taken");
+        assert!(!claim("toolu_1"), "the OTLP lane's is not");
+        assert!(claim("toolu_2"), "and a different call still is");
+    }
+
+    /// Forgetting costs a repeated inference, never a wrong answer.
+    #[test]
+    fn the_set_is_bounded_and_forgetting_is_only_a_cost() {
+        let mut seen: HashSet<String> = (0..LIVE_SEEN_MAX).map(|i| i.to_string()).collect();
+        assert_eq!(seen.len(), LIVE_SEEN_MAX);
+        // What `claim` does at the boundary: clear, then take.
+        seen.clear();
+        assert!(
+            seen.insert("0".to_string()),
+            "a forgotten id is simply retaken"
+        );
+    }
+
     #[test]
     fn a_read_batch_holds_several_write_batches() {
         assert!(BATCH as usize > WRITE_EVERY);
