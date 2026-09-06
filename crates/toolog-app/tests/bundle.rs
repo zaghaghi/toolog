@@ -140,6 +140,74 @@ fn the_macos_bundle_has_an_icns_and_signs_with_the_entitlements_file() {
     );
 }
 
+/// The macOS floor, in the two files that state it (task 13.18).
+///
+/// Phase 13 links llama.cpp, whose C++ needs `std::filesystem`, so the floor
+/// moved 10.15 → 11.0. Three places now have to agree, and they fail in three
+/// different ways:
+///
+/// - `.cargo/config.toml` decides what the compiler and CMake actually build
+///   for. Wrong, and ggml fails to compile — loudly, at build time.
+/// - `tauri.conf.json` decides what the installer will refuse. Wrong, and a
+///   `.dmg` installs on a Mac the binary cannot launch on — silently, on
+///   someone else's machine.
+/// - The Homebrew cask decides what `brew install` refuses. Wrong the same way,
+///   one step earlier.
+///
+/// The first two are checked here, because they are files in this repository
+/// and a test is cheaper than a release. The built binary is checked against
+/// `tauri.conf.json` by `just verify-bundle`, which is the only place the real
+/// `LC_BUILD_VERSION` exists to be read.
+#[test]
+fn the_macos_floor_is_the_same_number_everywhere_it_is_written() {
+    const FLOOR: &str = "11.0";
+
+    let conf: serde_json::Value =
+        serde_json::from_str(&read("tauri.conf.json")).expect("tauri.conf.json is JSON");
+    assert_eq!(
+        conf["bundle"]["macOS"]["minimumSystemVersion"].as_str(),
+        Some(FLOOR),
+        "the installer's floor must be {FLOOR}: llama.cpp's C++ needs \
+         std::filesystem, which is macOS 10.15 and later, and 11.0 is the first \
+         release on both architectures the universal build ships"
+    );
+
+    // Both variables, because they reach different halves of the build and only
+    // one of them is a Rust concern: MACOSX_DEPLOYMENT_TARGET goes to rustc and
+    // the linker, CMAKE_OSX_DEPLOYMENT_TARGET to the CMake build of ggml.
+    // Without the second, ggml compiles below 10.15 and fails.
+    let workspace = app_crate()
+        .join("..")
+        .join("..")
+        .join(".cargo")
+        .join("config.toml");
+    let cargo_config = std::fs::read_to_string(&workspace)
+        .unwrap_or_else(|e| panic!("{}: {e}", workspace.display()));
+    for key in ["MACOSX_DEPLOYMENT_TARGET", "CMAKE_OSX_DEPLOYMENT_TARGET"] {
+        assert!(
+            cargo_config.contains(&format!(r#"{key} = "{FLOOR}""#)),
+            "{} does not set {key} to {FLOOR}. Without it the halves of the build \
+             disagree about the floor, and the one that loses is ggml.",
+            workspace.display()
+        );
+    }
+
+    // And RUSTFLAGS is not the place: rustc rejects clang's
+    // `-mmacosx-version-min`. Checked over the code rather than the whole file,
+    // because the comment that explains this is where the flag is named — and
+    // the first version of this assertion failed on that comment.
+    let code: String = cargo_config
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !code.contains("mmacosx-version-min"),
+        "rustc rejects `-mmacosx-version-min`; the deployment target belongs in \
+         the [env] block, not in RUSTFLAGS"
+    );
+}
+
 /// One source of truth for the version.
 ///
 /// Tauri falls back to the crate's `Cargo.toml` when `version` is absent from

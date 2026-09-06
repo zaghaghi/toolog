@@ -10,6 +10,7 @@ mod app;
 #[cfg(test)]
 mod bindings;
 mod commands;
+mod llm;
 mod state;
 mod tray;
 mod window;

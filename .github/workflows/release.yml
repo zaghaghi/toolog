@@ -51,6 +51,23 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
+      # Phase 13 links llama.cpp through CMake (task 13.17).
+      #
+      #   MACOSX_DEPLOYMENT_TARGET      -> rustc and the linker
+      #   CMAKE_OSX_DEPLOYMENT_TARGET   -> the CMake build of ggml
+      #
+      # `llama-cpp-sys-2` forwards CMAKE_* variables from the environment as -D
+      # defines. Without the second, ggml compiles below 10.15 and fails on
+      # `std::filesystem`. Both are also in the workspace `.cargo/config.toml`,
+      # which covers a local build; this covers a runner whose environment the
+      # config does not reach first. RUSTFLAGS is not the place for either:
+      # rustc rejects clang's `-mmacosx-version-min`.
+      - name: Set the macOS deployment target
+        if: runner.os == 'macOS'
+        run: |
+          echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> $GITHUB_ENV
+          echo "CMAKE_OSX_DEPLOYMENT_TARGET=11.0" >> $GITHUB_ENV
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:

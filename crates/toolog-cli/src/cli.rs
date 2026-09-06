@@ -277,7 +277,7 @@ fn print_examination(cli: &Cli, configured: Option<&std::path::Path>) -> anyhow:
         return Ok(());
     };
     let pair = toolog_core::llm::Pair::new(
-        fingerprint,
+        fingerprint.clone(),
         toolog_llm::Prompt::current().fingerprint().to_string(),
     );
     let db = toolog_core::Db::open(db_path(cli)?)?;
@@ -289,6 +289,9 @@ fn print_examination(cli: &Cli, configured: Option<&std::path::Path>) -> anyhow:
     if let Some(mean) = progress.mean_ms {
         println!("  {mean} ms per call, so far");
     }
+    // Both halves of the key a verdict is stored under, because "examined 412"
+    // is a statement about a question, and this names it.
+    println!("  sha256   {fingerprint}");
     println!(
         "  prompt   {}",
         toolog_llm::Prompt::current().short_fingerprint()

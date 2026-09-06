@@ -45,21 +45,25 @@ cask "toolog" do
     strategy :github_latest
   end
 
-  # macOS-only, with no version alongside it — the two forms cannot be combined,
-  # and this is the half that is still expressible.
-  depends_on :macos
-
-  # There is deliberately no *version* on that stanza.
+  # The floor, now that it is one Homebrew can express.
   #
-  # The bundle's own LSMinimumSystemVersion is 10.15, and macOS will not launch
-  # an app below it — that is the real floor and it enforces itself. Homebrew can
-  # no longer express one this old: `:catalina` is not in its version table any
-  # more, and `brew` itself requires macOS 14. Naming a version we do support
-  # would mean claiming a *higher* floor than the app has, which would refuse to
-  # install on machines where it runs.
+  # v1.1 shipped `depends_on :macos` with no version, and said why: the bundle's
+  # floor was 10.15, `:catalina` is no longer in Homebrew's version table, and
+  # naming any version we did support would have claimed a *higher* floor than
+  # the app had. That comment ended by predicting this change — "if the floor
+  # ever moves to 11.0, which a local inference model would force" — and Phase
+  # 13 is that model. llama.cpp's C++ needs `std::filesystem`.
   #
-  # If the floor ever moves to 11.0 — which a local inference model would force —
-  # `depends_on macos: :big_sur` becomes both expressible and true.
+  # 11.0 is now true in three places that must agree, and each is checked:
+  # `tauri.conf.json`'s `minimumSystemVersion` (asserted in `tests/bundle.rs`),
+  # the built binary's `LC_BUILD_VERSION` (asserted in `just verify-bundle`),
+  # and this line — which is the only one a user meets before downloading
+  # anything, and so the only one that can refuse rather than fail.
+  # `:big_sur` bare, not `">= :big_sur"`: Homebrew reads the symbol form as "this
+  # version or newer" and deprecates the string comparison — `brew style`
+  # rejected the string form outright, which is exactly what `just cask-check`
+  # exists to catch before a tap does.
+  depends_on macos: :big_sur
 
   app "toolog.app"
   binary "#{appdir}/toolog.app/Contents/MacOS/toolog"

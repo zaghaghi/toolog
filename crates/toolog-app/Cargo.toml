@@ -25,6 +25,7 @@ toolog-core.workspace = true
 toolog-cli.workspace = true
 toolog-ingest.workspace = true
 toolog-otlp.workspace = true
+toolog-llm.workspace = true
 
 tauri.workspace = true
 tauri-plugin-single-instance.workspace = true
@@ -39,3 +40,12 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 ts-rs.workspace = true
+
+[features]
+# The second opinion (Phase 13). Forwarded to the crates that own it, and on by
+# default: the released binary runs a model, and a feature the release depends
+# on has to be the one CI builds. `--no-default-features` is task 13.19's
+# reserved fallback — it drops llama.cpp and its C++ toolchain entirely, and the
+# window then says so rather than offering a card that cannot work.
+default = ["inference"]
+inference = ["toolog-cli/inference", "toolog-llm/inference"]

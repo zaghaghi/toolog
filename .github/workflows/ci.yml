@@ -23,13 +23,35 @@ jobs:
 
       # ADR-0001 puts the shell on Tauri, which links the system WebView. macOS
       # has it; Linux needs the GTK/WebKit development headers.
+      #
+      # `cmake` and `libclang-dev` are Phase 13's: `llama-cpp-sys-2` builds
+      # llama.cpp through CMake and generates its bindings with bindgen, which
+      # dlopens libclang. Neither is a runtime dependency of anything shipped.
       - name: Install Tauri's Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-            librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+            librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            cmake libclang-dev
+
+      # Phase 13 links llama.cpp through CMake (task 13.17).
+      #
+      #   MACOSX_DEPLOYMENT_TARGET      -> rustc and the linker
+      #   CMAKE_OSX_DEPLOYMENT_TARGET   -> the CMake build of ggml
+      #
+      # `llama-cpp-sys-2` forwards CMAKE_* variables from the environment as -D
+      # defines. Without the second, ggml compiles below 10.15 and fails on
+      # `std::filesystem`. Both are also in the workspace `.cargo/config.toml`,
+      # which covers a local build; this covers a runner whose environment the
+      # config does not reach first. RUSTFLAGS is not the place for either:
+      # rustc rejects clang's `-mmacosx-version-min`.
+      - name: Set the macOS deployment target
+        if: runner.os == 'macOS'
+        run: |
+          echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> $GITHUB_ENV
+          echo "CMAKE_OSX_DEPLOYMENT_TARGET=11.0" >> $GITHUB_ENV
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -68,6 +90,15 @@ jobs:
       - name: Test
         run: cargo test --workspace --all-targets
 
+      # Task 13.19 reserved a build without inference as the fallback if the
+      # universal build could not carry llama.cpp. It can — measured, and
+      # recorded in the phase file — so the fallback is not taken. It is still
+      # compiled here, because a fallback that does not build is not one, and
+      # because it is what keeps the GGUF reader, the prompt and the verdict
+      # schema free of the C++ they sit in front of.
+      - name: The build without inference still builds
+        run: cargo check -p toolog-llm --no-default-features --all-targets
+
       # The Rust/TypeScript boundary regenerates itself during the test run
       # (Phase 4.9). A diff here means someone changed a command or a type and
       # did not commit the bindings.
@@ -84,7 +115,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-            librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+            librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            cmake libclang-dev
       - name: Install Rust (MSRV from Cargo.toml)
         uses: dtolnay/rust-toolchain@master
         with:

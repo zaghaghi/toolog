@@ -4900,6 +4900,7 @@ dependencies = [
  "toolog-cli",
  "toolog-core",
  "toolog-ingest",
+ "toolog-llm",
  "toolog-otlp",
  "tracing",
  "ts-rs",

@@ -344,14 +344,53 @@ fn timeline_lens<T>(
     filter: &TimelineFilter,
     f: impl FnOnce(&toolog_core::Connection, query::Lens<'_>) -> toolog_core::Result<T>,
 ) -> anyhow::Result<T> {
-    // A filter that asks for nothing rule-shaped does not pay for the file.
-    if filter.risk.is_none() && filter.rule_id.is_none() {
+    let rule_shaped = filter.risk.is_some() || filter.rule_id.is_some();
+    let model_shaped = filter.intent.is_some() || filter.llm_risk.is_some();
+
+    // A filter that asks for neither does not pay for the rules file.
+    if !rule_shaped && !model_shaped {
         return app.read(|c| f(c, query::Lens::plain(filter)));
     }
-    let rules = cli::rules()?;
+
+    // Phase 13's half. The pair survives the model being unloaded, so a filter
+    // over verdicts already recorded still answers after someone stops the
+    // examination — but a store that has never had a model has no pair, and
+    // then the query layer says so rather than returning an empty list.
+    let pair = model_shaped.then(|| app.llm().pair()).flatten();
+    if model_shaped && pair.is_none() {
+        anyhow::bail!(
+            "@intent and @llm-risk describe what a local model said, and this store \
+             has no verdicts from one. Point toolog at a model in Status → Model."
+        );
+    }
+
+    let rules = if rule_shaped {
+        cli::rules()?
+    } else {
+        Vec::new()
+    };
     app.read(|c| {
         let dismissed = rules::dismissed_rules(c)?;
-        f(c, query::Lens::with_rules(filter, &rules, &dismissed))
+        let mut lens = query::Lens::with_rules(filter, &rules, &dismissed);
+        if let Some(pair) = pair.as_ref() {
+            lens = lens.and_verdicts(pair);
+        }
+        f(c, lens)
+    })
+}
+
+/// The Status card's and the risk section's shared read (tasks 13.1, 13.16).
+///
+/// One command for both. Two would let the Status card describe one model while
+/// the risk view reported numbers from another — the disagreement `RiskReview`
+/// exists to prevent, one phase later.
+/// Infallible: a store read that fails becomes the report's `error` rather than
+/// the command's, because the model's own state is still worth showing when the
+/// numbers about it cannot be read.
+fn llm_now(app: &AppState) -> crate::llm::LlmReport {
+    let configured = app.prefs().model();
+    app.llm().report(configured.as_deref(), |pair| {
+        app.read(|c| Ok(crate::llm::numbers(c, pair)))?
     })
 }
 
@@ -583,6 +622,78 @@ commands! {
         })?;
         app.note_dismissal();
         risk_review(app)
+    }
+
+    /// The configured model, the examination's progress, and what it found.
+    ///
+    /// Read-only and cheap: the GGUF header, two counts and one indexed list.
+    /// It deliberately does **not** hash the model file — that is 1.5 seconds
+    /// and happens once, when a file is chosen.
+    llm_report() -> crate::llm::LlmReport {
+        Ok(llm_now(app))
+    }
+
+    /// Point the local second opinion at a `.gguf`, or forget the one it has.
+    ///
+    /// `None` clears it. Nothing is deleted from disk either way, and recorded
+    /// verdicts are kept: they are still true statements about what that model
+    /// said, and migration 008's key is what makes that safe.
+    set_model(path: Option<String>) -> crate::llm::LlmReport {
+        let mut prefs = app.prefs();
+        match path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+            Some(raw) => {
+                let path = toolog_cli::model::normalize(raw, &toolog_cli::settings::home_dir());
+                // Checked before it is stored, so a path that is not a model is
+                // refused here — where someone is watching — rather than at the
+                // next launch.
+                toolog_cli::model::adopt(&path)?;
+                prefs.model_path = Some(path.display().to_string());
+            }
+            None => prefs.model_path = None,
+        }
+        app.set_prefs(prefs.clone())?;
+        app.apply_model(&prefs);
+        Ok(llm_now(app))
+    }
+
+    /// Choose a `.gguf` from a native open panel.
+    ///
+    /// The panel rather than a text field, for the same reason the export uses
+    /// one: the path comes from the operating system, not from the WebView.
+    /// Returns the report unchanged when the panel is dismissed.
+    pick_model() -> crate::llm::LlmReport {
+        use tauri_plugin_dialog::DialogExt;
+
+        let Some(chosen) = handle
+            .dialog()
+            .file()
+            .add_filter("GGUF model", &["gguf"])
+            .blocking_pick_file()
+        else {
+            return Ok(llm_now(app));
+        };
+        let path = chosen
+            .into_path()
+            .map_err(|e| anyhow::anyhow!("that file cannot be read: {e}"))?;
+        toolog_cli::model::adopt(&path)?;
+
+        let mut prefs = app.prefs();
+        prefs.model_path = Some(path.display().to_string());
+        app.set_prefs(prefs.clone())?;
+        app.apply_model(&prefs);
+        Ok(llm_now(app))
+    }
+
+    /// Stop or resume the background examination (task 13.7).
+    ///
+    /// Remembered across restarts: a 65-minute backfill someone paused to get
+    /// their laptop back should still be paused tomorrow.
+    set_analysis_paused(paused: bool) -> crate::llm::LlmReport {
+        let mut prefs = app.prefs();
+        prefs.analysis_paused = paused;
+        app.set_prefs(prefs)?;
+        app.llm().set_paused(paused);
+        Ok(llm_now(app))
     }
 
     /// Which notifications are switched on. Both off until someone says so.

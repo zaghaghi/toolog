@@ -297,6 +297,171 @@ model_path: string | null,
  */
 analysis_paused: boolean, };
 
+export type Progress = { 
+/**
+ * Bash calls no rule has ever matched: the whole population.
+ */
+eligible: number, 
+/**
+ * Verdicts this pair recorded and the schema accepted.
+ */
+examined: number, 
+/**
+ * Answers this pair recorded and the schema rejected (task 13.10).
+ */
+failed: number, 
+/**
+ * `eligible - examined - failed`.
+ */
+queued: number, 
+/**
+ * Median-free, and deliberately so: the mean is what a remaining-time
+ * estimate is built from, and a median would need the whole column.
+ */
+mean_ms: number | null, };
+
+export type ScoreTally = { score: number, calls: number, };
+
+export type Scored = { tool_use_id: string, command: string | null, project_path: string | null, called_at: number | null, risk_score: number, category: string, intent_summary: string, is_destructive: boolean, violates_sandbox: boolean, };
+
+export type ModelFile = { 
+/**
+ * The path as given, so a report can name it.
+ */
+path: string, 
+/**
+ * Size on disk, for the Status card's "3.1 GB".
+ */
+size_bytes: number, gguf_version: number, 
+/**
+ * `general.architecture` — `gemma4`, `llama`, `qwen3`.
+ */
+architecture: string | null, 
+/**
+ * `general.name`, when the file carries one.
+ */
+name: string | null, 
+/**
+ * Summed from the tensor shapes, not read from a key.
+ *
+ * `general.parameter_count` is optional and frequently absent; the tensor
+ * table is neither, and summing it is exact. A file claiming to be a model
+ * and holding no tensors is reported as zero rather than as a model.
+ */
+parameters: number, tensors: number, 
+/**
+ * SHA-256 of the whole file. **This is the model's identity** (task 13.14):
+ * two files called `gemma.gguf` are not the same model, and a verdict that
+ * cannot name what produced it is not evidence of anything.
+ *
+ * `None` until [`ModelFile::with_digest`] has done the read — it is three
+ * gigabytes of hashing, which the header inspection deliberately is not.
+ */
+sha256: string | null, };
+
+export type ModelStatus = { 
+/**
+ * Whether this build can run a model at all (task 13.19's fallback).
+ *
+ * "No model configured" and "this build cannot load one" are different
+ * answers, and a card that showed the first while meaning the second would
+ * send someone looking for a file that would not help.
+ */
+supported: boolean, 
+/**
+ * The configured path, whether or not it is any good.
+ */
+path: string | null, 
+/**
+ * What the file turned out to be, when it is a model.
+ */
+file: ModelFile | null, 
+/**
+ * Why the configured path is not usable, in a sentence.
+ */
+problem: string | null, 
+/**
+ * Whether a model is loaded and answering right now.
+ */
+loaded: boolean, 
+/**
+ * The repository and file this documentation suggests.
+ */
+suggested: string, 
+/**
+ * The command that fetches it. **Never run by toolog.**
+ */
+fetch_command: string, };
+
+export type AnalysisStatus = { 
+/**
+ * Whether a model is loaded at all.
+ */
+running: boolean, 
+/**
+ * Whether the backfill is working or deliberately stopped.
+ */
+paused: boolean, 
+/**
+ * Verdicts recorded since this process started — not since the beginning
+ * of time, which is what [`toolog_core::llm::Progress`] is for.
+ */
+done_this_run: number, 
+/**
+ * Answers the schema rejected since this process started (task 13.10).
+ */
+failed_this_run: number, 
+/**
+ * Arriving calls dropped because the model was still busy.
+ *
+ * Surfaced rather than swallowed: it is the honest cost of not blocking
+ * ingestion, and the backfill picks them up regardless.
+ */
+skipped_live: number, 
+/**
+ * The last thing that went wrong, if anything has.
+ */
+last_error: string | null, };
+
+export type LlmReport = { 
+/**
+ * The configured file, and what it turned out to be.
+ */
+model: ModelStatus, 
+/**
+ * Whether a load is in flight. A card that said "no model" during those two
+ * seconds would be answering a different question from the one asked.
+ */
+starting: boolean, 
+/**
+ * Why the last load failed, if it did.
+ */
+error: string | null, 
+/**
+ * The running examination, when there is one.
+ */
+analysis: AnalysisStatus | null, 
+/**
+ * How far it has got over the whole store.
+ */
+progress: Progress | null, 
+/**
+ * Which model and prompt these numbers are about, short form.
+ */
+pair: string | null, 
+/**
+ * The prompt template's own version, stated in words (task 13.16).
+ */
+prompt_fingerprint: string, 
+/**
+ * How many examined calls fell at each score, worst first.
+ */
+scores: Array<ScoreTally>, 
+/**
+ * The highest-scoring commands no rule matched.
+ */
+worst: Array<Scored>, };
+
 export type CounterSnapshot = { batches: number, records: number, dropped: number, rejected_bodies: number, paused_drops: number, };
 
 export type Status = { 
@@ -475,6 +640,22 @@ export function dismissRule(ruleId: string, note: string): Promise<RiskReview> {
 
 export function restoreRule(ruleId: string): Promise<RiskReview> {
   return invoke("restore_rule", { ruleId });
+}
+
+export function llmReport(): Promise<LlmReport> {
+  return invoke("llm_report");
+}
+
+export function setModel(path: string | null): Promise<LlmReport> {
+  return invoke("set_model", { path });
+}
+
+export function pickModel(): Promise<LlmReport> {
+  return invoke("pick_model");
+}
+
+export function setAnalysisPaused(paused: boolean): Promise<LlmReport> {
+  return invoke("set_analysis_paused", { paused });
 }
 
 export function getPrefs(): Promise<Prefs> {

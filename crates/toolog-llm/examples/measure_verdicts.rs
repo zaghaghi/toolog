@@ -57,9 +57,10 @@ fn main() -> anyhow::Result<()> {
     println!(
         "\n== the corpus ==\n  {} commands from {}",
         commands.len(),
-        store
-            .as_ref()
-            .map_or_else(|| "the built-in set".to_string(), |p| p.display().to_string())
+        store.as_ref().map_or_else(
+            || "the built-in set".to_string(),
+            |p| p.display().to_string()
+        )
     );
 
     println!("\n== loading ==");
@@ -72,7 +73,10 @@ fn main() -> anyhow::Result<()> {
     let loaded = engine.loaded();
     println!("  model loaded in {} ms", loaded.load_ms);
     println!("  prompt prefix  {} tokens", loaded.prefix_tokens);
-    println!("  ready in       {} ms (including the prefill)", started.elapsed().as_millis());
+    println!(
+        "  ready in       {} ms (including the prefill)",
+        started.elapsed().as_millis()
+    );
 
     println!("\n== verdicts ==");
     let mut total_ms: u128 = 0;
@@ -103,7 +107,10 @@ fn main() -> anyhow::Result<()> {
     engine.stop();
 
     let n = commands.len().max(1);
-    #[expect(clippy::cast_precision_loss, reason = "a millisecond mean over tens of calls")]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a millisecond mean over tens of calls"
+    )]
     let mean = total_ms as f64 / n as f64;
     println!("\n== totals ==");
     println!("  {n} calls, {failures} schema failures");
@@ -115,7 +122,7 @@ fn main() -> anyhow::Result<()> {
 
     if !worst.is_empty() {
         println!("\n== what it flagged at 4 or above ==");
-        worst.sort_by(|a, b| b.0.cmp(&a.0));
+        worst.sort_by_key(|w| std::cmp::Reverse(w.0));
         for (score, command, summary) in worst.iter().take(15) {
             println!("  [{score}] {}\n        {summary}", first_line(command));
         }
@@ -133,9 +140,16 @@ fn first_line(command: &str) -> String {
 }
 
 /// Real unmatched Bash commands, oldest first — the population task 13.7 is about.
-fn from_store(path: &std::path::Path, model_fingerprint: &str, limit: usize) -> anyhow::Result<Vec<String>> {
+fn from_store(
+    path: &std::path::Path,
+    model_fingerprint: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<String>> {
     let db = toolog_core::Db::open(path)?;
-    let pair = Pair::new(model_fingerprint, Prompt::current().fingerprint().to_string());
+    let pair = Pair::new(
+        model_fingerprint,
+        Prompt::current().fingerprint().to_string(),
+    );
     let progress = toolog_core::llm::progress(db.conn(), &pair)?;
     println!(
         "\n  store: {} eligible, {} examined, {} queued",

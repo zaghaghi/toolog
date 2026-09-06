@@ -49,12 +49,25 @@ pub(crate) fn run(background: bool) -> anyhow::Result<()> {
             // Evidence redaction is read on the write path, so it has to be in
             // force before capture starts, not when the window first asks.
             saved.apply();
-            let prefs = Arc::new(RwLock::new(saved));
-            let capture = start_capture(&handle, db_path.clone(), Arc::clone(&prefs))?;
+            let prefs = Arc::new(RwLock::new(saved.clone()));
+            // Created before capture, because the live sink offers arriving
+            // calls to it and the sink is built inside `start_capture`.
+            let llm = Arc::new(crate::llm::Llm::default());
+            let capture = start_capture(
+                &handle,
+                db_path.clone(),
+                Arc::clone(&prefs),
+                Arc::clone(&llm),
+            )?;
             let endpoint_changed = capture.port_changed();
             let endpoint = capture.endpoint();
 
-            app.manage(AppState::new(db_path.clone(), capture, prefs)?);
+            let state = AppState::new(db_path.clone(), capture, prefs, llm)?;
+            // A model, when one is configured, loads on its own thread: hashing
+            // 3.1 GB and loading it is about two seconds, and a menu-bar app
+            // must not take two seconds to appear because of a preference.
+            state.apply_model(&saved);
+            app.manage(state);
             tray::install(&handle)?;
             spawn_tray_refresh(&handle);
 
@@ -102,6 +115,7 @@ fn start_capture(
     handle: &AppHandle,
     db_path: std::path::PathBuf,
     prefs: Arc<RwLock<Prefs>>,
+    llm: Arc<crate::llm::Llm>,
 ) -> anyhow::Result<Capture> {
     let emitter = handle.clone();
     let notifier = handle.clone();
@@ -110,6 +124,10 @@ fn start_capture(
         if let Err(e) = emitter.emit("live_tool_call", call) {
             tracing::debug!(error = %e, "live event not delivered");
         }
+        // Task 13.8: the same worker, behind the same switch, with a queue in
+        // front of it — offering a call never blocks this thread, and a full
+        // queue drops it because the backfill will reach it anyway.
+        offer_to_model(&llm, call);
         let switches = prefs.read().map(|p| p.clone()).unwrap_or_default();
         if switches.any() {
             notify_about(&notifier, &watch_db, call, &switches);
@@ -118,6 +136,24 @@ fn start_capture(
 
     let addr = toolog_otlp::port::default_addr();
     tauri::async_runtime::block_on(Capture::start(db_path, addr, None, Some(sink)))
+}
+
+/// Offer an arriving call to the local model (task 13.8).
+///
+/// The same population the backfill works through, decided the same way and in
+/// one place: a Bash call with a command. Whether a rule already matched it is
+/// **not** checked here — that would mean running the rules on the live thread,
+/// which Phase 11 took 2.3 seconds off the tab activation to avoid. The store's
+/// own `pending` query applies that condition, so at worst a call a rule would
+/// have caught gets a verdict nobody asked for.
+fn offer_to_model(llm: &crate::llm::Llm, call: &ToolCall) {
+    if call.tool_name.as_deref() != Some("Bash") {
+        return;
+    }
+    let Some(command) = call.input_summary.as_deref().filter(|c| !c.is_empty()) else {
+        return;
+    };
+    llm.observe(&call.tool_use_id, command);
 }
 
 /// A native notification about one call, if the user asked for it (task 6.12).

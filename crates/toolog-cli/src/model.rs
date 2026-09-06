@@ -34,6 +34,32 @@ pub fn fetch_command() -> String {
     )
 }
 
+/// What the window shows about the examination, and what the CLI prints.
+///
+/// Lives here rather than in `analysis.rs` because that module needs the
+/// `inference` feature and this type does not: a build without an engine still
+/// has to be able to say that there is no examination running.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export_to = "unused/")]
+pub struct AnalysisStatus {
+    /// Whether a model is loaded at all.
+    pub running: bool,
+    /// Whether the backfill is working or deliberately stopped.
+    pub paused: bool,
+    /// Verdicts recorded since this process started — not since the beginning
+    /// of time, which is what [`toolog_core::llm::Progress`] is for.
+    pub done_this_run: i64,
+    /// Answers the schema rejected since this process started (task 13.10).
+    pub failed_this_run: i64,
+    /// Arriving calls dropped because the model was still busy.
+    ///
+    /// Surfaced rather than swallowed: it is the honest cost of not blocking
+    /// ingestion, and the backfill picks them up regardless.
+    pub skipped_live: i64,
+    /// The last thing that went wrong, if anything has.
+    pub last_error: Option<String>,
+}
+
 /// What the window and the CLI show about the configured model.
 ///
 /// One type for both, so `toolog model status` and the Status card cannot tell

@@ -85,6 +85,17 @@ pub(crate) fn generate() -> String {
         toolog_core::rules::ProjectRisk,
         toolog_core::rules::SeverityTally,
         toolog_cli::prefs::Prefs,
+        // Phase 13: the second opinion. `llm::Verdict` and `llm::Record` are
+        // deliberately absent — nothing crosses the boundary as either, and
+        // `Record` would shadow TypeScript's own `Record<K, V>` in every file
+        // that imported it.
+        toolog_core::llm::Progress,
+        toolog_core::llm::ScoreTally,
+        toolog_core::llm::Scored,
+        toolog_llm::gguf::ModelFile,
+        toolog_cli::model::ModelStatus,
+        toolog_cli::model::AnalysisStatus,
+        crate::llm::LlmReport,
         toolog_otlp::server::CounterSnapshot,
         toolog_cli::capture::Status,
         toolog_cli::commands::Summary,

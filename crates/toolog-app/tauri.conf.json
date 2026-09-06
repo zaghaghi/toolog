@@ -29,7 +29,7 @@
     "shortDescription": "A local audit trail for Claude Code tool calls",
     "longDescription": "toolog records every tool call Claude Code makes on this machine and keeps it in a local database. Nothing leaves the machine.",
     "macOS": {
-      "minimumSystemVersion": "10.15",
+      "minimumSystemVersion": "11.0",
       "entitlements": "entitlements.plist"
     }
   }

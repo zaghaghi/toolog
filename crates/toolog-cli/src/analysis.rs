@@ -37,6 +37,8 @@ use toolog_core::writer::WriteHandle;
 use toolog_core::{Db, raw};
 use toolog_llm::engine::Engine;
 
+use crate::model::AnalysisStatus;
+
 /// How many pending calls one batch reads from the store.
 ///
 /// Large enough that the query's cost disappears against 32 seconds of
@@ -53,28 +55,6 @@ const WRITE_EVERY: usize = 8;
 
 /// How many arriving calls may wait for the model before they are dropped.
 const LIVE_QUEUE: usize = 16;
-
-/// What the window shows about the examination, and what the CLI prints.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[ts(export_to = "unused/")]
-pub struct AnalysisStatus {
-    /// Whether a model is loaded at all.
-    pub running: bool,
-    /// Whether the backfill is working or deliberately stopped.
-    pub paused: bool,
-    /// Verdicts recorded since this process started — not since the beginning
-    /// of time, which is what [`toolog_core::llm::Progress`] is for.
-    pub done_this_run: i64,
-    /// Answers the schema rejected since this process started (task 13.10).
-    pub failed_this_run: i64,
-    /// Arriving calls dropped because the model was still busy.
-    ///
-    /// Surfaced rather than swallowed: it is the honest cost of not blocking
-    /// ingestion, and the backfill picks them up regardless.
-    pub skipped_live: i64,
-    /// The last thing that went wrong, if anything has.
-    pub last_error: Option<String>,
-}
 
 /// A running examination.
 ///

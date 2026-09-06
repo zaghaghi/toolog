@@ -42,6 +42,13 @@ llama-cpp-2 = { workspace = true, optional = true, features = ["metal"] }
 [dev-dependencies]
 tempfile.workspace = true
 
+# The measurement harness drives the engine, so it only exists when there is one
+# — `required-features` keeps it out of a `--no-default-features` build rather
+# than making that build fail on an example nothing there could run.
+[[example]]
+name = "measure_verdicts"
+required-features = ["inference"]
+
 [features]
 # On by default so CI compiles and lints it. A feature CI never builds is a
 # feature that rots, and this one links the C++ that the release depends on.

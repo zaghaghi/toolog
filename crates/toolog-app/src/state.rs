@@ -46,6 +46,10 @@ pub(crate) struct AppState {
     /// The notification switches (task 6.12), shared with the live sink so it
     /// can read them without touching disk on every arriving call.
     prefs: Arc<RwLock<Prefs>>,
+    /// The local second opinion (Phase 13), shared with the live sink for the
+    /// same reason — and created before this state is, because the sink exists
+    /// first.
+    llm: Arc<crate::llm::Llm>,
 }
 
 /// A memoized risk review and the three cheap facts that can retire it.
@@ -75,6 +79,7 @@ impl AppState {
         db_path: PathBuf,
         capture: Capture,
         prefs: Arc<RwLock<Prefs>>,
+        llm: Arc<crate::llm::Llm>,
     ) -> anyhow::Result<Arc<Self>> {
         let reader = Db::open(&db_path)?.into_connection();
         let risk_reader = Db::open(&db_path)?.into_connection();
@@ -86,6 +91,7 @@ impl AppState {
             risk_memo: Mutex::new(None),
             dismissal_counter: AtomicU64::new(0),
             prefs,
+            llm,
         }))
     }
 
@@ -167,6 +173,31 @@ impl AppState {
         }
     }
 
+    /// The local model handle.
+    pub(crate) fn llm(&self) -> &Arc<crate::llm::Llm> {
+        &self.llm
+    }
+
+    /// Start, restart or stop the examination to match the preferences.
+    ///
+    /// Called at startup and whenever the model preference changes, so the two
+    /// cannot disagree about which file is loaded.
+    pub(crate) fn apply_model(&self, prefs: &Prefs) {
+        let Some(path) = prefs.model() else {
+            self.llm.stop();
+            return;
+        };
+        let writer = match self.with_capture(|c| Ok(c.writer().clone())) {
+            Ok(writer) => writer,
+            Err(e) => {
+                tracing::warn!(error = %e, "no writer to record verdicts to");
+                return;
+            }
+        };
+        self.llm
+            .start(self.db_path.clone(), path, writer, prefs.analysis_paused);
+    }
+
     /// The notification switches as they stand.
     pub(crate) fn prefs(&self) -> Prefs {
         self.prefs.read().map(|p| p.clone()).unwrap_or_default()
@@ -219,6 +250,9 @@ impl AppState {
 
     /// Stop capture and release the writer. Idempotent.
     pub(crate) fn shutdown(&self) {
+        // The model first: it holds a writer handle, and the writer thread lives
+        // until the last one is dropped.
+        self.llm.stop();
         let taken = self.capture.lock().ok().and_then(|mut g| g.take());
         if let Some(capture) = taken {
             capture.shutdown();

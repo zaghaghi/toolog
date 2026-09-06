@@ -119,6 +119,35 @@ verify-bundle:
     echo "== architectures =="
     lipo -archs "$app/Contents/MacOS/toolog"
 
+    echo "== linked libraries (ADR-0008: no network stack, task 13.4) =="
+    # Phase 13 links llama.cpp, which has a `LLAMA_CURL` option for its own
+    # `--hf-repo` downloader that has defaulted ON in some versions. A C library
+    # linked that way is invisible to the egress test, which reads Cargo
+    # manifests. Phase 8's lesson was that a config option is not a guarantee;
+    # the binary is. So this asks the artifact.
+    otool -L "$app/Contents/MacOS/toolog" | tail -n +2 | awk '{print "   ", $1}'
+    if otool -L "$app/Contents/MacOS/toolog" | grep -qiE 'libcurl|libssl|libcrypto'; then
+        echo "FAIL: the shipped binary links a network or TLS library."
+        echo "      ADR-0008 says nothing leaves this machine, and llama.cpp"
+        echo "      must be built with -DLLAMA_CURL=OFF."
+        exit 1
+    fi
+    echo "    ok: no libcurl, no TLS library"
+
+    echo "== deployment target (task 13.18) =="
+    # The floor moved to 11.0 for llama.cpp's std::filesystem. Both halves of
+    # the universal binary have to carry it, and it has to match the value
+    # `minimumSystemVersion` puts in the installer — a .dmg that installs on a
+    # Mac the binary cannot run on is worse than one that refuses.
+    want=$(/usr/bin/plutil -extract bundle.macOS.minimumSystemVersion raw \
+        -o - crates/toolog-app/tauri.conf.json 2>/dev/null || echo "?")
+    for arch in arm64 x86_64; do
+        got=$(otool -l -arch "$arch" "$app/Contents/MacOS/toolog" 2>/dev/null \
+            | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
+        echo "    $arch minos ${got:-none} (config says $want)"
+        [ "$got" = "$want" ] || { echo "FAIL: $arch was built for ${got:-nothing}, not $want"; exit 1; }
+    done
+
     echo "== signature =="
     codesign -dv --verbose=4 "$app" 2>&1 | grep -E "Authority=|TeamIdentifier=|flags=" || true
     codesign --verify --strict --deep --verbose=2 "$app" 2>&1 | tail -2 || true
