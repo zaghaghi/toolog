@@ -219,3 +219,37 @@ describe("the notification switches (task 9.3)", () => {
     expect(highRisk!.checked).toBe(false);
   });
 });
+
+describe("the theme control", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
+  });
+
+  test("offers three states with System selected by default", async () => {
+    const node = await mount();
+    const segs = [...node.querySelectorAll<HTMLButtonElement>(".segmented .seg")];
+
+    expect(segs.map((b) => b.textContent)).toEqual(["System", "Light", "Dark"]);
+    expect(segs.map((b) => b.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
+  });
+
+  test("choosing one applies it immediately, with no save button", async () => {
+    const node = await mount();
+    const dark = [...node.querySelectorAll<HTMLButtonElement>(".seg")].find(
+      (b) => b.textContent === "Dark",
+    );
+
+    dark!.click();
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(dark!.className).toContain("on");
+    expect(dark!.getAttribute("aria-checked")).toBe("true");
+  });
+
+  test("opens on the choice already made", async () => {
+    localStorage.setItem("toolog.theme", "light");
+    const node = await mount();
+    const on = node.querySelector(".seg.on");
+    expect(on?.textContent).toBe("Light");
+  });
+});

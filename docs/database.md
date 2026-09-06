@@ -315,6 +315,19 @@ The owner's store, measured at one moment — it is a live store and grows while
 Two thirds of the file is the evidence store, which is the shape ADR-0004 predicts and accepts: the
 projection is a rounding error next to keeping every input record verbatim.
 
+## What is *not* in the database
+
+Two preferences live outside it, and the split is worth stating because both are
+"settings":
+
+| | Where | Why |
+|---|---|---|
+| Notifications, evidence redaction, excluded projects | `prefs.json`, beside the database | The **resident process** acts on them — notifications fire from the capture thread, redaction happens on the write path |
+| Theme, the activity chart's collapsed state | The window's `localStorage` | Nothing outside the window acts on them, and reading them synchronously at boot is what stops the first paint being the wrong theme |
+
+Neither is in SQLite. A preference is not evidence, and `prefs.json` is a file a
+person can read and edit without this tool running.
+
 ## Reading it yourself
 
 The file is plain SQLite on purpose — that is what lets you check the claims in

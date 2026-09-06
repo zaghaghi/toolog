@@ -1712,6 +1712,45 @@ pre.report {
   max-width: 46ch;
 }
 
+/* ------------------------------------------------------------ appearance */
+
+/* Three mutually exclusive choices, so a segmented control rather than the
+   checkbox the other preferences use: a switch cannot offer "follow the
+   system", which is the one most people want. */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--card);
+}
+
+.seg {
+  font: var(--text-sm) / 1.4 var(--font);
+  color: var(--ink-soft);
+  padding: var(--s2) var(--s5);
+  border-right: 1px solid var(--line);
+}
+
+.seg:last-child {
+  border-right: none;
+}
+
+.seg:hover {
+  color: var(--ink);
+  background: var(--sunken);
+}
+
+.seg.on {
+  color: var(--card);
+  background: var(--clay);
+}
+
+.seg.on:hover {
+  color: var(--card);
+  background: var(--clay);
+}
+
 /* -------------------------------------------------------------- switches */
 
 .switch {

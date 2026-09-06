@@ -22,6 +22,7 @@ import type { ToolCall } from "./bindings";
 import { el, fill, span } from "./dom";
 import { RiskView } from "./risk";
 import { SetupView } from "./setup";
+import { applyTheme, currentTheme } from "./theme";
 import { TimelineView } from "./timeline";
 import type { ViewState } from "./view";
 import { emptyFilter, emptyView, fromHash, toHash } from "./view";
@@ -33,6 +34,10 @@ const SCREENS: [Screen, string][] = [
   ["risk", "Risk"],
   ["setup", "Status"],
 ];
+
+// Before anything is built, so the first paint is already the right theme
+// rather than a light frame corrected a moment later.
+applyTheme(currentTheme());
 
 const root = document.getElementById("app");
 if (root === null) throw new Error("no #app to mount into");

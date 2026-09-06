@@ -21,6 +21,8 @@ import {
 } from "./bindings";
 import { el, fill, span } from "./dom";
 import { bytes, count } from "./format";
+import { currentTheme, setTheme, THEMES } from "./theme";
+import type { Theme } from "./theme";
 
 export interface SetupOptions {
   onNotice: (message: string) => void;
@@ -211,6 +213,8 @@ export class SetupView {
       }
     }
 
+    view.append(el("h2", { text: "Appearance" }), this.appearance());
+
     view.append(el("h2", { text: "Notifications" }), this.notifications());
 
     view.append(el("h2", { text: "Privacy" }), this.privacy());
@@ -319,6 +323,62 @@ export class SetupView {
     );
     details.append(el("summary", { text: "What removing toolog would do" }), body);
     return details;
+  }
+
+  /**
+   * Light, dark, or the machine's own setting.
+   *
+   * Three states rather than a switch, and **System** is the default: macOS
+   * changes appearance at sunset, and a two-state toggle would make the state
+   * most people want the one they cannot pick.
+   *
+   * Applied immediately, with no save button and no round trip — the choice
+   * *is* the action. It is remembered in the window rather than in `prefs.json`
+   * because nothing outside the window acts on it; see `theme.ts`.
+   */
+  private appearance(): HTMLElement {
+    const labels: Record<Theme, string> = {
+      system: "System",
+      light: "Light",
+      dark: "Dark",
+    };
+
+    const group = el("div", {
+      class: "segmented",
+      role: "radiogroup",
+      attrs: { "aria-label": "Theme" },
+    });
+
+    const buttons = THEMES.map((theme) => {
+      const button = el("button", {
+        class: "seg",
+        text: labels[theme],
+        attrs: { type: "button", role: "radio", "data-theme-choice": theme },
+      });
+      button.addEventListener("click", () => {
+        setTheme(theme);
+        mark(theme);
+      });
+      return [theme, button] as const;
+    });
+
+    const mark = (chosen: Theme): void => {
+      for (const [theme, button] of buttons) {
+        const on = theme === chosen;
+        button.className = on ? "seg on" : "seg";
+        button.setAttribute("aria-checked", String(on));
+      }
+    };
+    mark(currentTheme());
+
+    group.append(...buttons.map(([, button]) => button));
+    return el("div", { class: "card" }, [
+      group,
+      el("p", {
+        class: "note",
+        text: "System follows the machine's own light or dark setting, including when it changes at sunset.",
+      }),
+    ]);
   }
 
   /**

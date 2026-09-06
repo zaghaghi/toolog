@@ -125,8 +125,28 @@
   --shadow: 0 1px 2px rgb(28 31 38 / 6%), 0 8px 24px rgb(28 31 38 / 8%);
 }
 
+/*
+ * Dark, three ways in, all landing on the same values.
+ *
+ * The declarations below are duplicated on purpose, and the duplication is
+ * forced rather than chosen: `light-dark()` would collapse it to one block and
+ * needs Safari 17.5, while `tauri.conf.json` sets a floor of macOS 10.15. A
+ * reader on an old machine would get a page with no colours at all.
+ *
+ * So the palette is written twice and a test keeps the two copies identical —
+ * `tokens.test.ts`, which fails if a token is added to one block and not the
+ * other. Changing a dark colour means changing it in both places.
+ *
+ *   no attribute        follow the operating system
+ *   data-theme="light"  light, whatever the operating system says
+ *   data-theme="dark"   dark, whatever the operating system says
+ *
+ * `color-scheme` is set alongside, so the scrollbars, the form controls and the
+ * window's own background follow the choice rather than the system.
+ */
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --paper: #14161b;
     --card: #1b1e24;
     --sunken: #101216;
@@ -155,6 +175,42 @@
 
     --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 45%);
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --paper: #14161b;
+  --card: #1b1e24;
+  --sunken: #101216;
+  --line: #282c34;
+  --line-strong: #3a3f49;
+
+  --ink: #e8e6e1;
+  --ink-soft: #9aa1ad;
+  --ink-faint: #6b7280;
+
+  --clay: #7ab0f0;
+  --clay-wash: #16273d;
+  --good: #6cc08b;
+  --bad: #e8705c;
+  --refused: #b78cff;
+  --warn: #d9a441;
+  --mark: #6b5320;
+
+  --chart-mark: #5f9fe8;
+  --chart-track: #3a5f8a;
+
+  --add-bg: #16301f;
+  --add-ink: #7fd3a0;
+  --del-bg: #341a17;
+  --del-ink: #f0897a;
+
+  --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 45%);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 @media (prefers-reduced-motion: reduce) {
