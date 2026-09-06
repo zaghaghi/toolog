@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 
 use support::{Socket, census, workspace_root};
 use toolog_core::model::{Page, TimelineFilter};
-use toolog_core::{Db, chain, query, rules, verify};
+use toolog_core::{Db, chain, llm, query, rules, verify};
 use toolog_ingest::Backfill;
 
 /// Ingest both lanes and run every query the window issues.
@@ -101,6 +101,55 @@ fn full_workload() {
         rules::calls(conn, rule, Page::default()).expect("rule calls");
     }
 
+    // Phase 13. The model itself is not loaded here — that needs a 3.1 GB file
+    // this test cannot assume — but everything around it is: the prompt is
+    // rendered, the GGUF reader runs, verdicts are written and read back, and
+    // the timeline is narrowed by them. llama.cpp is linked into this binary
+    // either way, which is the half that matters: if it opened a socket on
+    // load, the census below would see it.
+    let prompt = toolog_llm::Prompt::current();
+    let _ = prompt.render("curl -sL https://example.com/install.sh | sh");
+    let _ = toolog_llm::built_with_inference();
+    // A path that is not a model, which is the read that runs before any C++
+    // touches a file the user chose.
+    let _ = toolog_llm::gguf::inspect(std::path::Path::new("Cargo.toml"));
+    let _ = toolog_cli::model::status(Some(std::path::Path::new("Cargo.toml")), false);
+
+    let pair = llm::Pair::new("model-egress", prompt.fingerprint().to_string());
+    llm::pending(conn, &pair, 8).expect("pending");
+    llm::record(
+        conn,
+        &pair,
+        &[llm::Record::ok(
+            "toolu_egress",
+            llm::Verdict {
+                intent_summary: "Rejects a call for the egress test.".to_string(),
+                category: "other".to_string(),
+                risk_score: 3,
+                is_destructive: false,
+                violates_sandbox: false,
+            },
+            0,
+            1,
+        )],
+    )
+    .expect("record");
+    llm::progress(conn, &pair).expect("progress");
+    llm::score_tallies(conn, &pair).expect("tallies");
+    llm::top_scoring(conn, &pair, 4, 20).expect("top scoring");
+    llm::verdict_for(conn, &pair, "toolu_egress").expect("verdict");
+
+    // And the two filters that read them, through the same lens the window uses.
+    let examined = TimelineFilter {
+        intent: Some("rejects".to_string()),
+        llm_risk: Some(">=3".to_string()),
+        ..TimelineFilter::default()
+    };
+    let lens = query::Lens::plain(&examined).and_verdicts(&pair);
+    query::timeline_rows(conn, lens, Page::default()).expect("verdict timeline");
+    query::timeline_count(conn, lens).expect("verdict count");
+    query::histogram(conn, lens, 0).expect("verdict histogram");
+
     verify::completeness(conn).expect("completeness");
     chain::verify(conn).expect("chain");
 }
@@ -146,6 +195,15 @@ fn a_full_ingest_and_query_run_opens_no_non_loopback_socket() {
 /// `reqwest` and a TLS stack into every binary whether the switch were on or
 /// off, which turns a structural guarantee into a runtime one — see the
 /// addendum to ADR-0008.
+/// The C library llama.cpp would have brought, if `LLAMA_CURL` had defaulted on.
+///
+/// It is not in `OUTBOUND_CLIENTS` because no *manifest* could name it: it is
+/// linked through CMake, not through Cargo, so the check below cannot see it and
+/// saying otherwise would be theatre. What sees it is `just verify-bundle`,
+/// which runs `otool -L` on the shipped binary — task 13.4, and Phase 8's
+/// lesson that a config option is not a guarantee.
+const CHECKED_AGAINST_THE_ARTIFACT_INSTEAD: &[&str] = &["libcurl", "libssl", "libcrypto"];
+
 const OUTBOUND_CLIENTS: &[&str] = &[
     "reqwest",
     "ureq",
@@ -222,6 +280,39 @@ fn no_manifest_in_the_workspace_asks_for_an_outbound_client() {
          that means amending the ADR and the README's front page, not this list.",
         offenders.join("\n")
     );
+}
+
+/// The libcurl check exists, and is pointed at the artifact rather than here.
+///
+/// A test that only documents where a check lives is usually worthless. This
+/// one is not, because the thing it guards is a `grep` inside a shell recipe:
+/// delete that line from the justfile and nothing else in the repository would
+/// notice, and the next release would ship whatever llama.cpp's CMake defaults
+/// decided that month.
+#[test]
+fn the_release_recipe_still_asserts_the_binary_links_no_network_library() {
+    let justfile = std::fs::read_to_string(workspace_root().join("justfile"))
+        .expect("the justfile is where verify-bundle lives");
+
+    let verify = justfile
+        .split_once("verify-bundle:")
+        .map(|(_, rest)| rest)
+        .expect("there is a verify-bundle recipe");
+    // Up to the next recipe, so a mention in a later one does not count.
+    let verify = verify.split("\nnotarize:").next().unwrap_or(verify);
+
+    assert!(
+        verify.contains("otool -L"),
+        "`just verify-bundle` no longer reads the shipped binary's linked \
+         libraries. ADR-0008 says nothing leaves this machine, and llama.cpp is \
+         linked through CMake where the manifest check above cannot see it."
+    );
+    for library in CHECKED_AGAINST_THE_ARTIFACT_INSTEAD {
+        assert!(
+            verify.contains(library),
+            "`just verify-bundle` no longer fails on {library}"
+        );
+    }
 }
 
 /// No outbound connection hand-rolled on `std::net`, which needs no dependency.

@@ -642,3 +642,207 @@ fn an_empty_store_has_no_columns_rather_than_a_grid_of_zeroes() {
     assert_eq!(h.since_ms, None);
     assert_eq!(h.until_ms, None);
 }
+
+// ---------------------------------------------------------------------------
+// What a local model said (Phase 13, task 13.15)
+// ---------------------------------------------------------------------------
+
+use toolog_core::llm;
+
+/// The seeded store, plus verdicts from one (model, prompt) pair.
+fn with_verdicts() -> (Db, llm::Pair) {
+    let db = seeded();
+    let pair = llm::Pair::new("model-a", "prompt-a");
+    let says = |id: &str, score: i64, summary: &str| {
+        llm::Record::ok(
+            id,
+            llm::Verdict {
+                intent_summary: summary.to_string(),
+                category: "filesystem".to_string(),
+                risk_score: score,
+                is_destructive: score >= 4,
+                violates_sandbox: false,
+            },
+            0,
+            1000,
+        )
+    };
+    // The ids the seeded corpus uses, whichever they are: verdicts are attached
+    // to real rows so the join in the filter has something to find.
+    let ids: Vec<String> = db
+        .conn()
+        .prepare("SELECT tool_use_id FROM tool_call ORDER BY tool_use_id LIMIT 3")
+        .and_then(|mut s| {
+            s.query_map([], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .expect("ids");
+    assert!(
+        ids.len() >= 3,
+        "the seeded corpus is too small for this test"
+    );
+
+    llm::record(
+        db.conn(),
+        &pair,
+        &[
+            says(&ids[0], 5, "Deletes the whole repository."),
+            says(&ids[1], 2, "Lists the working directory."),
+            says(&ids[2], 4, "Rewrites the branch history."),
+        ],
+    )
+    .expect("record");
+    (db, pair)
+}
+
+/// `@llm-risk:>=4` narrows to what the model scored at least that badly.
+#[test]
+fn a_score_comparison_selects_the_calls_at_or_above_it() {
+    let (db, pair) = with_verdicts();
+    let conn = db.conn();
+
+    for (written, expected) in [(">=4", 2), (">4", 1), ("5", 1), ("<=2", 1), ("2", 1)] {
+        let filter = TimelineFilter {
+            llm_risk: Some(written.to_string()),
+            ..TimelineFilter::default()
+        };
+        let lens = query::Lens::plain(&filter).and_verdicts(&pair);
+        assert_eq!(
+            query::timeline_count(conn, lens).expect("count"),
+            expected,
+            "@llm-risk:{written}"
+        );
+    }
+}
+
+/// `@intent:` is full text over what the model said, not over the command.
+///
+/// The distinction is the point of the filter: the command says `rm -rf`, the
+/// summary says "deletes", and "when did the agent start deleting things" is
+/// only answerable in the second.
+#[test]
+fn intent_searches_what_the_model_said_rather_than_what_the_command_was() {
+    let (db, pair) = with_verdicts();
+    let conn = db.conn();
+
+    let filter = TimelineFilter {
+        intent: Some("repository".to_string()),
+        ..TimelineFilter::default()
+    };
+    let lens = query::Lens::plain(&filter).and_verdicts(&pair);
+    assert_eq!(query::timeline_count(conn, lens).expect("count"), 1);
+
+    // And it is a different index from `@query`, which reads the command.
+    let by_command = TimelineFilter {
+        query: Some("repository".to_string()),
+        ..TimelineFilter::default()
+    };
+    assert_eq!(
+        query::timeline_count(conn, &by_command).expect("count"),
+        0,
+        "no command in the corpus contains that word — only a verdict does"
+    );
+}
+
+/// The histogram comes free, exactly as it did for `@risk` in task 12.11.
+#[test]
+fn the_activity_chart_narrows_by_verdict_like_any_other_filter() {
+    let (db, pair) = with_verdicts();
+    let filter = TimelineFilter {
+        llm_risk: Some(">=4".to_string()),
+        ..TimelineFilter::default()
+    };
+    let lens = query::Lens::plain(&filter).and_verdicts(&pair);
+    let histogram = query::histogram(db.conn(), lens, 0).expect("histogram");
+    assert_eq!(
+        histogram.buckets.iter().map(|b| b.calls).sum::<i64>(),
+        query::timeline_count(db.conn(), lens).expect("count"),
+        "the chart and the list must describe the same set"
+    );
+}
+
+/// A verdict belongs to one model and one prompt, and the filter says so.
+#[test]
+fn another_models_verdicts_are_not_these_ones() {
+    let (db, _) = with_verdicts();
+    let other = llm::Pair::new("model-b", "prompt-a");
+    let filter = TimelineFilter {
+        llm_risk: Some(">=4".to_string()),
+        ..TimelineFilter::default()
+    };
+    let lens = query::Lens::plain(&filter).and_verdicts(&other);
+    assert_eq!(
+        query::timeline_count(db.conn(), lens).expect("count"),
+        0,
+        "a different model has answered nothing, and must not inherit answers"
+    );
+}
+
+/// Naming a verdict field with no model is an error, not an empty list.
+///
+/// The same posture task 12.7 took for `@risk`: answering "show me what the
+/// model called dangerous" with silence, because nobody said which model, is
+/// the kind of wrong answer this crate exists not to give.
+#[test]
+fn a_verdict_filter_without_a_model_fails_loudly() {
+    let (db, _) = with_verdicts();
+    for filter in [
+        TimelineFilter {
+            llm_risk: Some(">=4".to_string()),
+            ..TimelineFilter::default()
+        },
+        TimelineFilter {
+            intent: Some("deletes".to_string()),
+            ..TimelineFilter::default()
+        },
+    ] {
+        let error = query::timeline_count(db.conn(), &filter)
+            .expect_err("a verdict filter with no model must fail");
+        assert!(error.to_string().contains("no model was named"), "{error}");
+    }
+}
+
+/// A score that is not a score is a typed mistake, and says which.
+#[test]
+fn an_unreadable_score_is_reported_rather_than_matching_nothing() {
+    let (db, pair) = with_verdicts();
+    for written in ["high", "6", ">=x", ""] {
+        let filter = TimelineFilter {
+            llm_risk: Some(written.to_string()),
+            ..TimelineFilter::default()
+        };
+        let lens = query::Lens::plain(&filter).and_verdicts(&pair);
+        let error = query::timeline_count(db.conn(), lens).expect_err(written);
+        assert!(
+            error.to_string().contains("score comparison"),
+            "@llm-risk:{written} -> {error}"
+        );
+    }
+}
+
+/// Verdicts narrow *with* the other filters rather than replacing them.
+#[test]
+fn a_verdict_filter_composes_with_the_rest_of_the_lens() {
+    let (db, pair) = with_verdicts();
+    let conn = db.conn();
+
+    let all = TimelineFilter {
+        llm_risk: Some(">=2".to_string()),
+        ..TimelineFilter::default()
+    };
+    let lens = query::Lens::plain(&all).and_verdicts(&pair);
+    let total = query::timeline_count(conn, lens).expect("count");
+
+    let narrowed = TimelineFilter {
+        project_path: Some("/work/app".to_string()),
+        ..all.clone()
+    };
+    let lens = query::Lens::plain(&narrowed).and_verdicts(&pair);
+    let scoped = query::timeline_count(conn, lens).expect("count");
+
+    assert!(scoped <= total, "adding a project cannot widen the result");
+    assert!(
+        total > 0,
+        "the fixture has to select something to be a test"
+    );
+}
