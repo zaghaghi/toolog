@@ -1,4 +1,4 @@
-//! One line of the timeline, and the headers that group them.
+//! One line of the timeline.
 //!
 //! Task 5.4's row: time, project, tool, outcome, what it did, how long it took,
 //! and who let it. `Bash` is 71% of the corpus here, so the row is laid out for
@@ -11,9 +11,9 @@
 //! running. Every one of those renders as a stated absence — never a blank row,
 //! never a zero, and never a row that disappears until it is complete.
 
-import type { AgentGroup, SessionGroup, TimelineRow } from "./bindings";
+import type { TimelineRow } from "./bindings";
 import { el, orDash, span } from "./dom";
-import { basename, clock, count, duration, EM_DASH, fullStamp, lanes } from "./format";
+import { basename, clock, duration, fullStamp, lanes } from "./format";
 import type { RowBlock } from "./plan";
 
 /** The delimiters `snippet()` puts around a match — see `query::MATCH_OPEN`. */
@@ -125,7 +125,7 @@ function summary(row: TimelineRow, ctx: RowContext): HTMLElement {
 }
 
 /** One timeline row. */
-export function renderRow(row: TimelineRow, block: RowBlock, ctx: RowContext): HTMLElement {
+export function renderRow(row: TimelineRow, _block: RowBlock, ctx: RowContext): HTMLElement {
   const call = row.call;
   const node = el("div", {
     class: "row",
@@ -136,7 +136,6 @@ export function renderRow(row: TimelineRow, block: RowBlock, ctx: RowContext): H
     },
   });
   if (ctx.selected === call.tool_use_id) node.classList.add("sel");
-  if (block.indent > 0) node.classList.add("sub");
   if (call.decision === "reject") node.classList.add("refused");
 
   node.append(
@@ -162,9 +161,8 @@ export function renderRow(row: TimelineRow, block: RowBlock, ctx: RowContext): H
 }
 
 /** A row whose page has not arrived yet. Holds the height; claims nothing. */
-export function renderPending(block: RowBlock, error?: string): HTMLElement {
+export function renderPending(_block: RowBlock, error?: string): HTMLElement {
   const node = el("div", { class: error === undefined ? "row pending" : "row broken" });
-  if (block.indent > 0) node.classList.add("sub");
   node.append(
     span("time", ""),
     span("project", ""),
@@ -175,60 +173,6 @@ export function renderPending(block: RowBlock, error?: string): HTMLElement {
       : span("sum none", `could not load these rows — ${error}. Click to try again.`),
     span("dur", ""),
     span("dec", ""),
-  );
-  return node;
-}
-
-/** The header over one session's calls (task 5.10). */
-export function renderSessionHeader(group: SessionGroup, collapsed: boolean): HTMLElement {
-  const node = el("div", {
-    class: "ghead",
-    role: "option",
-    attrs: { "aria-expanded": String(!collapsed) },
-  });
-
-  const parts: string[] = [];
-  if (group.git_branch) parts.push(group.git_branch);
-  parts.push(`${count(group.calls)} ${group.calls === 1 ? "call" : "calls"}`);
-  if (group.failures > 0) parts.push(`${count(group.failures)} failed`);
-  if (group.refusals > 0) parts.push(`${count(group.refusals)} refused`);
-  if (group.first_at !== null && group.last_at !== null) {
-    parts.push(`${clock(group.first_at)}–${clock(group.last_at)}`);
-    parts.push(duration(group.last_at - group.first_at));
-  }
-
-  node.append(
-    span("caret", collapsed ? "›" : "‹"),
-    span(
-      "gname",
-      group.project_path === null ? "Unattributed calls" : basename(group.project_path),
-      group.project_path ?? "These calls name no session the store ever learned",
-    ),
-    span("gmeta", parts.join(" · ")),
-  );
-  return node;
-}
-
-/** The header over one subagent's calls, nested inside its session. */
-export function renderAgentHeader(
-  _group: SessionGroup,
-  agent: AgentGroup,
-  collapsed: boolean,
-): HTMLElement {
-  const node = el("div", {
-    class: "ghead agent",
-    role: "option",
-    attrs: { "aria-expanded": String(!collapsed) },
-  });
-  const parts = [
-    "subagent",
-    `${count(agent.calls)} ${agent.calls === 1 ? "call" : "calls"}`,
-    agent.first_at === null ? EM_DASH : `${clock(agent.first_at)}–${clock(agent.last_at)}`,
-  ];
-  node.append(
-    span("caret", collapsed ? "›" : "‹"),
-    span("gname", agent.agent_name ?? "Unnamed agent", agent.agent_id),
-    span("gmeta", parts.join(" · ")),
   );
   return node;
 }

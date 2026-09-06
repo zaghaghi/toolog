@@ -6,9 +6,14 @@
  * a colour, a size or a spacing that is not a token is a bug waiting to be
  * inconsistent.
  *
- * The palette continues Phase 4's — warm paper, near-black ink, one clay
- * accent — and adds the states a forensic list needs: a failure, a refusal, a
- * search hit and the two halves of a diff.
+ * The palette is warm paper, near-black ink and one blue accent, plus the
+ * states a forensic list needs: a failure, a refusal, a search hit and the two
+ * halves of a diff.
+ *
+ * The accent was terracotta through v1.1 and is now blue. The token is still
+ * called `--clay`, because it is referenced in about sixty places and a rename
+ * would be sixty lines of diff saying nothing: it means "the one accent", and
+ * always did.
  *
  * The mockup this was agreed against is docs/design/timeline.html.
  */
@@ -29,8 +34,8 @@
   --ink-faint: #8d93a0;      /* the third rank: placeholders, "—" */
 
   /* --- accent and state ----------------------------------------------- */
-  --clay: #b8542f;           /* the one accent: selection, primary actions */
-  --clay-wash: #f6e8e1;      /* its tint, for fills behind text */
+  --clay: #1a5fb4;           /* the one accent: selection, primary actions */
+  --clay-wash: #e8f0fb;      /* its tint, for fills behind text */
   --good: #2f7d52;           /* a call that succeeded */
   --bad: #b3311f;            /* a call that failed */
   --refused: #8a3ffc;        /* a call that was denied — neither ok nor error */
@@ -57,9 +62,16 @@
      `--chart-track` is the unfilled half of a meter: a lighter step of the same
      ramp, so state reads across the whole bar rather than stopping at the
      fill. It clears 2:1 on the surface, which is what makes "the rest" visible
-     rather than absent. */
-  --chart-mark: #b8542f;
-  --chart-track: #d29a80;
+     rather than absent.
+
+     Re-measured when the accent moved from terracotta to blue. What was
+     re-checked is contrast, which is the check that can be computed here:
+     light mark 6.29:1 on `--card` and track 2.29:1; dark mark 6.05:1 and
+     track 2.53:1. The chroma and CVD checks were not re-run — one hue
+     carrying magnitude has no second series to be confused with, which is
+     what those checks are for. */
+  --chart-mark: #1a5fb4;
+  --chart-track: #7fb0e0;
   --chart-grid: var(--line);
 
   /* --- type ------------------------------------------------------------ */
@@ -125,16 +137,16 @@
     --ink-soft: #9aa1ad;
     --ink-faint: #6b7280;
 
-    --clay: #d97757;
-    --clay-wash: #33231d;
+    --clay: #7ab0f0;
+    --clay-wash: #16273d;
     --good: #6cc08b;
     --bad: #e8705c;
     --refused: #b78cff;
     --warn: #d9a441;
     --mark: #6b5320;
 
-    --chart-mark: #d0694b;
-    --chart-track: #7d4835;
+    --chart-mark: #5f9fe8;
+    --chart-track: #3a5f8a;
 
     --add-bg: #16301f;
     --add-ink: #7fd3a0;

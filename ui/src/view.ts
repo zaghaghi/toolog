@@ -15,8 +15,6 @@ import type { TimelineFilter } from "./bindings";
 
 export interface ViewState {
   filter: TimelineFilter;
-  /** Group rows by session and subagent (task 5.10). */
-  grouped: boolean;
   /** The `tool_use_id` whose detail pane is open. */
   selected: string | null;
 }
@@ -44,7 +42,7 @@ export function emptyFilter(): TimelineFilter {
 }
 
 export function emptyView(): ViewState {
-  return { filter: emptyFilter(), grouped: false, selected: null };
+  return { filter: emptyFilter(), selected: null };
 }
 
 /** Whether anything is narrowing the timeline. */
@@ -128,7 +126,6 @@ export function toHash(view: ViewState): string {
     if (value === null || value === undefined) continue;
     params.set(short, String(value));
   }
-  if (view.grouped) params.set("group", "session");
   if (view.selected !== null) params.set("call", view.selected);
   const query = params.toString();
   return query === "" ? "" : `#${query}`;
@@ -151,7 +148,9 @@ export function fromHash(hash: string): ViewState {
     }
   }
 
-  view.grouped = params.get("group") === "session";
+  // `group=session` was written by v1.0 and v1.1. Grouping is gone, so the key
+  // is read and dropped rather than rejected: an old link still restores the
+  // filter it carried, which is the part of it that still means something.
   view.selected = params.get("call");
   return view;
 }

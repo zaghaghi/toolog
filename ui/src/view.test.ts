@@ -39,11 +39,10 @@ describe("the URL hash (task 5.6)", () => {
       risk: "high",
       rule_id: "auto-approved-destructive-bash",
     };
-    const view = { filter, grouped: true, selected: "toolu_7" };
+    const view = { filter, selected: "toolu_7" };
 
     const restored = fromHash(toHash(view));
     expect(restored.filter).toEqual(filter);
-    expect(restored.grouped).toBe(true);
     expect(restored.selected).toBe("toolu_7");
   });
 
@@ -65,7 +64,6 @@ describe("the URL hash (task 5.6)", () => {
     const view = fromHash("#since=notanumber&tool=Bash&group=nope");
     expect(view.filter.since).toBeNull();
     expect(view.filter.tool_name).toBe("Bash");
-    expect(view.grouped).toBe(false);
   });
 });
 
@@ -138,7 +136,6 @@ describe("a v1.0 link still restores its view (task 10.7)", () => {
       risk: null,
       rule_id: null,
     });
-    expect(view.grouped).toBe(true);
     expect(view.selected).toBe("toolu_7");
   });
 

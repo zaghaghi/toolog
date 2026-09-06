@@ -12,7 +12,10 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("./bindings", () => ({
   queryTimeline: vi.fn(() => Promise.resolve([])),
   timelineCount: vi.fn(() => Promise.resolve(0)),
-  timelineGroups: vi.fn(() => Promise.resolve([])),
+  timelineHistogram: vi.fn(() =>
+    Promise.resolve({ size: "hour", buckets: [], since_ms: null, until_ms: null }),
+  ),
+  ruleIds: vi.fn(() => Promise.resolve([])),
   facets: vi.fn(() =>
     Promise.resolve({
       projects: [],

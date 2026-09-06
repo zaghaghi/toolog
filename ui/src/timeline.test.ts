@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import type { SessionGroup, TimelineFilter, TimelineRow, ToolCall } from "./bindings";
+import type { TimelineFilter, TimelineRow, ToolCall } from "./bindings";
 
 vi.mock("./bindings", () => ({
   queryTimeline: vi.fn((filter: TimelineFilter, page: { limit: number; offset: number }) => {
@@ -18,7 +18,6 @@ vi.mock("./bindings", () => ({
     return Promise.resolve(store.page(filter, page));
   }),
   timelineCount: vi.fn((filter: TimelineFilter) => Promise.resolve(store.count(filter))),
-  timelineGroups: vi.fn(() => Promise.resolve(store.groups)),
   timelineHistogram: vi.fn((filter: TimelineFilter) => Promise.resolve(store.histogram(filter))),
   facets: vi.fn(() =>
     Promise.resolve({
@@ -107,7 +106,6 @@ function row(over: Partial<ToolCall>, extra: Partial<TimelineRow> = {}): Timelin
 
 const store = {
   rows: [] as TimelineRow[],
-  groups: [] as SessionGroup[],
   status: { listening: true, paused: false } as { listening: boolean; paused: boolean },
   failNextPage: false,
   count(_filter: TimelineFilter): number {
@@ -188,7 +186,6 @@ beforeEach(() => {
   lastView = null;
   store.failNextPage = false;
   store.rows = [];
-  store.groups = [];
   store.status = { listening: true, paused: false };
   document.body.replaceChildren();
 });
@@ -289,73 +286,6 @@ describe("search (task 5.7)", () => {
     const snippet = rowsOf(timeline)[0]!.querySelector(".insnip");
     expect(snippet?.textContent).toBe("error: ENOENT while opening");
     expect(snippet?.querySelector("mark")?.textContent).toBe("ENOENT");
-  });
-});
-
-describe("grouping (task 5.10)", () => {
-  test("puts a subagent's calls under its own header", async () => {
-    store.rows = [
-      row({ tool_use_id: "m1" }),
-      row({ tool_use_id: "a1", agent_id: "ag-1", agent_name: "Explore" }),
-    ];
-    store.groups = [
-      {
-        session_id: "s1",
-        project_path: "/work/app",
-        git_branch: "main",
-        slug: null,
-        cc_version: null,
-        calls: 2,
-        main_thread_calls: 1,
-        failures: 0,
-        refusals: 1,
-        first_at: 1,
-        last_at: 2,
-        agents: [{ agent_id: "ag-1", agent_name: "Explore", calls: 1, first_at: 1, last_at: 2 }],
-      },
-    ];
-    const timeline = mount({ ...emptyView(), grouped: true });
-    await settle();
-
-    const headers = [...timeline.node.querySelectorAll(".ghead")];
-    expect(headers).toHaveLength(2);
-    expect(text(headers[0]!, ".gname")).toBe("app");
-    expect(text(headers[0]!, ".gmeta")).toContain("2 calls");
-    expect(text(headers[0]!, ".gmeta")).toContain("1 refused");
-    expect(headers[1]!.className).toContain("agent");
-    expect(text(headers[1]!, ".gname")).toBe("Explore");
-
-    // The subagent's row is indented and asked for by agent, not by position.
-    const sub = rowsOf(timeline).find((r) => r.className.includes("sub"));
-    expect(sub).toBeDefined();
-  });
-
-  test("collapsing a session hides its rows and keeps its header", async () => {
-    store.rows = [row({ tool_use_id: "m1" }), row({ tool_use_id: "m2" })];
-    store.groups = [
-      {
-        session_id: "s1",
-        project_path: "/work/app",
-        git_branch: null,
-        slug: null,
-        cc_version: null,
-        calls: 2,
-        main_thread_calls: 2,
-        failures: 0,
-        refusals: 0,
-        first_at: 1,
-        last_at: 2,
-        agents: [],
-      },
-    ];
-    const timeline = mount({ ...emptyView(), grouped: true });
-    await settle();
-    expect(rowsOf(timeline)).toHaveLength(2);
-
-    timeline.node.querySelector<HTMLElement>(".ghead")!.click();
-    await settle();
-    expect(rowsOf(timeline)).toHaveLength(0);
-    expect(timeline.node.querySelectorAll(".ghead")).toHaveLength(1);
   });
 });
 
@@ -588,7 +518,7 @@ describe("the activity histogram (tasks 10.3, 10.4)", () => {
     });
     await settle();
 
-    const time = timeline.node.querySelector<HTMLSelectElement>(".controls .pick")!;
+    const time = timeline.node.querySelector<HTMLSelectElement>(".timepick .pick")!;
     expect(time.value).toBe("custom");
     expect([...time.options].map((o) => o.textContent)).toContain("Custom range");
   });
@@ -602,16 +532,17 @@ describe("the activity histogram (tasks 10.3, 10.4)", () => {
 });
 
 describe("the query bar (tasks 10.5–10.11)", () => {
-  test("has no dropdowns left but Time and Group by session", async () => {
+  test("has one dropdown left, beside the box rather than under it", async () => {
     store.rows = [row({ tool_use_id: "t1" })];
     const timeline = mount();
     await settle();
 
-    // Seven `<select>`s used to sit here.
-    expect(timeline.node.querySelectorAll(".controls .pick")).toHaveLength(1);
-    expect(timeline.node.querySelector(".controls .toggle")?.textContent).toBe(
-      "Group by session",
-    );
+    // Seven `<select>`s used to sit in a row under the box; Time is the only
+    // one left, and it sits on the same line as the box and Export.
+    const selects = timeline.node.querySelectorAll(".bar select");
+    expect(selects).toHaveLength(1);
+    expect(timeline.node.querySelector(".searchrow .timepick select")).toBe(selects[0]);
+    expect(timeline.node.querySelector(".controls")).toBeNull();
   });
 
   test("shows the current filter as text, and typing narrows the list", async () => {

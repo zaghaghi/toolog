@@ -1,19 +1,25 @@
 //! The timeline: the forensic view (tasks 5.3–5.13).
 //!
 //! Everything below hangs off one `ViewState`. A change to it — typing in the
-//! search box, choosing a project, collapsing a session, following a link with a
-//! hash — rebuilds the item plan, resizes the list and lets the virtualizer ask
-//! for the rows it can actually see. Nothing else fetches anything.
+//! box, brushing the histogram, following a link with a hash — rebuilds the
+//! item plan, resizes the list and lets the virtualizer ask for the rows it can
+//! actually see. Nothing else fetches anything.
+//!
+//! The list is one flat run of rows. Grouping by session and subagent (task
+//! 5.10) was built, lived with, and removed: the collapse state, the group
+//! headers and the per-group queries all went with it. A subagent's calls are
+//! still identifiable — the row says which agent made them — they are simply
+//! not nested any more.
 
-import type { SessionGroup, ToolCall } from "./bindings";
-import { collectorStatus, facets, timelineCount, timelineGroups } from "./bindings";
+import type { ToolCall } from "./bindings";
+import { collectorStatus, facets, timelineCount } from "./bindings";
 import { DetailPane } from "./detail";
 import { el, fill, span } from "./dom";
 import { ActivityHistogram } from "./histogram";
 import { count, dayLabel } from "./format";
 import { FilterBar } from "./filterbar";
-import { agentKey, Plan, RowStore, sessionKey } from "./plan";
-import { renderAgentHeader, renderPending, renderRow, renderSessionHeader } from "./row";
+import { Plan, RowStore } from "./plan";
+import { renderPending, renderRow } from "./row";
 import type { RowContext } from "./row";
 import { VirtualList } from "./virtual";
 import type { ViewState } from "./view";
@@ -46,8 +52,6 @@ export class TimelineView {
   private plan = Plan.flat(emptyFilter(), 0);
   /** How many calls the current filter matches, from `timeline_count`. */
   private total = 0;
-  private groups: SessionGroup[] = [];
-  private collapsed = new Set<string>();
   private cursor = -1;
   private readonly pending = new Set<string>();
   /** Bumped per reload so a slow count for an old filter is ignored. */
@@ -118,14 +122,12 @@ export class TimelineView {
   /** Apply a new view. `push` writes it to the URL. */
   apply(next: ViewState, push: boolean): void {
     const filterChanged = !sameFilter(next.filter, this.view.filter);
-    const groupingChanged = next.grouped !== this.view.grouped;
     const previous = this.view;
     this.view = next;
     this.bar.setView(next);
     if (push) this.options.onViewChange(next);
 
-    if (filterChanged || groupingChanged) {
-      this.collapsed.clear();
+    if (filterChanged) {
       void this.reload();
       return;
     }
@@ -203,14 +205,10 @@ export class TimelineView {
     try {
       const filter = this.view.filter;
       void this.histogram.load(filter);
-      const [total, groups] = await Promise.all([
-        timelineCount(filter),
-        this.view.grouped ? timelineGroups(filter) : Promise.resolve([]),
-      ]);
+      const total = await timelineCount(filter);
       if (generation !== this.generation) return;
 
       this.total = total;
-      this.groups = groups;
       this.rebuild();
       this.bar.setStatus(total, false);
 
@@ -230,12 +228,9 @@ export class TimelineView {
     }
   }
 
-  /** Rebuild the item plan from the current groups and collapse set. */
+  /** Rebuild the item plan for the current filter. */
   private rebuild(): void {
-    const filter = this.view.filter;
-    this.plan = this.view.grouped
-      ? Plan.grouped(filter, this.groups, this.collapsed)
-      : Plan.flat(filter, this.total);
+    this.plan = Plan.flat(this.view.filter, this.total);
     this.list.setTotal(this.plan.total);
   }
 
@@ -259,19 +254,6 @@ export class TimelineView {
     const item = this.plan.at(index);
     if (item === null) return el("div", { class: "row" });
 
-    if (item.kind === "session") {
-      const node = renderSessionHeader(item.group, item.collapsed);
-      node.dataset["group"] = sessionKey(item.group);
-      if (index === this.cursor) node.classList.add("cursor");
-      return node;
-    }
-    if (item.kind === "agent") {
-      const node = renderAgentHeader(item.group, item.agent, item.collapsed);
-      node.dataset["group"] = agentKey(item.group, item.agent);
-      if (index === this.cursor) node.classList.add("cursor");
-      return node;
-    }
-
     const row = this.store.get(item.block, item.offset);
     if (row === undefined) {
       return renderPending(item.block, this.store.errorFor(item.block, item.offset));
@@ -284,18 +266,11 @@ export class TimelineView {
   private updateContext(first: number): void {
     const item = this.plan.at(first);
     let left = "";
-    if (item?.kind === "row") {
+    if (item !== null) {
       const row = this.store.get(item.block, item.offset);
       if (row?.call.called_at != null) left = dayLabel(row.call.called_at);
-    } else if (item?.kind === "session" && item.group.last_at !== null) {
-      left = dayLabel(item.group.last_at);
-    } else if (item?.kind === "agent" && item.agent.last_at !== null) {
-      left = dayLabel(item.agent.last_at);
     }
-    fill(this.context, [
-      span("cleft", left),
-      span("cright", this.view.grouped ? `${count(this.groups.length)} sessions` : ""),
-    ]);
+    fill(this.context, [span("cleft", left), span("cright", "")]);
   }
 
   private showState(content: HTMLElement): void {
@@ -339,12 +314,6 @@ export class TimelineView {
 
   private onClick(event: MouseEvent): void {
     const target = event.target as HTMLElement | null;
-    const header = target?.closest<HTMLElement>(".ghead");
-    if (header) {
-      const key = header.dataset["group"];
-      if (key !== undefined) this.toggle(key);
-      return;
-    }
     // A page that failed to load says so in place of its rows; clicking one
     // asks for it again rather than making the whole view be reloaded.
     if (target?.closest(".row.broken")) {
@@ -382,12 +351,6 @@ export class TimelineView {
     return top < 0 ? -1 : Math.round(top / ROW_HEIGHT);
   }
 
-  private toggle(key: string): void {
-    if (this.collapsed.has(key)) this.collapsed.delete(key);
-    else this.collapsed.add(key);
-    this.rebuild();
-  }
-
   private select(id: string, index: number): void {
     const previous = this.view.selected;
     this.view = { ...this.view, selected: id };
@@ -407,7 +370,7 @@ export class TimelineView {
   }
 
   private onKey(event: KeyboardEvent): void {
-    const keys = ["ArrowDown", "ArrowUp", "Home", "End", "Enter", " ", "Escape"];
+    const keys = ["ArrowDown", "ArrowUp", "Home", "End", "Escape"];
     if (!keys.includes(event.key)) return;
     event.preventDefault();
 
@@ -415,13 +378,6 @@ export class TimelineView {
       this.cursor = -1;
       this.closeDetail();
       this.list.refreshAll();
-      return;
-    }
-
-    if (event.key === "Enter" || event.key === " ") {
-      const item = this.plan.at(this.cursor);
-      if (item?.kind === "session") this.toggle(sessionKey(item.group));
-      else if (item?.kind === "agent") this.toggle(agentKey(item.group, item.agent));
       return;
     }
 
@@ -440,7 +396,7 @@ export class TimelineView {
     // Stepping onto a row opens it, so the pane follows the cursor rather than
     // needing a second key for every call inspected.
     const item = this.plan.at(next);
-    if (item?.kind === "row") {
+    if (item !== null) {
       const row = this.store.get(item.block, item.offset);
       if (row !== undefined) this.select(row.call.tool_use_id, next);
     }

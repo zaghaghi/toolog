@@ -73,8 +73,6 @@ pub(crate) fn generate() -> String {
         toolog_core::model::TimelineFilter,
         toolog_core::model::Page,
         toolog_core::query::TimelineRow,
-        toolog_core::query::AgentGroup,
-        toolog_core::query::SessionGroup,
         toolog_core::query::Facets,
         toolog_core::query::BucketSize,
         toolog_core::query::Bucket,

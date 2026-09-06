@@ -32,7 +32,6 @@
               background: var(--card); border: 1px solid var(--line);
               border-radius: var(--r-md); padding: var(--s3) var(--s4); }
       .barwrap { border-bottom: 1px solid var(--line); }
-      .controls { display: flex; gap: var(--s2); padding: 0 var(--s5) var(--s3); }
       .qerror { padding: 0 var(--s5) var(--s3); font-size: var(--text-sm); color: var(--warn); }
 
       /* The completion menu, shown open because that is the state worth pinning. */
@@ -94,15 +93,8 @@
       .dec { font-size: var(--text-xs); color: var(--ink-faint); text-align: right; }
       .dec.user { color: var(--warn); }
       .none { color: var(--ink-faint); }
-      .sub .sum::before { content: "└ "; color: var(--ink-faint); }
-      .sub .time { padding-left: var(--s4); }
       .agent { font-size: var(--text-xs); color: var(--refused); }
 
-      .ghead { display: grid; align-items: center; height: var(--row-h);
-               grid-template-columns: 1fr auto; gap: var(--s4); padding: 0 var(--s5);
-               background: var(--sunken); border-bottom: 1px solid var(--line);
-               font-size: var(--text-sm); font-weight: 600; }
-      .ghead .meta { font-weight: 400; color: var(--ink-soft); font-size: var(--text-xs); }
 
       .pane { border-left: 1px solid var(--line); overflow: hidden; }
       .pane-head { display: flex; justify-content: flex-end; padding: var(--s3) var(--s3) 0; }
@@ -141,11 +133,13 @@
         than by a coloured row, so a screen of failures still reads as a list.
       </p>
       <p>
-        <strong>Updated for Phase 10.</strong> Seven dropdowns became one <code>@key:value</code>
-        box, shown with its completion menu open; an activity histogram sits between the bar and
-        the list, describing the filter and setting it — the band is a brushed range; and the
-        detail pane has a close button in a header that does not scroll away, because in a narrow
-        window the pane covers the list it was opened from.
+        <strong>Updated for v1.1.</strong> Seven dropdowns became one <code>@key:value</code>
+        box, shown with its completion menu open, with the one surviving control — time — beside
+        it; an activity histogram sits between the bar and the list, describing the filter and
+        setting it, and the band is a brushed range; and the detail pane has a close button in a
+        header that does not scroll away, because in a narrow window the pane covers the list it
+        was opened from. Session grouping was removed after use, so the list is one flat run of
+        rows and a subagent's calls are marked in place rather than nested under a header.
       </p>
       <p>
         Every value below comes from <code>ui/src/styles/tokens.css</code>. Open this file
@@ -160,15 +154,12 @@
           <div class="barwrap" style="position: relative">
             <div class="bar">
               <input class="search" value="@project:toolog @tool:Ba" aria-label="Filter and search" />
+              <span class="pick">Custom range</span>
               <span class="pick">Export…</span>
             </div>
             <div class="qmenu">
               <div class="qitem on"><span class="qlabel">Bash</span><span class="qhint">@tool</span></div>
               <div class="qitem"><span class="qlabel">BashOutput</span><span class="qhint">@tool</span></div>
-            </div>
-            <div class="controls">
-              <span class="pick">Custom range</span>
-              <span class="pick">Group by session</span>
             </div>
           </div>
 
@@ -242,32 +233,17 @@
             <span class="dur none">—</span><span class="dec user">user_reject</span>
           </div>
 
-          <div class="ghead">
-            <span>Explore <span class="meta">· subagent · 12 calls · 09:39:20–09:39:48</span></span>
-            <span class="meta">collapse</span>
-          </div>
-          <div class="row sub">
+          <div class="row">
             <span class="time">09:39:48</span><span class="project">toolog</span>
             <span class="tool">Grep</span><span class="st ok">✓</span>
             <span class="sum">"decision_source" crates/</span>
             <span class="dur">12 ms</span><span class="dec none">—</span>
           </div>
-          <div class="row sub">
+          <div class="row">
             <span class="time">09:39:31</span><span class="project">toolog</span>
             <span class="tool">Bash</span><span class="st ok">✓</span>
             <span class="sum"><mark>rm -rf</mark> /tmp/scratch &amp;&amp; mkdir -p /tmp/scratch</span>
-            <span class="dur">31 ms</span><span class="dec none">—</span>
-          </div>
-
-          <div class="ghead">
-            <span>taptrigg <span class="meta">· feat/photos · 61 calls · 08:50–09:04 · 14m</span></span>
-            <span class="meta">collapse</span>
-          </div>
-          <div class="row">
-            <span class="time">09:04:22</span><span class="project">taptrigg</span>
-            <span class="tool">Write</span><span class="st ok">✓</span>
-            <span class="sum">apps/host-panel/src/photos/Upload.tsx</span>
-            <span class="dur">—</span><span class="dec none">—</span>
+            <span class="dur">31 ms</span><span class="agent">Explore</span>
           </div>
         </div>
 

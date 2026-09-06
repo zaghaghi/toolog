@@ -348,61 +348,6 @@ fn the_main_thread_is_partitioned_by_agent_id_not_by_is_sidechain() {
 }
 
 // ---------------------------------------------------------------------------
-// Session grouping (5.10)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn groups_carry_the_sizes_a_collapsible_list_needs() {
-    let db = seeded();
-    let groups = query::timeline_groups(db.conn(), &TimelineFilter::default()).expect("groups");
-
-    let keys: Vec<_> = groups
-        .iter()
-        .map(|g| g.session_id.as_deref().unwrap_or("?"))
-        .collect();
-    assert_eq!(
-        keys,
-        ["s-infra", "s-app-2", "s-app"],
-        "sessions order by their most recent call, like the rows do"
-    );
-
-    let app = &groups[2];
-    assert_eq!(app.calls, 5);
-    assert_eq!(
-        app.main_thread_calls, 3,
-        "a collapsed session's height is known without fetching a row"
-    );
-    assert_eq!(app.project_path.as_deref(), Some("/work/app"));
-    assert_eq!(app.first_at, Some(1_000));
-    assert_eq!(app.last_at, Some(3_000));
-
-    assert_eq!(app.agents.len(), 1, "subagents are groups, not stray rows");
-    assert_eq!(app.agents[0].agent_id, "a-1");
-    assert_eq!(app.agents[0].agent_name.as_deref(), Some("Explore"));
-    assert_eq!(app.agents[0].calls, 2);
-    assert_eq!(
-        app.calls - app.main_thread_calls,
-        app.agents.iter().map(|a| a.calls).sum::<i64>(),
-        "every call is in exactly one group, or the list has gaps or repeats"
-    );
-
-    assert_eq!(groups[1].failures, 1);
-}
-
-#[test]
-fn groups_narrow_with_the_filter() {
-    let db = seeded();
-
-    let filter = TimelineFilter {
-        tool_name: Some("Edit".to_string()),
-        ..TimelineFilter::default()
-    };
-    let groups = query::timeline_groups(db.conn(), &filter).expect("groups");
-    assert_eq!(groups.len(), 1, "only sessions the filter still touches");
-    assert_eq!(groups[0].calls, 1);
-}
-
-// ---------------------------------------------------------------------------
 // Filter controls (5.6) and the detail pane (5.8, 5.11)
 // ---------------------------------------------------------------------------
 

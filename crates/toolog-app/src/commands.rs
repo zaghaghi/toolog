@@ -367,14 +367,6 @@ commands! {
         timeline_lens(app, &filter, |c, lens| query::timeline_rows(c, lens, page))
     }
 
-    /// The sessions a filter touches, with their subagents and sizes.
-    ///
-    /// The index a grouped list is built from: knowing each group's size up
-    /// front is what lets it collapse a session without having fetched it.
-    timeline_groups(filter: TimelineFilter) -> Vec<query::SessionGroup> {
-        timeline_lens(app, &filter, |c, lens| query::timeline_groups(c, lens))
-    }
-
     /// The distinct values the filter controls offer.
     facets() -> query::Facets {
         app.read(query::facets)

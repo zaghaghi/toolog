@@ -1,8 +1,8 @@
 //! The controls above the list (tasks 5.6, 5.7, 5.12, and 10.5–10.11).
 //!
-//! One box, one time control, one grouping toggle and Export. Seven `<select>`s
-//! used to sit here; the owner's report on v1.0 was "filters are too much, too
-//! many items to filter — I like the style of filtering that is embedded in the
+//! One box, one time control and Export, on one line. Seven `<select>`s used to
+//! sit here; the owner's report on v1.0 was "filters are too much, too many
+//! items to filter — I like the style of filtering that is embedded in the
 //! search edit box, like GitHub or Datadog", and this is that.
 //!
 //! Everything still writes into one `TimelineFilter`, which is what the URL
@@ -12,9 +12,9 @@
 //! second representation of it (task 10.7): a v1.0 link still restores, and
 //! Export still exports the filter rather than the text in the box.
 //!
-//! **Time stays a control.** It is the one dimension with a chart under it, and
-//! dragging across the histogram says "this hour" better than typing two
-//! timestamps ever will.
+//! **Time stays a control**, beside the box rather than under it. It is the one
+//! dimension with a chart under it, and dragging across the histogram says
+//! "this hour" better than typing two timestamps ever will.
 //!
 //! Autocomplete values come from the store, not from a hard-coded list: Claude
 //! Code adds tools and permission modes between releases, and a filter offering
@@ -49,7 +49,8 @@ interface Suggestion {
 
 export class FilterBar {
   readonly node = el("header", { class: "bar" });
-  private readonly controls = el("div", { class: "controls" });
+  /** Time sits beside the box: it is the one filter the histogram also sets. */
+  private readonly time = el("div", { class: "timepick" });
   private readonly summary = el("div", { class: "summary" });
   private readonly errors = el("div", { class: "qerrors", hidden: true });
   private readonly complete = el("div", { class: "qmenu", hidden: true });
@@ -105,10 +106,10 @@ export class FilterBar {
     this.node.append(
       el("div", { class: "searchrow" }, [
         el("div", { class: "qbox" }, [this.search, this.complete]),
+        this.time,
         this.exportMenu(),
       ]),
       this.errors,
-      this.controls,
       this.summary,
     );
     this.draw();
@@ -393,19 +394,7 @@ export class FilterBar {
       this.change({ since: time.value === "null" ? null : now - Number(time.value), until: null });
     });
 
-    fill(this.controls, [time, this.groupToggle()]);
-  }
-
-  private groupToggle(): HTMLElement {
-    const button = el("button", {
-      class: this.view.grouped ? "toggle on" : "toggle",
-      text: "Group by session",
-      attrs: { "aria-pressed": String(this.view.grouped) },
-    });
-    button.addEventListener("click", () =>
-      this.replace({ ...this.view, grouped: !this.view.grouped }),
-    );
-    return button;
+    fill(this.time, [time]);
   }
 
   /** Export the current filter, not the current page (task 5.12). */

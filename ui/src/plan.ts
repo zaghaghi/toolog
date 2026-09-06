@@ -1,16 +1,12 @@
 //! The item index: what sits at row N of the list.
 //!
-//! A flat timeline is one block of rows. A grouped one (task 5.10) is a
-//! sequence of session headers, each followed by its main-thread rows and then
-//! by one sub-header and block per subagent — so a subagent's calls read as
-//! nested under the agent that made them rather than flattened into the thread
-//! that spawned it.
-//!
-//! Every group's size is known before a single row of it is fetched, which is
-//! what makes collapsing free: the plan is rebuilt, the list's height changes,
-//! and nothing is loaded that is not on screen.
+//! One block of rows, newest first. It was two shapes until v1.1 — the second
+//! grouped rows under a session header and a sub-header per subagent (task
+//! 5.10) — and the owner did not use it. The plan keeps its indirection anyway:
+//! the block is what `RowStore` keys its pages on, and a list that fetches a
+//! window at a time needs something to name the window.
 
-import type { AgentGroup, SessionGroup, TimelineFilter, TimelineRow } from "./bindings";
+import type { TimelineFilter, TimelineRow } from "./bindings";
 import { queryTimeline } from "./bindings";
 
 /** A contiguous run of rows, and the query that returns them. */
@@ -19,27 +15,14 @@ export interface RowBlock {
   key: string;
   filter: TimelineFilter;
   count: number;
-  /** Nesting depth: 0 for the main thread, 1 for a subagent's calls. */
-  indent: number;
 }
 
-export type Item =
-  | { kind: "session"; index: number; group: SessionGroup; collapsed: boolean }
-  | { kind: "agent"; index: number; group: SessionGroup; agent: AgentGroup; collapsed: boolean }
-  | { kind: "row"; index: number; block: RowBlock; offset: number };
+export type Item = { kind: "row"; index: number; block: RowBlock; offset: number };
 
 interface Entry {
   start: number;
   size: number;
   build: (index: number, start: number) => Item;
-}
-
-export function sessionKey(group: SessionGroup): string {
-  return `s:${group.session_id ?? "-none-"}`;
-}
-
-export function agentKey(group: SessionGroup, agent: AgentGroup): string {
-  return `${sessionKey(group)}/a:${agent.agent_id}`;
 }
 
 export class Plan {
@@ -52,70 +35,11 @@ export class Plan {
     this.total += size;
   }
 
-  /** The ungrouped timeline: one block, newest first. */
+  /** The timeline: one block, newest first. */
   static flat(filter: TimelineFilter, count: number): Plan {
     const plan = new Plan();
-    const block: RowBlock = { key: "all", filter, count, indent: 0 };
+    const block: RowBlock = { key: "all", filter, count };
     plan.push(count, (index) => ({ kind: "row", index, block, offset: index }));
-    return plan;
-  }
-
-  /** Sessions and subagents, with `collapsed` holding the keys that are shut. */
-  static grouped(
-    filter: TimelineFilter,
-    groups: SessionGroup[],
-    collapsed: ReadonlySet<string>,
-  ): Plan {
-    const plan = new Plan();
-
-    for (const group of groups) {
-      const key = sessionKey(group);
-      const shut = collapsed.has(key);
-      plan.push(1, (index) => ({ kind: "session", index, group, collapsed: shut }));
-      if (shut) continue;
-
-      // Every block of this session is the current filter plus "in this
-      // session", so narrowing the timeline narrows the groups with it.
-      const scope: TimelineFilter = {
-        ...filter,
-        session_id: group.session_id,
-        session_unknown: group.session_id === null ? true : null,
-      };
-
-      const main: RowBlock = {
-        key: `${key}/main`,
-        filter: { ...scope, main_thread: true },
-        count: group.main_thread_calls,
-        indent: 0,
-      };
-      plan.push(main.count, (index, start) => ({
-        kind: "row",
-        index,
-        block: main,
-        offset: index - start,
-      }));
-
-      for (const agent of group.agents) {
-        const aKey = agentKey(group, agent);
-        const aShut = collapsed.has(aKey);
-        plan.push(1, (index) => ({ kind: "agent", index, group, agent, collapsed: aShut }));
-        if (aShut) continue;
-
-        const rows: RowBlock = {
-          key: `${aKey}/rows`,
-          filter: { ...scope, agent_id: agent.agent_id, main_thread: null },
-          count: agent.calls,
-          indent: 1,
-        };
-        plan.push(rows.count, (index, start) => ({
-          kind: "row",
-          index,
-          block: rows,
-          offset: index - start,
-        }));
-      }
-    }
-
     return plan;
   }
 

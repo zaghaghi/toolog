@@ -233,11 +233,9 @@ button {
   max-width: 80ch;
 }
 
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s2);
-  margin-top: var(--s3);
+/* Time sits on the search row now, not in a row of its own under it. */
+.timepick {
+  flex: 0 0 auto;
 }
 
 .pick,
@@ -384,6 +382,11 @@ button {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  /* The row has to be told it may be shorter than its content. Without it the
+     implicit row is `auto`, sized by whatever the detail pane holds, so the
+     pane grew past the window instead of scrolling inside it — a long result
+     body simply ran off the bottom with no way down. */
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .timeline.has-detail .split {
@@ -566,16 +569,6 @@ button {
   color: var(--refused);
 }
 
-/* A subagent's calls sit under their agent's header (task 5.10). */
-.row.sub {
-  padding-left: calc(var(--s5) + var(--s6));
-  background: linear-gradient(
-    to right,
-    var(--sunken) 0 calc(var(--s5) + var(--s4)),
-    var(--card) calc(var(--s5) + var(--s4))
-  );
-}
-
 .row.pending .skeleton,
 .row.broken .skeleton {
   display: block;
@@ -599,56 +592,6 @@ button {
   .row.pending .skeleton {
     animation: none;
   }
-}
-
-/* Group headers */
-
-.ghead {
-  display: grid;
-  align-items: center;
-  grid-template-columns: 14px auto minmax(0, 1fr);
-  gap: var(--s3);
-  height: var(--row-h);
-  padding: 0 var(--s5);
-  background: var(--sunken);
-  border-bottom: 1px solid var(--line);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.ghead:hover {
-  background: color-mix(in srgb, var(--clay) 8%, var(--sunken));
-}
-
-.ghead.cursor {
-  outline: 1px solid color-mix(in srgb, var(--clay) 45%, transparent);
-  outline-offset: -1px;
-}
-
-.ghead .caret {
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
-}
-
-.ghead .gname {
-  font-size: var(--text-sm);
-  font-weight: 650;
-}
-
-.ghead .gmeta {
-  font-size: var(--text-xs);
-  color: var(--ink-soft);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ghead.agent {
-  padding-left: calc(var(--s5) + var(--s5));
-  background: var(--card);
-}
-
-.ghead.agent .gname {
-  color: var(--refused);
 }
 
 /* States (task 5.13) */
@@ -1881,9 +1824,13 @@ details.uninstall[open] > summary {
     border-left: none;
   }
 
-  .controls {
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    padding-bottom: var(--s2);
+  /* The box, the time control and Export share one line, so at this width the
+     box gives up what it can rather than pushing the other two off. */
+  .searchrow {
+    flex-wrap: wrap;
+  }
+
+  .qbox {
+    flex: 1 1 100%;
   }
 }

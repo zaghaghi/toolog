@@ -92,23 +92,6 @@ snippet: string | null,
  */
 lines_added: number | null, lines_removed: number | null, };
 
-export type AgentGroup = { 
-/**
- * The subagent *instance*. Present on every sidechain call.
- */
-agent_id: string, 
-/**
- * The subagent *type* (`Explore`, `general-purpose`), where it is known.
- */
-agent_name: string | null, calls: number, first_at: number | null, last_at: number | null, };
-
-export type SessionGroup = { 
-/**
- * `None` for calls whose session the store never learned — an OTLP event
- * that arrived before any transcript line named the session.
- */
-session_id: string | null, project_path: string | null, git_branch: string | null, slug: string | null, cc_version: string | null, calls: number, main_thread_calls: number, failures: number, refusals: number, first_at: number | null, last_at: number | null, agents: Array<AgentGroup>, };
-
 export type Facets = { projects: Array<string>, tools: Array<string>, decision_sources: Array<string>, permission_modes: Array<string>, agents: Array<string>, };
 
 export type BucketSize = "minute" | "hour" | "day" | "week";
@@ -383,10 +366,6 @@ export type UninstallOutcome = { done: Array<string>, failed: Array<string>, };
 
 export function queryTimeline(filter: TimelineFilter, page: Page): Promise<Array<TimelineRow>> {
   return invoke("query_timeline", { filter, page });
-}
-
-export function timelineGroups(filter: TimelineFilter): Promise<Array<SessionGroup>> {
-  return invoke("timeline_groups", { filter });
 }
 
 export function facets(): Promise<Facets> {

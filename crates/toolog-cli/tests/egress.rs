@@ -58,7 +58,6 @@ fn full_workload() {
     let filter = TimelineFilter::default();
     query::timeline_rows(conn, &filter, Page::default()).expect("timeline");
     query::timeline_count(conn, &filter).expect("count");
-    query::timeline_groups(conn, &filter).expect("groups");
     query::facets(conn).expect("facets");
     query::list_sessions(conn, Page::default()).expect("sessions");
     query::stats_totals(conn).expect("totals");

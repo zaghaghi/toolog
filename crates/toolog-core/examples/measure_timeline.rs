@@ -187,9 +187,6 @@ fn report(conn: &Connection) {
         )
         .map(|v| v.len())
     });
-    time("timeline_groups (all)", || {
-        query::timeline_groups(conn, &all).map(|v| v.len())
-    });
     time("search 'rm -rf' count", || {
         query::timeline_count(conn, &search).map(|n| usize::try_from(n).unwrap_or(0))
     });
