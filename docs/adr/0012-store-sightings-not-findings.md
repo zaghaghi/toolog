@@ -40,6 +40,20 @@ key to `tool_call`, and never purged.
 1. **A sighting is not a finding.** A row says "this was flagged, then", never "this is flagged". So
    it cannot go stale the way a `finding` table would: retune a rule and the old sightings remain
    true statements about what the old rule saw. The current answer is still computed.
+
+   > **Amended — this was true of the rows and not of the number.** As first built, sightings were
+   > keyed on `rule_id` alone, and `Finding.first_seen` reported `min(first_seen)` for an id as
+   > though it described the current rule. Measured: a rule retuned from `rm -rf` to `dd if=`
+   > matched nothing and still reported the date the `rm -rf` version was first seen. The rows were
+   > honest; the number was not.
+   >
+   > Migration 007 keys sightings on **`(rule_id, fingerprint)`**, where the fingerprint is a hash
+   > of the rule's `scope` and every field of its `[rule.match]` — what it looks for. A retuned rule
+   > has no history and says so; a renamed or re-graded one keeps it, because neither is a different
+   > question. Rows written before 007 carry an empty fingerprint and are claimed for the current
+   > one on the next review: a one-time assumption that the rules have not changed since, which
+   > cannot be checked and beats resetting every date to today. Verified on the owner's store — all
+   > 193 rows kept their dates.
 2. **Written by a review, not by ingestion.** `first_seen` means *first seen by a review* — the tool
    noticed when it looked. A store nobody has opened the risk tab on has no sightings, and the page
    says "first review" rather than "0 new", because those are different statements and the second
@@ -100,5 +114,6 @@ is ours and is already accounted for in the answer being cached.
 |---|---|
 | A `finding` table, re-analysed on demand | Ingestion is what makes it stale, not rule changes, so the button does not fix it — and maintaining it on ingest is the work ADR-0011 removed. A stored row also outlives the rule it names. |
 | Record sightings on ingest, so notifications fire live | Twelve rules on every arriving call, on the live path. Task 6.12 already established that only high-severity rules are affordable there, and it opens its own connection per call to do it. The trade is real: "new findings" now appear when you look rather than when they happen. |
+| Key sightings on `rule_id` alone | What this ADR originally did. An id is chosen by whoever writes the rules file, so it identifies a *slot*, not a question — and a rule retuned in place inherited a history describing conditions no longer in force. Fixed by migration 007; see the amendment above. |
 | Store `last_seen` as well | It is `max(called_at)` of the current matches, which is computed and already on the finding. Storing it would be storing a derivation next to an observation and inviting the two to disagree. |
 | Purge sightings with their calls | Makes the ledger unable to answer the one question a purge creates: what was flagged before it was deleted. The `deletion` table already establishes that a record of what was removed must outlive the removal. |

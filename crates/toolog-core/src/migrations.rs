@@ -51,6 +51,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "rule_sightings",
         sql: include_str!("migrations/006_rule_sightings.sql"),
     },
+    Migration {
+        version: 7,
+        name: "rule_fingerprints",
+        sql: include_str!("migrations/007_rule_fingerprints.sql"),
+    },
 ];
 
 /// The schema version this build knows how to produce.

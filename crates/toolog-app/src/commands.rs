@@ -171,7 +171,7 @@ fn risk_review(app: &AppState) -> anyhow::Result<RiskReview> {
                 tracing::warn!(%error, "sightings not recorded");
                 app.read_risk(|c| {
                     let mut findings = rules::evaluate(c, &rules)?;
-                    rules::read_sightings(c, &mut findings)?;
+                    rules::read_sightings(c, &rules, &mut findings)?;
                     Ok(findings)
                 })?
             }
@@ -672,20 +672,13 @@ commands! {
     /// Show the rules file in the file manager (task 11.13).
     ///
     /// "Rules are data you can edit" is only true if you can find them, and a
-    /// footnote naming a path is not finding them. Where no file exists yet
-    /// this reveals the directory it would go in, which is the answer to the
-    /// question actually being asked.
+    /// footnote naming a path is not finding them. Where no file exists yet one
+    /// is created first — commented out entirely, so the rules in force before
+    /// and after are identical — because revealing an empty folder answers a
+    /// question nobody asked.
     reveal_rules() -> () {
-        let path = cli::rules_path()
-            .ok_or_else(|| anyhow::anyhow!("no rules file location on this machine"))?;
-        if path.is_file() {
-            return window::reveal(&handle, &path);
-        }
-        let dir = path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("the rules path has no directory"))?;
-        std::fs::create_dir_all(dir)?;
-        window::reveal(&handle, dir)
+        let path = cli::ensure_rules_file()?;
+        window::reveal(&handle, &path)
     }
 
     /// Show a transcript in the file manager.

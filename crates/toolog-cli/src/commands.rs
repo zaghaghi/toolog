@@ -553,6 +553,31 @@ pub fn rules() -> Result<Vec<toolog_core::rules::Rule>> {
     toolog_core::rules::load(user.as_deref())
 }
 
+/// A commented-out starter, written where the user's rules file would go.
+const STARTER_RULES: &str = include_str!("rules/starter.toml");
+
+/// Create the rules file if there is none, and return its path.
+///
+/// "Rules are data you can edit" is only true if there is something to open. An
+/// empty file is a worse answer than a commented one: the vocabulary is small
+/// but it is not guessable, and the alternative is reading the built-in set out
+/// of the binary.
+///
+/// Everything in it is commented out, so creating it changes no behaviour — the
+/// rules in force before and after are identical. It is never rewritten: after
+/// the first time, whatever is there is the user's.
+pub fn ensure_rules_file() -> Result<PathBuf> {
+    let path = rules_path().ok_or(toolog_core::Error::NoDataDir)?;
+    if path.exists() {
+        return Ok(path);
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, STARTER_RULES)?;
+    Ok(path)
+}
+
 /// Evaluate the risk rules against the store.
 pub fn risk(db: &Db) -> Result<Vec<toolog_core::rules::Finding>> {
     toolog_core::rules::evaluate(db.conn(), &rules()?)
@@ -1173,6 +1198,62 @@ mod tests {
         .expect("export");
         assert_eq!(n, 1, "a refusal is a decision, not a provenance");
         assert!(String::from_utf8(out).expect("utf8").contains("toolu_no"));
+    }
+
+    /// The starter rules file is written into a user's config directory and
+    /// then read on every review. A syntax error in it would fail every one of
+    /// them, so it is parsed here rather than trusted.
+    #[test]
+    fn the_starter_rules_file_parses_and_changes_nothing() {
+        let built_in = toolog_core::rules::load(None).expect("built-in rules");
+        let with_starter =
+            toolog_core::rules::load(Some(STARTER_RULES)).expect("the starter file parses");
+
+        assert_eq!(
+            with_starter.len(),
+            built_in.len(),
+            "everything in the starter is commented out, so it adds no rule"
+        );
+        for (a, b) in built_in.iter().zip(&with_starter) {
+            assert_eq!(a.id, b.id);
+            assert_eq!(
+                toolog_core::rules::fingerprint(a),
+                toolog_core::rules::fingerprint(b),
+                "{} was changed by the starter file",
+                a.id
+            );
+        }
+    }
+
+    /// Every example in it is commented out, but they are the first thing
+    /// anyone will uncomment, so they have to be valid.
+    #[test]
+    fn the_examples_in_the_starter_file_are_valid_rules() {
+        let uncommented: String = STARTER_RULES
+            .lines()
+            .filter_map(|line| line.strip_prefix("# ").or_else(|| line.strip_prefix("#")))
+            .filter(|line| {
+                let t = line.trim_start();
+                t.starts_with("[[rule]]") || t.starts_with("[rule.match]") || t.contains(" = ")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let rules = toolog_core::rules::load(Some(&uncommented))
+            .expect("the commented examples are valid TOML rules");
+        let ids: Vec<&str> = rules.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains(&"terraform-apply"), "the new-rule example");
+        assert!(ids.contains(&"secrets-read"), "the retune example");
+
+        // And the "switch it off" example really does match nothing.
+        let off = rules
+            .iter()
+            .find(|r| r.id == "mcp-tool-usage")
+            .expect("the switch-off example");
+        assert_eq!(
+            toolog_core::rules::describe(&off.r#match),
+            vec!["nothing — this rule states no conditions and matches nothing".to_string()],
+        );
     }
 
     /// Task 7.4's whole point: the preview names what would go, and nothing

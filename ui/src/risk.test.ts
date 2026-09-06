@@ -213,13 +213,13 @@ describe("severity", () => {
     ]);
   });
 
-  test("says the four numbers do not add to a total, rather than letting it be found out", async () => {
-    // Task 11.9: each column reconciles with its own number; the four do not
-    // sum, because a call caught at two severities is one call at each.
+  test("carries no prose under the boxes", async () => {
+    // The paragraph explaining the unit, the set-aside count and why the four
+    // numbers do not add to a total was three sentences read once per review.
     const node = await mount(review());
-    expect(node.querySelector(".risk-summary")?.textContent).toContain(
-      "The four numbers do not add up to a total",
-    );
+    const summary = node.querySelector(".risk-summary");
+    expect(summary?.querySelector("p")).toBeNull();
+    expect(summary?.querySelector(".risk-counts")).not.toBeNull();
   });
 
   test("a session-scoped finding counts sessions, because it is about sessions", async () => {
@@ -402,9 +402,12 @@ describe("the rules panel (tasks 11.11–11.13)", () => {
 
   test("opens the rules file rather than only naming it", async () => {
     const node = await mount(review());
-    const buttons = [...node.querySelectorAll<HTMLButtonElement>(".rules-note button")];
-    expect(buttons.map((b) => b.textContent)).toEqual(["Show the folder"]);
-    buttons[0]?.click();
+    // The footer is the button and nothing else: the prose that used to
+    // explain the rules file now lives in the file, which is created the
+    // first time this is pressed.
+    const note = node.querySelector(".rules-note");
+    expect(note?.textContent).toBe("Edit rules…");
+    note?.querySelector<HTMLButtonElement>("button")?.click();
     expect(state.revealed).toBe(1);
   });
 });
@@ -437,32 +440,41 @@ describe("nothing found", () => {
     expect(node.querySelectorAll(".finding")).toHaveLength(2);
   });
 
-  test("and still says where a rules file would go", async () => {
+  test("and still offers the way into the rules file", async () => {
     const node = await mount(clean());
-    expect(node.querySelector(".footnote")?.textContent).toContain("rules.toml");
+    expect(node.querySelector(".rules-note button")?.textContent).toBe("Edit rules…");
   });
 });
 
 describe("findings in time (tasks 12.4, 12.5, 12.12)", () => {
-  test("a first review says so rather than reporting nothing new", async () => {
-    // "Nobody has looked yet" and "nothing was found" are different, and
-    // reporting the first as "0 new" is reassurance it has not earned.
-    const node = await mount(review({ first_review: true }));
-    expect(node.querySelector(".risk-new")?.textContent).toContain("First review");
+  test("a first review marks its boxes rather than saying so in a sentence", async () => {
+    const node = await mount(
+      review({ findings: [finding({ calls: 9, new_calls: 9 })], first_review: true }),
+    );
+    expect(node.querySelector(".risk-count.high .risk-count-new")?.textContent).toBe(
+      "9 first seen",
+    );
   });
 
-  test("counts what is new since the last review", async () => {
+  test("counts what is new on the severity it is new at", async () => {
     const node = await mount(
       review({ findings: [finding({ calls: 9, new_calls: 4 })], first_review: false }),
     );
-    expect(node.querySelector(".risk-new")?.textContent).toContain("4 calls are new");
+    expect(node.querySelector(".risk-count.high .risk-count-new")?.textContent).toBe("+4 new");
+    // And a severity with nothing new carries no marker at all: "nothing new"
+    // is a result, and an empty box says it better than a zero does.
+    expect(node.querySelector(".risk-count.info .risk-count-new")).toBeNull();
   });
 
-  test("says nothing is new when nothing is, without implying nothing was found", async () => {
-    const node = await mount(review({ findings: [finding({ calls: 9, new_calls: 0 })] }));
-    expect(node.querySelector(".risk-new")?.textContent).toBe(
-      "Nothing new since the last review. ",
+  test("a rule set aside does not make its severity look busy", async () => {
+    const node = await mount(
+      review({
+        findings: [
+          finding({ calls: 9, new_calls: 4, dismissed: { rule_id: "x", note: "known", at: 1 } }),
+        ],
+      }),
     );
+    expect(node.querySelector(".risk-count.high .risk-count-new")).toBeNull();
   });
 
   test("shows when a finding was first seen, not when its calls ran", async () => {

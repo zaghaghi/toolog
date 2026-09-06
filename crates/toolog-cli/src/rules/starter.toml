@@ -1,0 +1,78 @@
+# Your rules.
+#
+# This file is yours; toolog never writes to it after creating it. It is read on
+# top of the built-in rules, so:
+#
+#   * a rule whose `id` matches a built-in **replaces** it — that is how you
+#     retune one, or switch it off by giving it a condition matching nothing;
+#   * any other `id` adds a rule.
+#
+# Everything below is commented out. Uncomment, edit, and the Risk tab picks it
+# up the next time you open it — no restart.
+#
+# The vocabulary a `[rule.match]` block may use:
+#
+#   tools, kinds, decisions, decision_sources, permission_modes
+#                       lists; the column must be one of the values
+#   success             true or false
+#   main_thread         true for the main thread, false for subagents only
+#   first_line          match the command's first line only, so a heredoc body
+#                       is treated as the data it is rather than as the command
+#   summary_contains    case-insensitive substrings of the command
+#   summary_glob        SQLite GLOB patterns over the command (case-sensitive)
+#   path_glob           GLOB patterns over the file the call targeted
+#   outside_cwd         the target is not under the session's directory
+#   mode_changed        the session's permission mode changed while running
+#
+# `scope` is `call` (the default), `session`, or `retry_after_refusal`.
+# `severity` is `info`, `low`, `medium` or `high`.
+#
+# The Risk tab lists every rule with what it looks for, in words, whether or not
+# it matched — which is the fastest way to check that an edit here did what you
+# meant.
+
+
+# ---------------------------------------------------------------------------
+# A rule of your own.
+# ---------------------------------------------------------------------------
+# [[rule]]
+# id = "terraform-apply"
+# title = "Infrastructure changed"
+# explanation = "A `terraform apply` changes real infrastructure, so it is worth knowing about even when it was expected."
+# severity = "medium"
+# [rule.match]
+# first_line = true
+# tools = ["Bash"]
+# summary_contains = ["terraform apply", "terraform destroy"]
+
+
+# ---------------------------------------------------------------------------
+# Retuning a built-in: same id, your conditions.
+# ---------------------------------------------------------------------------
+# Adding your own paths to the secrets rule. Note that replacing a built-in
+# replaces it *entirely* — the list below is the whole rule, not an addition to
+# it, so copy what you want to keep out of the built-in set first.
+#
+# [[rule]]
+# id = "secrets-read"
+# title = "Credentials and keys were read"
+# explanation = "A call read a file that usually holds a credential."
+# severity = "high"
+# [rule.match]
+# tools = ["Read", "Bash"]
+# path_glob = ["*/.env", "*/.env.*", "*/id_rsa", "*/credentials", "*/my-secrets/*"]
+
+
+# ---------------------------------------------------------------------------
+# Switching a built-in off.
+# ---------------------------------------------------------------------------
+# A rule with no conditions matches nothing, and toolog says so in the Risk tab
+# rather than leaving you wondering. It still appears in the list, which is the
+# point: a rule you switched off is different from a rule that found nothing.
+#
+# [[rule]]
+# id = "mcp-tool-usage"
+# title = "MCP tools (off)"
+# explanation = "Switched off locally — this store uses MCP tools constantly and the finding is noise."
+# severity = "info"
+# [rule.match]

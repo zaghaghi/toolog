@@ -25,7 +25,7 @@
 import type { Finding, ProjectRisk, RiskReview, Severity, ToolCall } from "./bindings";
 import { dismissRule, restoreRule, revealRules, risk, ruleCalls } from "./bindings";
 import { append, el, fill, orDash } from "./dom";
-import { basename, clock, count, dayLabel, fullStamp, shortPath } from "./format";
+import { basename, clock, count, dayLabel, fullStamp } from "./format";
 
 /** How many calls one page of a drill-through fetches. */
 const PAGE = 50;
@@ -120,25 +120,13 @@ export class RiskView {
       return;
     }
 
-    const aside = matched.filter((f) => f.dismissed !== null).length;
-    const quiet = review.findings.length - matched.length;
     fill(this.content, [
       el("div", { class: "risk-summary" }, [
-        el("div", { class: "risk-counts" }, review.totals.map((t) => this.severityCount(t))),
-        el("p", { class: "note" }, [
-          this.newness(review),
-          `${count(matched.length - aside)} of ${count(review.findings.length)} rules matched something` +
-            (aside === 0
-              ? ". "
-              : `; ${count(aside)} more were set aside with a note and still count against nothing. `) +
-            (quiet === 0
-              ? ""
-              : `${count(quiet)} matched nothing, and are listed below with what they look for. `),
-          // Task 11.9: said here rather than discovered by adding four numbers
-          // that were never meant to be added.
-          el("strong", { text: "The four numbers do not add up to a total" }),
-          " — a call caught by a high rule and a low rule is one call at each severity — so there is not one.",
-        ]),
+        el(
+          "div",
+          { class: "risk-counts" },
+          review.totals.map((t) => this.severityCount(t, review)),
+        ),
       ]),
       this.projects(review.projects),
       el("div", { class: "findings" }, review.findings.map((f) => this.finding(f))),
@@ -147,37 +135,39 @@ export class RiskView {
   }
 
   /**
-   * What is new since the last review (task 12.5).
-   *
-   * A first review is not a review with nothing new in it — everything is new
-   * the first time anyone looks — and saying "0 new" on a store nobody has read
-   * would be reassurance this has not earned.
-   */
-  private newness(review: RiskReview): HTMLElement {
-    if (review.first_review) {
-      return el("strong", { class: "risk-new", text: "First review of this store. " });
-    }
-    const fresh = review.findings.reduce((sum, f) => sum + f.new_calls, 0);
-    if (fresh === 0) {
-      return el("span", { class: "risk-new none", text: "Nothing new since the last review. " });
-    }
-    return el("strong", {
-      class: "risk-new",
-      text: `${count(fresh)} ${fresh === 1 ? "call is" : "calls are"} new since the last review. `,
-    });
-  }
-
-  /**
    * One hero number: distinct calls flagged, with the rule count under it.
    *
    * Both numbers are worth having and only one of them can be the total
    * (task 11.10). The calls are the total, because that is the unit the table
-   * below adds up in.
+   * below adds up in — each of its severity columns sums to the number here.
+   *
+   * The paragraph that used to sit under these boxes is gone. It explained the
+   * unit, the set-aside count and why the four numbers do not add to a grand
+   * total — true, and three sentences of prose read once under every review.
+   * What survives is on the boxes themselves: the rule count is the line under
+   * each number, and there is no grand total anywhere to be tempted by.
    */
-  private severityCount(tally: RiskReview["totals"][number]): HTMLElement {
+  private severityCount(tally: RiskReview["totals"][number], review: RiskReview): HTMLElement {
+    // Task 12.5's "new since the last review", as a number on the box it
+    // describes rather than as a sentence under all four. Per rule rather than
+    // distinct, which can overcount a call two rules newly caught — the exact
+    // thing `tally.calls` exists to avoid — so it is a "+" and not a total.
+    const fresh = review.findings
+      .filter((f) => f.severity === tally.severity && f.dismissed === null)
+      .reduce((sum, f) => sum + f.new_calls, 0);
+
     return el("div", { class: `risk-count ${tally.severity}` }, [
       el("span", { class: "risk-count-n", text: count(tally.calls) }),
       el("span", { class: "risk-count-label", text: tally.severity }),
+      fresh === 0
+        ? null
+        : el("span", {
+            class: "risk-count-new",
+            text: review.first_review ? `${count(fresh)} first seen` : `+${count(fresh)} new`,
+            title: review.first_review
+              ? "The first review of this store: everything it found is new to it"
+              : "Recorded for the first time by this review",
+          }),
       el("span", {
         class: "risk-count-rules",
         text: `${count(tally.rules)} ${tally.rules === 1 ? "rule" : "rules"}, ${count(tally.calls)} ${tally.calls === 1 ? "call" : "calls"}`,
@@ -452,41 +442,26 @@ export class RiskView {
   }
 
   /**
-   * Where the rules live and how to change them (task 11.13).
+   * The way into the rules file (task 11.13).
    *
-   * "Rules are data you can edit" was true in v1.0 and unusable: the only
-   * handle was a path in a footnote. The path is still stated — you cannot
-   * paste a button into a terminal — but there is now a button beside it, and
-   * the file's format is named rather than left to be guessed.
+   * A paragraph explaining that rules are data, where the file goes and what
+   * an id collision does used to sit here. It was three sentences of prose
+   * under every review, read once. The file itself now carries all of it in
+   * comments, and is created the first time this button is pressed — so the
+   * explanation is where someone acts on it rather than where they don't.
    */
   private rulesFooter(): HTMLElement {
-    const review = this.review;
-    const path = review?.rules_path ?? null;
-
-    const reveal = el("button", {
-      class: "link",
-      text: review?.rules_customized === true ? "Show the file" : "Show the folder",
+    const open = el("button", {
+      class: "toggle",
+      text: "Edit rules…",
       attrs: { type: "button" },
     });
-    reveal.addEventListener("click", () => {
+    open.addEventListener("click", () => {
       void revealRules().catch((error: unknown) =>
         this.opts.onNotice(`That could not be opened: ${String(error)}`),
       );
     });
-
-    return el("div", { class: "rules-note" }, [
-      el("p", { class: "footnote" }, [
-        el("strong", { text: "Rules are data, not code. " }),
-        path === null
-          ? "A rules file can sit beside the database and add to or replace any rule above."
-          : review?.rules_customized === true
-            ? `Your own rules are read from ${shortPath(path)}, on top of the built-in set.`
-            : `Put a TOML file at ${shortPath(path)} to add a rule, retune one, or switch one off — an id that matches a built-in replaces it.`,
-        " Every rule above is listed with what it looks for, whether or not it matched. ",
-        "Findings are recomputed whenever the store or the rules change; nothing here is stored except the notes.",
-      ]),
-      el("div", { class: "actions" }, [reveal]),
-    ]);
+    return el("div", { class: "rules-note" }, [open]);
   }
 }
 

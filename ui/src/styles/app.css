@@ -1483,15 +1483,18 @@ pre.report {
   color: var(--ink-faint);
 }
 
-/* What is new since the last review (task 12.5). Emphasised when there is
-   something, plain when there is not — "nothing new" is a result, not news. */
-.risk-new {
-  color: var(--ink);
-}
-
-.risk-new.none {
-  font-weight: 400;
-  color: var(--ink-soft);
+/* What this review saw for the first time (task 12.5). Shown only when there
+   is something: "nothing new" is a result, and an empty box says it better
+   than a zero does. */
+.risk-count-new {
+  align-self: flex-start;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--clay);
+  background: var(--clay-wash);
+  border-radius: var(--r-sm);
+  padding: 1px var(--s2);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The secondary line: both numbers are worth having, and only one of them can

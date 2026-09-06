@@ -180,13 +180,25 @@ would mean a second code path and is not worth 25 ms.
 - **A v1.1 hash link still restores.** No key changed; `risk=` and `rule=` were added.
 - **`just check` green, no `#[allow(dead_code)]`.**
 
+### Corrected after the fact
+
+**A sighting keyed on `rule_id` alone was not enough.** Asked where `rule_id` points — there is no
+`rule` table; rules are TOML — probing the answer turned up a real defect: keep a rule's id and
+change what it looks for, and it inherited the old rule's `first_seen`. A rule retuned from `rm -rf`
+to `dd if=` matched nothing and still reported the original date. ADR-0012's claim that a sighting
+cannot go stale was true of the rows and false of the number a finding showed.
+
+Migration **007** adds a `fingerprint` — a hash of the rule's `scope` and `[rule.match]` — to the
+sighting key. A retuned rule starts again; a renamed or re-graded one keeps its history, because
+neither is a different question. The 193 rows already on the owner's store kept their dates through
+the upgrade, verified rather than assumed.
+
 ### Not verified
 
 **Nobody has looked at the window.** Every assertion is a headless DOM or a Rust test. Specifically
-unseen: whether "First review of this store" reads as informative or as an error, whether the
-"first seen" row is confusable with "first at" sitting two rows above it, and whether
-`@risk:high` in the query bar is discoverable at all without something on the risk view pointing at
-it.
+unseen: whether the `+4 new` marker on a severity box reads as useful or as clutter, whether the
+"first seen" row is confusable with "first at" sitting two rows above it, and whether `@risk:high`
+in the query bar is discoverable at all without something on the risk view pointing at it.
 
 **The dead-end drill-through is designed and not built.** ADR-0012 says a sighting can name a call
 that no longer exists and "the view has to say so rather than showing an empty list". Nothing in this

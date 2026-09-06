@@ -154,7 +154,8 @@ was first noticed.
 >
 > The cost is real and worth knowing: nothing reconciles these ids. Delete or rename a rule and its
 > dismissal and sightings stay, orphaned — never shown, never cleaned, and unreachable through the
-> window, which only lists rules that exist. See [Rule identity](#rule-identity) below.
+> window, which only lists rules that exist. Sightings additionally carry a **fingerprint** of what
+> the rule looked for, so an id alone is not identity — see [Rule identity](#rule-identity).
 
 ### `rule_dismissal`
 
@@ -172,7 +173,7 @@ the record of its own deletions would be self-defeating.
 
 ### `rule_sighting`
 
-`(rule_id, tool_use_id, first_seen)`, `WITHOUT ROWID`, primary key on the pair.
+`(rule_id, fingerprint, tool_use_id, first_seen)`, `WITHOUT ROWID`, primary key on the first three.
 
 Findings themselves are **not** stored — see [ADR-0011](adr/0011-memoize-the-risk-review.md) and
 [ADR-0012](adr/0012-store-sightings-not-findings.md). A `finding` table goes stale on every *ingest*,
@@ -192,32 +193,50 @@ Two properties worth knowing:
 - **Written by a review, not by ingestion.** `first_seen` means *first seen by a review*. Recording
   on ingest would mean running twelve rules on the live path, which is the cost Phase 11 exists to
   have removed.
+- **Keyed on the rule's fingerprint as well as its id**, so a rule that has been retuned has no
+  history rather than the wrong history. See below.
 
 ## Rule identity
 
-The two tables above key on `rule_id` alone, and a rule's id is chosen by whoever writes the rules
-file. Three consequences follow, all measured rather than reasoned about:
+A rule's `id` is chosen by whoever writes the rules file, and an id alone is not an identity. Keep
+the id and change what the rule looks for and it is asking a different question — so sightings are
+keyed on **`(rule_id, fingerprint)`**, where the fingerprint is a 16-character hash of the rule's
+`scope` and every field of its `[rule.match]` block.
+
+Deliberately **not** in the fingerprint: `title`, `explanation`, `severity`. Renaming a rule or
+re-grading it is not asking a different question, and should not throw away what it has seen.
 
 | What you do | What happens |
 |---|---|
-| Rename or delete a rule | Its dismissal and sightings are orphaned — kept forever, never displayed, unreachable from the window |
-| Keep the id and retune what it looks for | Its sightings carry over, and `first_seen` still reports the **old** rule's first sighting |
-| Replace a built-in with your own of the same id | The same: it inherits the built-in's history |
+| Retune what a rule looks for | New fingerprint, so no history. It reads "not yet recorded" and starts again |
+| Rename or re-grade it | Same fingerprint, history kept |
+| Rename or delete the rule itself | Its dismissal and sightings are orphaned — kept forever, never displayed, unreachable from the window |
 
-The first is untidy and harmless. The rows are small, and re-creating a rule with the old id restores
-its dismissal, which is arguably the friendly behaviour.
+The last one is untidy and harmless: the rows are small, and re-creating a rule with the old id
+restores its dismissal, which is arguably the friendly behaviour.
 
-**The second is a genuine wart.** [ADR-0012](adr/0012-store-sightings-not-findings.md) argues that a
-sighting cannot go stale because "retune a rule and the old sightings remain true statements about
-what the old rule saw" — true of the *rows*, but `Finding.first_seen` presents `min(first_seen)` for
-an id as though it described the current rule. Retune `auto-approved-destructive-bash` to look for
-`dd if=` instead of `rm -rf` and it reports "first seen" as the date the *`rm -rf` version* was first
-seen, while matching nothing.
+> This is migration **007**, and it exists because migration 006 got it wrong. Keying on the id alone
+> meant a rule retuned from `rm -rf` to `dd if=` matched nothing and still reported "first seen" as
+> the date the `rm -rf` version was first seen. [ADR-0012](adr/0012-store-sightings-not-findings.md)
+> claimed a sighting could not go stale; that was true of the rows and false of the number the
+> finding displayed. Rows written before 007 carry an empty fingerprint and are claimed for the
+> current one on the next review — a one-time assumption that the rules have not changed since,
+> which is unknowable and better than resetting every date to today. Verified on the real store: all
+> 193 rows kept their dates.
 
-Fixing it means giving a rule an identity that covers its conditions — a fingerprint of the `Match`
-struct stored beside `rule_id`, so a retune starts a new history while a cosmetic edit to a title does
-not. **That is not built.** Until it is, `first_seen` is trustworthy for a rule whose conditions have
-not changed and misleading for one whose have.
+## The rules file
+
+There is no `rule` table, and the file has to come from somewhere. Pressing **Edit rules…** on the
+Risk tab creates `~/Library/Application Support/toolog/rules.toml` if there is none and reveals it.
+
+Everything in the created file is commented out, so the rules in force before and after are
+identical — asserted, not assumed
+(`the_starter_rules_file_parses_and_changes_nothing`). It carries the whole `[rule.match]`
+vocabulary in comments plus three worked examples: adding a rule, retuning a built-in, and switching
+one off. The examples are uncommented and parsed by a test, because the first thing anyone does with
+a commented example is uncomment it.
+
+toolog never writes to the file again. After the first time, what is there is yours.
 
 ## Integrity
 
@@ -275,6 +294,7 @@ half-migrated.
 | 004 | `raw_event.chain_sha256` — the integrity chain |
 | 005 | `deletion` — the record of what was removed |
 | 006 | `rule_sighting` — when a finding was first seen |
+| 007 | `rule_sighting.fingerprint` — *which version* of a rule saw it |
 
 ## What it looks like in practice
 
@@ -311,9 +331,10 @@ FROM tool_call WHERE decision = 'reject' ORDER BY called_at DESC;
 -- Calls only one lane witnessed (1 = transcript only, 2 = OTEL only)
 SELECT provenance, count(*) FROM tool_call GROUP BY provenance;
 
--- What a rule has flagged, and when it was first seen
-SELECT rule_id, count(*), datetime(min(first_seen)/1000, 'unixepoch')
-FROM rule_sighting GROUP BY rule_id;
+-- What a rule has flagged, and when it was first seen. Grouped by fingerprint
+-- too: a retuned rule has its own history under the same id.
+SELECT rule_id, fingerprint, count(*), datetime(min(first_seen)/1000, 'unixepoch')
+FROM rule_sighting GROUP BY rule_id, fingerprint;
 
 -- Cost, which is captured and never displayed (ADR-0010)
 SELECT model, sum(cost_usd_micros)/1e6 AS usd FROM api_request GROUP BY model;

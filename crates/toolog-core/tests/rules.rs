@@ -1397,3 +1397,295 @@ fn the_histogram_narrows_with_a_risk_filter_like_everything_else() {
         "the chart and the count still describe the same rows"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Rule identity (migration 007)
+// ---------------------------------------------------------------------------
+
+/// The built-in destructive-bash rule, with its conditions replaced.
+fn retuned(summary_contains: &str) -> String {
+    format!(
+        r#"
+        [[rule]]
+        id = "auto-approved-destructive-bash"
+        title = "Destructive shell commands approved by a rule, not a person"
+        explanation = "A permission rule let this through without anyone seeing it."
+        severity = "high"
+        [rule.match]
+        first_line = true
+        tools = ["Bash"]
+        decision_sources = ["config"]
+        summary_contains = ["{summary_contains}"]
+        "#
+    )
+}
+
+#[test]
+fn retuning_a_rule_starts_its_history_again() {
+    // The wart migration 007 exists for: keeping the id and changing what the
+    // rule looks for used to inherit the old rule's `first_seen`, so a rule
+    // asking a new question reported a date describing the old one.
+    let db = awkward();
+    let conn = db.conn();
+
+    let before = rules::load(Some(&retuned("rm -rf"))).expect("load");
+    review(conn, &before, 1_000);
+    let seen = |rules: &[rules::Rule]| {
+        let mut f = rules::evaluate(conn, rules).expect("evaluate");
+        rules::read_sightings(conn, rules, &mut f).expect("read");
+        finding(&f, "auto-approved-destructive-bash")
+            .expect("listed")
+            .first_seen
+    };
+    assert_eq!(seen(&before), Some(1_000));
+
+    let after = rules::load(Some(&retuned("dd if="))).expect("load");
+    assert_eq!(
+        seen(&after),
+        None,
+        "a rule looking for something else has not seen anything yet"
+    );
+
+    // And the old rule's history is still there, untouched, for the version
+    // that recorded it — the rows were never a lie, only the number was.
+    assert_eq!(seen(&before), Some(1_000));
+}
+
+#[test]
+fn renaming_a_rule_keeps_its_history() {
+    // Severity and wording are not what a rule looks for. Re-grading a rule or
+    // fixing its title must not throw away what it has already seen.
+    let db = awkward();
+    let conn = db.conn();
+
+    let original = rules::load(None).expect("rules");
+    review(conn, &original, 1_000);
+
+    // Built from the real rule rather than from hand-typed TOML, so the test
+    // cannot drift from `default.toml` and accidentally pass by changing the
+    // conditions it claims to have left alone.
+    let reworded: Vec<rules::Rule> = original
+        .iter()
+        .map(|r| {
+            let mut copy = clone_rule(r);
+            if copy.id == "auto-approved-destructive-bash" {
+                copy.title = "A completely different title".into();
+                copy.explanation = "And a different explanation.".into();
+                copy.severity = Severity::Low;
+            }
+            copy
+        })
+        .collect();
+
+    let mut f = rules::evaluate(conn, &reworded).expect("evaluate");
+    rules::read_sightings(conn, &reworded, &mut f).expect("read");
+    let hit = finding(&f, "auto-approved-destructive-bash").expect("listed");
+    assert_eq!(
+        hit.first_seen,
+        Some(1_000),
+        "the same question, asked under a new name, keeps its history"
+    );
+}
+
+#[test]
+fn every_condition_a_rule_states_changes_its_fingerprint() {
+    // The fingerprint is written field by field, so the compiler cannot notice
+    // a new condition being left out of it. This can: a `Match` field that does
+    // not move the fingerprint means a rule could be retuned on that field and
+    // silently inherit history describing something else.
+    let base = rules::Rule {
+        id: "x".into(),
+        title: "x".into(),
+        explanation: String::new(),
+        severity: Severity::High,
+        scope: Scope::Call,
+        r#match: rules::Match::default(),
+        from_user: false,
+    };
+    let plain = rules::fingerprint(&base);
+
+    for (field, m) in one_of_each_condition() {
+        let mutated = rules::Rule {
+            r#match: m,
+            ..clone_rule(&base)
+        };
+        assert_ne!(
+            rules::fingerprint(&mutated),
+            plain,
+            "changing `{field}` does not change the fingerprint, so a rule retuned \
+             on it would inherit history describing a different question"
+        );
+    }
+
+    // Scope decides what a condition is applied to, so it counts too.
+    let scoped = rules::Rule {
+        scope: Scope::Session,
+        ..clone_rule(&base)
+    };
+    assert_ne!(
+        rules::fingerprint(&scoped),
+        plain,
+        "scope changes what is matched"
+    );
+
+    // And the things that are not what a rule looks for do not count.
+    let regraded = rules::Rule {
+        title: "different".into(),
+        explanation: "different".into(),
+        severity: Severity::Info,
+        ..clone_rule(&base)
+    };
+    assert_eq!(
+        rules::fingerprint(&regraded),
+        plain,
+        "a title, an explanation and a severity are not what a rule looks for"
+    );
+}
+
+/// A `Match` with exactly one condition set, once per field of the struct.
+fn one_of_each_condition() -> Vec<(&'static str, rules::Match)> {
+    vec![
+        (
+            "tools",
+            rules::Match {
+                tools: vec!["Bash".into()],
+                ..Default::default()
+            },
+        ),
+        (
+            "kinds",
+            rules::Match {
+                kinds: vec!["mcp".into()],
+                ..Default::default()
+            },
+        ),
+        (
+            "decisions",
+            rules::Match {
+                decisions: vec!["reject".into()],
+                ..Default::default()
+            },
+        ),
+        (
+            "decision_sources",
+            rules::Match {
+                decision_sources: vec!["config".into()],
+                ..Default::default()
+            },
+        ),
+        (
+            "permission_modes",
+            rules::Match {
+                permission_modes: vec!["dontAsk".into()],
+                ..Default::default()
+            },
+        ),
+        (
+            "success",
+            rules::Match {
+                success: Some(false),
+                ..Default::default()
+            },
+        ),
+        (
+            "main_thread",
+            rules::Match {
+                main_thread: Some(true),
+                ..Default::default()
+            },
+        ),
+        (
+            "first_line",
+            rules::Match {
+                first_line: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "summary_contains",
+            rules::Match {
+                summary_contains: vec!["rm".into()],
+                ..Default::default()
+            },
+        ),
+        (
+            "summary_glob",
+            rules::Match {
+                summary_glob: vec!["*rm*".into()],
+                ..Default::default()
+            },
+        ),
+        (
+            "path_glob",
+            rules::Match {
+                path_glob: vec!["*.env".into()],
+                ..Default::default()
+            },
+        ),
+        (
+            "outside_cwd",
+            rules::Match {
+                outside_cwd: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "mode_changed",
+            rules::Match {
+                mode_changed: true,
+                ..Default::default()
+            },
+        ),
+    ]
+}
+
+/// `Rule` is not `Clone` — it is loaded, not copied — so tests build one.
+fn clone_rule(r: &rules::Rule) -> rules::Rule {
+    rules::Rule {
+        id: r.id.clone(),
+        title: r.title.clone(),
+        explanation: r.explanation.clone(),
+        severity: r.severity,
+        scope: r.scope,
+        r#match: rules::Match {
+            tools: r.r#match.tools.clone(),
+            kinds: r.r#match.kinds.clone(),
+            decisions: r.r#match.decisions.clone(),
+            decision_sources: r.r#match.decision_sources.clone(),
+            permission_modes: r.r#match.permission_modes.clone(),
+            success: r.r#match.success,
+            main_thread: r.r#match.main_thread,
+            first_line: r.r#match.first_line,
+            summary_contains: r.r#match.summary_contains.clone(),
+            summary_glob: r.r#match.summary_glob.clone(),
+            path_glob: r.r#match.path_glob.clone(),
+            outside_cwd: r.r#match.outside_cwd,
+            mode_changed: r.r#match.mode_changed,
+        },
+        from_user: r.from_user,
+    }
+}
+
+#[test]
+fn sightings_written_before_fingerprints_keep_their_dates() {
+    // Migration 007's one-time claim. A store upgraded from migration 006 has
+    // rows with no fingerprint; losing them would reset every date to today,
+    // which is a worse answer than assuming the rules have not changed.
+    let db = awkward();
+    let conn = db.conn();
+    let rules = rules::load(None).expect("rules");
+    review(conn, &rules, 1_000);
+
+    // Put the ledger back the way migration 007 found it.
+    conn.execute("UPDATE rule_sighting SET fingerprint = ''", [])
+        .expect("rewind");
+
+    let second = review(conn, &rules, 9_000);
+    let hit = finding(&second, "auto-approved-destructive-bash").expect("listed");
+    assert_eq!(
+        hit.first_seen,
+        Some(1_000),
+        "the original dates survived the upgrade"
+    );
+    assert_eq!(hit.new_calls, 0, "and nothing was recorded a second time");
+}

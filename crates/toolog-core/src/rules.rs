@@ -1033,6 +1033,72 @@ pub fn dismissed_rules(conn: &Connection) -> Result<HashMap<String, Dismissal>> 
 // The sighting ledger (tasks 12.2 and 12.4)
 // ---------------------------------------------------------------------------
 
+/// What a rule looks for, as a short hash.
+///
+/// A rule's identity for the sighting ledger. `rule_id` alone is not enough:
+/// the id is chosen by whoever writes the rules file, so keeping it while
+/// changing the conditions used to inherit the old rule's history and report a
+/// `first_seen` describing a question no longer being asked.
+///
+/// Covers `scope` and every field of [`Match`] — what the rule looks for.
+/// Deliberately **not** the title, explanation or severity: renaming a rule or
+/// re-grading it is not asking a different question, and should not throw away
+/// what it has already seen.
+///
+/// Sixteen hex characters. This distinguishes versions of one rule, not
+/// arbitrary inputs; a collision needs two variants of the same id hashing the
+/// same way in 64 bits.
+#[must_use]
+pub fn fingerprint(rule: &Rule) -> String {
+    use sha2::{Digest, Sha256};
+
+    let m = &rule.r#match;
+    // Written out field by field rather than derived, so that adding a
+    // condition to `Match` without adding it here is caught by a test rather
+    // than by someone noticing their history reset — see
+    // `every_condition_a_rule_states_changes_its_fingerprint`.
+    let list = |v: &[String]| v.join("\u{1f}");
+    let text = format!(
+        "scope={:?}\ntools={}\nkinds={}\ndecisions={}\nsources={}\nmodes={}\nsuccess={:?}\nmain_thread={:?}\nfirst_line={}\ncontains={}\nglob={}\npath_glob={}\noutside_cwd={}\nmode_changed={}",
+        rule.scope,
+        list(&m.tools),
+        list(&m.kinds),
+        list(&m.decisions),
+        list(&m.decision_sources),
+        list(&m.permission_modes),
+        m.success,
+        m.main_thread,
+        m.first_line,
+        list(&m.summary_contains),
+        list(&m.summary_glob),
+        list(&m.path_glob),
+        m.outside_cwd,
+        m.mode_changed,
+    );
+
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    hex::encode(hasher.finalize())[..16].to_string()
+}
+
+/// Claim the sightings written before fingerprints existed (migration 007).
+///
+/// A one-time pass, idempotent and a no-op after it: rows carrying `''` are
+/// given the current fingerprint of the rule that wrote them. It assumes the
+/// rules have not changed since those rows were recorded — unknowable, true for
+/// anyone who has not edited their rules file, and better than the alternative,
+/// which is every date resetting to today on upgrade.
+fn adopt_sightings(conn: &Connection, rules: &[Rule]) -> Result<()> {
+    for rule in rules {
+        conn.execute(
+            "UPDATE rule_sighting SET fingerprint = ?2
+             WHERE rule_id = ?1 AND fingerprint = ''",
+            params![rule.id, fingerprint(rule)],
+        )?;
+    }
+    Ok(())
+}
+
 /// Record that these rules caught these calls, and say what was new.
 ///
 /// One `INSERT … SELECT` per live rule, from the **same compiled fragment the
@@ -1054,6 +1120,7 @@ pub fn record_sightings(
     findings: &mut [Finding],
     now: i64,
 ) -> Result<usize> {
+    adopt_sightings(conn, rules)?;
     let mut total = 0;
 
     for finding in findings.iter_mut() {
@@ -1065,16 +1132,17 @@ pub fn record_sightings(
         };
         let compiled = where_for(rule);
         let sql = format!(
-            "{}INSERT INTO rule_sighting (rule_id, tool_use_id, first_seen)
-             SELECT ?, tc.tool_use_id, ?
+            "{}INSERT INTO rule_sighting (rule_id, fingerprint, tool_use_id, first_seen)
+             SELECT ?, ?, tc.tool_use_id, ?
              FROM tool_call tc
              LEFT JOIN session s ON s.session_id = tc.session_id
              WHERE {}
-             ON CONFLICT (rule_id, tool_use_id) DO NOTHING",
+             ON CONFLICT (rule_id, fingerprint, tool_use_id) DO NOTHING",
             compiled.with_sql(),
             compiled.where_sql
         );
-        let mut binds: Vec<&dyn ToSql> = vec![&rule.id, &now];
+        let print = fingerprint(rule);
+        let mut binds: Vec<&dyn ToSql> = vec![&rule.id, &print, &now];
         binds.extend(compiled.refs());
 
         let inserted = conn.execute(&sql, binds.as_slice())?;
@@ -1082,23 +1150,37 @@ pub fn record_sightings(
         total += inserted;
     }
 
-    read_sightings(conn, findings)?;
+    read_sightings(conn, rules, findings)?;
     Ok(total)
 }
 
 /// Fill each finding's `first_seen` from the ledger, in one query for all of
 /// them.
-pub fn read_sightings(conn: &Connection, findings: &mut [Finding]) -> Result<()> {
-    let mut stmt =
-        conn.prepare("SELECT rule_id, min(first_seen) FROM rule_sighting GROUP BY rule_id")?;
-    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-    let seen: HashMap<String, i64> = rows
+///
+/// Keyed on `(rule_id, fingerprint)`, not on the id alone: a rule that has been
+/// retuned has a new fingerprint and so no history, which reads as "not yet
+/// recorded" rather than as a date describing the question it used to ask.
+pub fn read_sightings(conn: &Connection, rules: &[Rule], findings: &mut [Finding]) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "SELECT rule_id, fingerprint, min(first_seen)
+         FROM rule_sighting GROUP BY rule_id, fingerprint",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            (r.get::<_, String>(0)?, r.get::<_, String>(1)?),
+            r.get::<_, i64>(2)?,
+        ))
+    })?;
+    let seen: HashMap<(String, String), i64> = rows
         .collect::<rusqlite::Result<Vec<_>>>()?
         .into_iter()
         .collect();
 
     for finding in findings.iter_mut() {
-        finding.first_seen = seen.get(&finding.rule_id).copied();
+        finding.first_seen = rules
+            .iter()
+            .find(|r| r.id == finding.rule_id)
+            .and_then(|rule| seen.get(&(rule.id.clone(), fingerprint(rule))).copied());
     }
     Ok(())
 }
